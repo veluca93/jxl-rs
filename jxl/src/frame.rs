@@ -187,6 +187,14 @@ impl Frame {
         )
         .unwrap();
         br.jump_to_byte_boundary()?;
+        Self::from_header_and_toc(frame_header, toc, decoder_state)
+    }
+
+    pub fn from_header_and_toc(
+        frame_header: FrameHeader,
+        toc: Toc,
+        decoder_state: DecoderState,
+    ) -> Result<Self> {
         let modular_color_channels = if frame_header.encoding == Encoding::VarDCT {
             0
         } else if decoder_state

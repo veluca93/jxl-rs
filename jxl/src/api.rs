@@ -5,6 +5,8 @@
 
 // #![warn(missing_docs)]
 
+mod box_parser;
+mod codestream_parser;
 mod color;
 mod data_types;
 mod decoder;
@@ -12,6 +14,7 @@ mod inner;
 mod input;
 mod options;
 mod output;
+mod process;
 mod signature;
 
 pub use color::*;
@@ -34,6 +37,21 @@ pub use signature::*;
 pub enum ProcessingResult<T, U> {
     Complete { result: T },
     NeedsMoreInput { size_hint: usize, fallback: U },
+}
+
+impl<T> ProcessingResult<T, ()> {
+    fn new(
+        result: Result<T, crate::error::Error>,
+    ) -> Result<ProcessingResult<T, ()>, crate::error::Error> {
+        match result {
+            Ok(v) => Ok(ProcessingResult::Complete { result: v }),
+            Err(crate::error::Error::OutOfBounds(v)) => Ok(ProcessingResult::NeedsMoreInput {
+                size_hint: v,
+                fallback: (),
+            }),
+            Err(e) => Err(e),
+        }
+    }
 }
 
 pub struct JxlBasicInfo {

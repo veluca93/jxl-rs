@@ -157,8 +157,11 @@ impl JxlDecoder<WithFrameInfo> {
     }
 
     /// Draws all the pixels we have data for.
-    pub fn flush_pixels(&mut self) -> Result<()> {
-        self.inner.flush_pixels()
+    pub fn flush_pixels<'a, Out: JxlOutputBuffer<'a> + ?Sized>(
+        &mut self,
+        buffers: &'a mut [&'a mut Out],
+    ) -> Result<()> {
+        self.inner.flush_pixels(buffers)
     }
 
     /// Guarantees to populate exactly the appropriate part of the buffers.
