@@ -39,6 +39,15 @@ impl SimdDescriptor for Avx512Descriptor {
     type F32Vec = F32VecAvx512;
     type I32Vec = I32VecAvx512;
     type Mask = MaskAvx512;
+
+    fn maybe_downgrade_256bit(self) -> Option<impl SimdDescriptor> {
+        Some(self.as_avx())
+    }
+
+    fn maybe_downgrade_128bit(self) -> Option<impl SimdDescriptor> {
+        Some(self.as_avx().as_sse42())
+    }
+
     fn new() -> Option<Self> {
         if is_x86_feature_detected!("avx512f") {
             // SAFETY: we just checked avx512f.

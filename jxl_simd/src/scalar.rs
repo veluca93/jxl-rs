@@ -16,6 +16,14 @@ impl SimdDescriptor for ScalarDescriptor {
         Some(Self)
     }
 
+    fn maybe_downgrade_256bit(self) -> Option<impl SimdDescriptor> {
+        None::<Self>
+    }
+
+    fn maybe_downgrade_128bit(self) -> Option<impl SimdDescriptor> {
+        None::<Self>
+    }
+
     #[inline(always)]
     fn transpose<const ROWS: usize, const COLS: usize>(self, input: &[f32], output: &mut [f32]) {
         assert_eq!(input.len(), ROWS * COLS);

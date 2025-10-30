@@ -3,17 +3,18 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+use crate::x86_64::sse42::Sse42Descriptor;
+
 use super::super::{F32SimdVec, I32SimdVec, ScalarDescriptor, SimdDescriptor, SimdMask};
 use std::{
     arch::x86_64::{
-        __m256, __m256i, _mm_loadu_ps, _mm_storeu_ps, _mm_unpackhi_ps, _mm_unpacklo_ps,
-        _mm256_abs_epi32, _mm256_add_epi32, _mm256_add_ps, _mm256_andnot_si256, _mm256_blendv_ps,
-        _mm256_castps_si256, _mm256_castsi256_ps, _mm256_cmpgt_epi32, _mm256_cvtepi32_ps,
-        _mm256_div_ps, _mm256_fmadd_ps, _mm256_fnmadd_ps, _mm256_loadu_ps, _mm256_loadu_si256,
-        _mm256_maskload_ps, _mm256_maskstore_ps, _mm256_max_ps, _mm256_mul_epi32, _mm256_mul_ps,
-        _mm256_permute2f128_ps, _mm256_set1_epi32, _mm256_set1_ps, _mm256_shuffle_ps,
-        _mm256_storeu_ps, _mm256_sub_epi32, _mm256_sub_ps, _mm256_unpackhi_ps, _mm256_unpacklo_ps,
-        _mm256_xor_si256,
+        __m256, __m256i, _mm256_abs_epi32, _mm256_add_epi32, _mm256_add_ps, _mm256_andnot_si256,
+        _mm256_blendv_ps, _mm256_castps_si256, _mm256_castsi256_ps, _mm256_cmpgt_epi32,
+        _mm256_cvtepi32_ps, _mm256_div_ps, _mm256_fmadd_ps, _mm256_fnmadd_ps, _mm256_loadu_ps,
+        _mm256_loadu_si256, _mm256_maskload_ps, _mm256_maskstore_ps, _mm256_max_ps,
+        _mm256_mul_epi32, _mm256_mul_ps, _mm256_permute2f128_ps, _mm256_set1_epi32, _mm256_set1_ps,
+        _mm256_shuffle_ps, _mm256_storeu_ps, _mm256_sub_epi32, _mm256_sub_ps, _mm256_unpackhi_ps,
+        _mm256_unpacklo_ps, _mm256_xor_si256,
     },
     ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign},
 };
@@ -28,56 +29,11 @@ impl AvxDescriptor {
     pub unsafe fn new_unchecked() -> Self {
         Self(())
     }
-}
 
-impl AvxDescriptor {
-    #[target_feature(enable = "avx")]
-    #[inline]
-    fn transpose4x4f32(
-        self,
-        input: &[f32],
-        input_stride: usize,
-        output: &mut [f32],
-        output_stride: usize,
-    ) {
-        assert!(input_stride >= 4);
-        assert!(input.len() >= input_stride.checked_mul(3).unwrap().checked_add(4).unwrap());
-        assert!(
-            output.len()
-                >= output_stride
-                    .checked_mul(3)
-                    .unwrap()
-                    .checked_add(4)
-                    .unwrap()
-        );
-
-        // SAFETY: input is verified to be large enough for this pointer arithmetic.
-        let (p0, p1, p2, p3) = unsafe {
-            (
-                _mm_loadu_ps(input.as_ptr()),
-                _mm_loadu_ps(input.as_ptr().add(input_stride)),
-                _mm_loadu_ps(input.as_ptr().add(2 * input_stride)),
-                _mm_loadu_ps(input.as_ptr().add(3 * input_stride)),
-            )
-        };
-
-        let q0 = _mm_unpacklo_ps(p0, p2);
-        let q1 = _mm_unpacklo_ps(p1, p3);
-        let q2 = _mm_unpackhi_ps(p0, p2);
-        let q3 = _mm_unpackhi_ps(p1, p3);
-
-        let r0 = _mm_unpacklo_ps(q0, q1);
-        let r1 = _mm_unpackhi_ps(q0, q1);
-        let r2 = _mm_unpacklo_ps(q2, q3);
-        let r3 = _mm_unpackhi_ps(q2, q3);
-
-        // SAFETY: output is verified to be large enough for this pointer arithmetic.
-        unsafe {
-            _mm_storeu_ps(output.as_mut_ptr(), r0);
-            _mm_storeu_ps(output.as_mut_ptr().add(output_stride), r1);
-            _mm_storeu_ps(output.as_mut_ptr().add(2 * output_stride), r2);
-            _mm_storeu_ps(output.as_mut_ptr().add(3 * output_stride), r3);
-        }
+    pub fn as_sse42(&self) -> Sse42Descriptor {
+        // SAFETY: the safety invariant on `self` guarantees avx is available, which implies
+        // sse42.
+        unsafe { Sse42Descriptor::new_unchecked() }
     }
 }
 
@@ -85,6 +41,14 @@ impl SimdDescriptor for AvxDescriptor {
     type F32Vec = F32VecAvx;
     type I32Vec = I32VecAvx;
     type Mask = MaskAvx;
+
+    fn maybe_downgrade_256bit(self) -> Option<impl SimdDescriptor> {
+        None::<Self>
+    }
+
+    fn maybe_downgrade_128bit(self) -> Option<impl SimdDescriptor> {
+        Some(self.as_sse42())
+    }
 
     fn new() -> Option<Self> {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
@@ -116,9 +80,14 @@ impl SimdDescriptor for AvxDescriptor {
                 let input_row = &input[r * COLS..];
                 for c in (0..COLS).step_by(4) {
                     let output_row = &mut output[c * ROWS..];
-                    // SAFETY: We know avx is available from the safety invariant on `self`.
+                    // SAFETY: We know sse42 is available from the safety invariant on `self`.
                     unsafe {
-                        self.transpose4x4f32(&input_row[c..], COLS, &mut output_row[r..], ROWS);
+                        self.as_sse42().transpose4x4f32(
+                            &input_row[c..],
+                            COLS,
+                            &mut output_row[r..],
+                            ROWS,
+                        );
                     }
                 }
             }

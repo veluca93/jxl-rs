@@ -14,7 +14,7 @@ mod x86_64;
 mod scalar;
 
 #[cfg(target_arch = "x86_64")]
-pub use x86_64::{avx::AvxDescriptor, avx512::Avx512Descriptor};
+pub use x86_64::{avx::AvxDescriptor, avx512::Avx512Descriptor, sse42::Sse42Descriptor};
 
 pub use scalar::ScalarDescriptor;
 
@@ -28,6 +28,15 @@ pub trait SimdDescriptor: Sized + Copy + Debug + Send + Sync {
     fn new() -> Option<Self>;
 
     fn transpose<const ROWS: usize, const COLS: usize>(self, input: &[f32], output: &mut [f32]);
+
+    /// Returns a vector descriptor suitable for operations on vectors of length 256, or None if
+    /// the current vector type is suitable. Note that it might still be beneficial to use `Self`
+    /// for .call(), as the compiler could make use of features from more advanced instruction
+    /// sets.
+    fn maybe_downgrade_256bit(self) -> Option<impl SimdDescriptor>;
+
+    /// Same as Self::maybe_downgrade_256bit, but for 128 bits.
+    fn maybe_downgrade_128bit(self) -> Option<impl SimdDescriptor>;
 
     /// Calls the given closure within a target feature context.
     /// This enables establishing an unbroken chain of inline functions from the feature-annotated
