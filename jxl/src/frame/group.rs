@@ -5,6 +5,13 @@
 
 use num_traits::Float;
 
+use jxl_transforms::{
+    dct::{DCT1D, DCT1DImpl, MAX_SCRATCH_SPACE, compute_scaled_dct},
+    scales::{DctResampleScales, HasDctResampleScales, dct_total_resample_scale},
+    transform::*,
+    transform_map::*,
+};
+
 use crate::{
     BLOCK_DIM, BLOCK_SIZE, GROUP_DIM,
     bit_reader::BitReader,
@@ -13,16 +20,10 @@ use crate::{
     frame::{
         HfGlobalState, HfMetadata, LfGlobalState, block_context_map::*,
         color_correlation_map::COLOR_TILE_DIM_IN_BLOCKS, quant_weights::DequantMatrices,
-        transform_map::*,
     },
     headers::frame_header::FrameHeader,
     image::{Image, ImageRect, Rect},
     util::{CeilLog2, tracing_wrappers::*},
-    var_dct::{
-        dct::scales::{DctResampleScales, HasDctResampleScales, dct_total_resample_scale},
-        dct::{DCT1D, DCT1DImpl, MAX_SCRATCH_SPACE, compute_scaled_dct},
-        transform::*,
-    },
 };
 use jxl_simd::{F32SimdVec, I32SimdVec, SimdDescriptor, SimdMask, simd_function};
 
@@ -417,7 +418,7 @@ fn dequant_and_transform_to_pixels<D: SimdDescriptor>(
         if (sbx[c] << hshift[c]) != bx || (sby[c] << vshift[c] != by) {
             continue;
         }
-        transform_to_pixels::<D>(d, transform_type, &mut transform_buffer[c], scratch)?;
+        transform_to_pixels::<D>(d, transform_type, &mut transform_buffer[c], scratch);
         let mut output = pixels[c].as_rect_mut();
         let downsampled_rect = Rect {
             origin: (
@@ -682,7 +683,8 @@ pub fn decode_vardct_group(
                 }
             };
 
-            let transform_type = HfTransformType::from_usize(transform_id as usize)?;
+            let transform_type = HfTransformType::from_usize(transform_id as usize)
+                .ok_or(Error::InvalidVarDCTTransform(transform_id as usize))?;
             let cx = covered_blocks_x(transform_type) as usize;
             let cy = covered_blocks_y(transform_type) as usize;
             let shape_id = block_shape_id(transform_type) as usize;

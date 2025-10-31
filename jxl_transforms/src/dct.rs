@@ -6,15 +6,11 @@
 #![allow(clippy::needless_range_loop)]
 
 use jxl_simd::{F32SimdVec, ScalarDescriptor, SimdDescriptor};
-use scales::WcMultipliers;
+use crate::scales::WcMultipliers;
 use std::f64::consts::SQRT_2;
 
 /// Temporary storage needed, in floats.
 pub const MAX_SCRATCH_SPACE: usize = 256 * 256 * 3;
-
-pub mod scales;
-#[cfg(test)]
-mod tests;
 
 // TODO(veluca): remove the second generic.
 struct CoeffBundle<const N: usize, const SZ: usize>;

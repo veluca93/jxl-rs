@@ -559,10 +559,10 @@ dependencies = [
  "arbtest",
  "array-init",
  "byteorder",
- "criterion",
  "half",
  "jxl_macros",
  "jxl_simd",
+ "jxl_transforms",
  "num-derive",
  "num-traits",
  "paste",
@@ -604,6 +604,16 @@ version = "0.1.1"
 dependencies = [
  "arbtest",
  "paste",
+]
+
+[[package]]
+name = "jxl_transforms"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "jxl_simd",
+ "num-traits",
+ "test-log",
 ]
 
 [[package]]

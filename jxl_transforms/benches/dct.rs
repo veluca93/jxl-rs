@@ -4,7 +4,7 @@
 // license that can be found in the LICENSE file.
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use jxl::var_dct::dct::{
+use jxl_transforms::dct::{
     DCT1D, DCT1DImpl, IDCT1D, IDCT1DImpl, MAX_SCRATCH_SPACE, compute_scaled_dct, idct2d,
 };
 use jxl_simd::{SimdDescriptor, bench_all_instruction_sets};

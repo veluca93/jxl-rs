@@ -3,30 +3,25 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use crate::{
-    BLOCK_DIM,
-    error::{Error, Result},
-    frame::transform_map::*,
-    var_dct::dct::*,
-};
+use crate::{dct::idct2d, transform_map::HfTransformType};
 use jxl_simd::SimdDescriptor;
 
 fn idct2_top_block(s: usize, block_in: &[f32], block_out: &mut [f32]) {
     let num_2x2 = s / 2;
     for y in 0..num_2x2 {
         for x in 0..num_2x2 {
-            let c00 = block_in[y * BLOCK_DIM + x];
-            let c01 = block_in[y * BLOCK_DIM + num_2x2 + x];
-            let c10 = block_in[(y + num_2x2) * BLOCK_DIM + x];
-            let c11 = block_in[(y + num_2x2) * BLOCK_DIM + num_2x2 + x];
+            let c00 = block_in[y * 8 + x];
+            let c01 = block_in[y * 8 + num_2x2 + x];
+            let c10 = block_in[(y + num_2x2) * 8 + x];
+            let c11 = block_in[(y + num_2x2) * 8 + num_2x2 + x];
             let r00 = c00 + c01 + c10 + c11;
             let r01 = c00 + c01 - c10 - c11;
             let r10 = c00 - c01 + c10 - c11;
             let r11 = c00 - c01 - c10 + c11;
-            block_out[y * 2 * BLOCK_DIM + x * 2] = r00;
-            block_out[y * 2 * BLOCK_DIM + x * 2 + 1] = r01;
-            block_out[(y * 2 + 1) * BLOCK_DIM + x * 2] = r10;
-            block_out[(y * 2 + 1) * BLOCK_DIM + x * 2 + 1] = r11;
+            block_out[y * 2 * 8 + x * 2] = r00;
+            block_out[y * 2 * 8 + x * 2 + 1] = r01;
+            block_out[(y * 2 + 1) * 8 + x * 2] = r10;
+            block_out[(y * 2 + 1) * 8 + x * 2 + 1] = r11;
         }
     }
 }
@@ -379,7 +374,7 @@ pub fn transform_to_pixels<D: SimdDescriptor>(
     transform_type: HfTransformType,
     transform_buffer: &mut [f32],
     scratch: &mut [f32],
-) -> Result<(), Error> {
+) {
     match transform_type {
         HfTransformType::DCT => {
             idct2d::<D, 8, 8>(d, &mut transform_buffer[0..64], scratch);
@@ -580,5 +575,4 @@ pub fn transform_to_pixels<D: SimdDescriptor>(
             }
         }
     };
-    Ok(())
 }
