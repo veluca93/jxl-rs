@@ -3,6 +3,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+use crate::impl_f32_array_interface;
+
 use super::super::{F32SimdVec, I32SimdVec, ScalarDescriptor, SimdDescriptor, SimdMask};
 use std::{
     arch::x86_64::{
@@ -83,12 +85,15 @@ impl SimdDescriptor for Sse42Descriptor {
     type I32Vec = I32VecSse42;
     type Mask = MaskAvx;
 
-    fn maybe_downgrade_256bit(self) -> Option<impl SimdDescriptor> {
-        None::<Self>
+    type Descriptor256 = Self;
+    type Descriptor128 = Self;
+
+    fn maybe_downgrade_256bit(self) -> Self::Descriptor256 {
+        self
     }
 
-    fn maybe_downgrade_128bit(self) -> Option<impl SimdDescriptor> {
-        None::<Self>
+    fn maybe_downgrade_128bit(self) -> Self::Descriptor128 {
+        self
     }
 
     fn new() -> Option<Self> {
@@ -101,24 +106,24 @@ impl SimdDescriptor for Sse42Descriptor {
     }
 
     #[inline(always)]
-    fn transpose<const ROWS: usize, const COLS: usize>(self, input: &[f32], output: &mut [f32]) {
-        assert_eq!(input.len(), ROWS * COLS);
-        assert_eq!(output.len(), ROWS * COLS);
+    fn transpose(self, input: &[f32], output: &mut [f32], rows: usize, cols: usize) {
+        assert_eq!(input.len(), rows * cols);
+        assert_eq!(output.len(), rows * cols);
 
-        if ROWS.is_multiple_of(4) && COLS.is_multiple_of(4) {
-            for r in (0..ROWS).step_by(4) {
-                let input_row = &input[r * COLS..];
-                for c in (0..COLS).step_by(4) {
-                    let output_row = &mut output[c * ROWS..];
+        if rows.is_multiple_of(4) && cols.is_multiple_of(4) {
+            for r in (0..rows).step_by(4) {
+                let input_row = &input[r * cols..];
+                for c in (0..cols).step_by(4) {
+                    let output_row = &mut output[c * rows..];
                     // SAFETY: We know sse4.2 is available from the safety invariant on `self`.
                     unsafe {
-                        self.transpose4x4f32(&input_row[c..], COLS, &mut output_row[r..], ROWS);
+                        self.transpose4x4f32(&input_row[c..], cols, &mut output_row[r..], rows);
                     }
                 }
             }
         } else {
             let scalar = ScalarDescriptor {};
-            scalar.transpose::<ROWS, COLS>(input, output);
+            scalar.transpose(input, output, rows, cols);
         }
     }
 
@@ -253,6 +258,8 @@ impl F32SimdVec for F32VecSse42 {
     fn_sse42!(this: F32VecSse42, fn max(other: F32VecSse42) -> F32VecSse42 {
         F32VecSse42(_mm_max_ps(this.0, other.0), this.1)
     });
+
+    impl_f32_array_interface!();
 }
 
 impl Add<F32VecSse42> for F32VecSse42 {

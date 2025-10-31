@@ -4,7 +4,9 @@
 // license that can be found in the LICENSE file.
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use jxl::var_dct::dct::{DCT1D, DCT1DImpl, IDCT1D, IDCT1DImpl, compute_scaled_dct, idct2d};
+use jxl::var_dct::dct::{
+    DCT1D, DCT1DImpl, IDCT1D, IDCT1DImpl, MAX_SCRATCH_SPACE, compute_scaled_dct, idct2d,
+};
 use jxl_simd::{SimdDescriptor, bench_all_instruction_sets};
 
 fn bench_idct2d<D: SimdDescriptor>(d: D, c: &mut Criterion, name: &str) {
@@ -17,10 +19,13 @@ fn bench_idct2d<D: SimdDescriptor>(d: D, c: &mut Criterion, name: &str) {
         IDCT1DImpl<COLS>: IDCT1D,
     {
         let mut data = vec![1.0; ROWS * COLS];
-        let mut scratch = vec![0.0; ROWS * COLS];
+        let mut scratch = vec![0.0; MAX_SCRATCH_SPACE];
         c.bench_function(&format!("{name}_{ROWS}x{COLS}"), |b| {
             b.iter(|| {
-                d.call(|d| idct2d::<_, ROWS, COLS>(d, &mut data, &mut scratch));
+                d.call(
+                    #[inline(always)]
+                    |d| idct2d::<_, ROWS, COLS>(d, &mut data, &mut scratch),
+                );
             })
         });
     }

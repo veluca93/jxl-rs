@@ -19,8 +19,8 @@ use crate::{
     image::{Image, ImageRect, Rect},
     util::{CeilLog2, tracing_wrappers::*},
     var_dct::{
-        dct::{DCT1D, DCT1DImpl, compute_scaled_dct},
-        dct_scales::{DctResampleScales, HasDctResampleScales, dct_total_resample_scale},
+        dct::scales::{DctResampleScales, HasDctResampleScales, dct_total_resample_scale},
+        dct::{DCT1D, DCT1DImpl, MAX_SCRATCH_SPACE, compute_scaled_dct},
         transform::*,
     },
 };
@@ -536,17 +536,7 @@ pub fn decode_vardct_group(
         ))?,
     ];
     debug!(?block_group_rect);
-    let max_block_size = HfTransformType::VALUES
-        .iter()
-        .filter(|&transform_type| (hf_meta.used_hf_types & (1 << *transform_type as u32)) != 0)
-        .map(|&transform_type| {
-            BLOCK_SIZE
-                * covered_blocks_x(transform_type) as usize
-                * covered_blocks_y(transform_type) as usize
-        })
-        .max()
-        .unwrap_or(0);
-    let mut scratch = vec![0.0; max_block_size];
+    let mut scratch = vec![0.0; MAX_SCRATCH_SPACE];
     let color_correlation_params = lf_global.color_correlation_params.as_ref().unwrap();
     let cmap_rect = Rect {
         origin: (

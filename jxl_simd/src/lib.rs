@@ -25,18 +25,20 @@ pub trait SimdDescriptor: Sized + Copy + Debug + Send + Sync {
 
     type Mask: SimdMask<Descriptor = Self, F32Vec = Self::F32Vec, I32Vec = Self::I32Vec>;
 
+    type Descriptor256: SimdDescriptor;
+    type Descriptor128: SimdDescriptor;
+
     fn new() -> Option<Self>;
 
-    fn transpose<const ROWS: usize, const COLS: usize>(self, input: &[f32], output: &mut [f32]);
+    fn transpose(self, input: &[f32], output: &mut [f32], rows: usize, cols: usize);
 
-    /// Returns a vector descriptor suitable for operations on vectors of length 256, or None if
-    /// the current vector type is suitable. Note that it might still be beneficial to use `Self`
-    /// for .call(), as the compiler could make use of features from more advanced instruction
-    /// sets.
-    fn maybe_downgrade_256bit(self) -> Option<impl SimdDescriptor>;
+    /// Returns a vector descriptor suitable for operations on vectors of length 256 (Self if the
+    /// current vector type is suitable). Note that it might still be beneficial to use `Self` for
+    /// .call(), as the compiler could make use of features from more advanced instruction sets.
+    fn maybe_downgrade_256bit(self) -> Self::Descriptor256;
 
     /// Same as Self::maybe_downgrade_256bit, but for 128 bits.
-    fn maybe_downgrade_128bit(self) -> Option<impl SimdDescriptor>;
+    fn maybe_downgrade_128bit(self) -> Self::Descriptor128;
 
     /// Calls the given closure within a target feature context.
     /// This enables establishing an unbroken chain of inline functions from the feature-annotated
@@ -63,6 +65,17 @@ pub trait F32SimdVec:
 
     const LEN: usize;
 
+    /// An array of f32 of length Self::LEN.
+    type UnderlyingArray: Copy + Default;
+
+    /// Converts a slice of f32 into a slice of Self::UnderlyingArray. If slice.len() is not a
+    /// multiple of `Self::LEN` this will panic.
+    fn make_array_slice(slice: &[f32]) -> &[Self::UnderlyingArray];
+
+    /// Converts a mut slice of f32 into a slice of Self::UnderlyingArray. If slice.len() is not a
+    /// multiple of `Self::LEN` this will panic.
+    fn make_array_slice_mut(slice: &mut [f32]) -> &mut [Self::UnderlyingArray];
+
     /// Converts v to an array of v.
     fn splat(d: Self::Descriptor, v: f32) -> Self;
 
@@ -75,11 +88,15 @@ pub trait F32SimdVec:
     // Requires `mem.len() >= Self::LEN` or it will panic.
     fn load(d: Self::Descriptor, mem: &[f32]) -> Self;
 
+    fn load_array(d: Self::Descriptor, mem: &Self::UnderlyingArray) -> Self;
+
     // Requires `mem.len() >= SIZE` or it will panic.
     fn load_partial(d: Self::Descriptor, size: usize, mem: &[f32]) -> Self;
 
     // Requires `mem.len() >= Self::LEN` or it will panic.
     fn store(&self, mem: &mut [f32]);
+
+    fn store_array(&self, mem: &mut Self::UnderlyingArray);
 
     // Requires `mem.len() >= SIZE` or it will panic.
     fn store_partial(&self, size: usize, mem: &mut [f32]);
@@ -137,6 +154,38 @@ pub trait SimdMask: Sized + Copy + Debug + Send + Sync {
 
     fn if_then_else_f32(self, if_true: Self::F32Vec, if_false: Self::F32Vec) -> Self::F32Vec;
 }
+
+macro_rules! impl_f32_array_interface {
+    () => {
+        type UnderlyingArray = [f32; Self::LEN];
+
+        #[inline(always)]
+        fn make_array_slice(slice: &[f32]) -> &[Self::UnderlyingArray] {
+            let (ret, rem) = slice.as_chunks();
+            assert!(rem.is_empty());
+            ret
+        }
+
+        #[inline(always)]
+        fn make_array_slice_mut(slice: &mut [f32]) -> &mut [Self::UnderlyingArray] {
+            let (ret, rem) = slice.as_chunks_mut();
+            assert!(rem.is_empty());
+            ret
+        }
+
+        #[inline(always)]
+        fn load_array(d: Self::Descriptor, mem: &Self::UnderlyingArray) -> Self {
+            Self::load(d, mem)
+        }
+
+        #[inline(always)]
+        fn store_array(&self, mem: &mut Self::UnderlyingArray) {
+            self.store(mem);
+        }
+    };
+}
+
+pub(crate) use impl_f32_array_interface;
 
 #[cfg(test)]
 mod test {
@@ -441,7 +490,7 @@ mod test {
         }
 
         let mut output = vec![0.0f32; 64];
-        d.transpose::<8, 8>(&input, &mut output);
+        d.transpose(&input, &mut output, 8, 8);
 
         // Verify transpose: output[i*8+j] should equal input[j*8+i]
         for i in 0..8 {

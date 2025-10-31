@@ -3,9 +3,9 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use crate::x86_64::sse42::Sse42Descriptor;
+use crate::{impl_f32_array_interface, x86_64::sse42::Sse42Descriptor};
 
-use super::super::{F32SimdVec, I32SimdVec, ScalarDescriptor, SimdDescriptor, SimdMask};
+use super::super::{F32SimdVec, I32SimdVec, SimdDescriptor, SimdMask};
 use std::{
     arch::x86_64::{
         __m256, __m256i, _mm256_abs_epi32, _mm256_add_epi32, _mm256_add_ps, _mm256_andnot_si256,
@@ -42,12 +42,15 @@ impl SimdDescriptor for AvxDescriptor {
     type I32Vec = I32VecAvx;
     type Mask = MaskAvx;
 
-    fn maybe_downgrade_256bit(self) -> Option<impl SimdDescriptor> {
-        None::<Self>
+    type Descriptor256 = Self;
+    type Descriptor128 = Sse42Descriptor;
+
+    fn maybe_downgrade_256bit(self) -> Self::Descriptor256 {
+        self
     }
 
-    fn maybe_downgrade_128bit(self) -> Option<impl SimdDescriptor> {
-        Some(self.as_sse42())
+    fn maybe_downgrade_128bit(self) -> Self::Descriptor128 {
+        self.as_sse42()
     }
 
     fn new() -> Option<Self> {
@@ -60,40 +63,23 @@ impl SimdDescriptor for AvxDescriptor {
     }
 
     #[inline(always)]
-    fn transpose<const ROWS: usize, const COLS: usize>(self, input: &[f32], output: &mut [f32]) {
-        assert_eq!(input.len(), ROWS * COLS);
-        assert_eq!(output.len(), ROWS * COLS);
+    fn transpose(self, input: &[f32], output: &mut [f32], rows: usize, cols: usize) {
+        assert_eq!(input.len(), rows * cols);
+        assert_eq!(output.len(), rows * cols);
 
-        if ROWS.is_multiple_of(8) && COLS.is_multiple_of(8) {
-            for r in (0..ROWS).step_by(8) {
-                let input_row = &input[r * COLS..];
-                for c in (0..COLS).step_by(8) {
-                    let output_row = &mut output[c * ROWS..];
+        if rows.is_multiple_of(8) && cols.is_multiple_of(8) {
+            for r in (0..rows).step_by(8) {
+                let input_row = &input[r * cols..];
+                for c in (0..cols).step_by(8) {
+                    let output_row = &mut output[c * rows..];
                     // SAFETY: We know avx is available from the safety invariant on `self`.
                     unsafe {
-                        Self::transpose8x8f32(&input_row[c..], COLS, &mut output_row[r..], ROWS);
-                    }
-                }
-            }
-        } else if ROWS.is_multiple_of(4) && COLS.is_multiple_of(4) {
-            for r in (0..ROWS).step_by(4) {
-                let input_row = &input[r * COLS..];
-                for c in (0..COLS).step_by(4) {
-                    let output_row = &mut output[c * ROWS..];
-                    // SAFETY: We know sse42 is available from the safety invariant on `self`.
-                    unsafe {
-                        self.as_sse42().transpose4x4f32(
-                            &input_row[c..],
-                            COLS,
-                            &mut output_row[r..],
-                            ROWS,
-                        );
+                        Self::transpose8x8f32(&input_row[c..], cols, &mut output_row[r..], rows);
                     }
                 }
             }
         } else {
-            let scalar = ScalarDescriptor {};
-            scalar.transpose::<ROWS, COLS>(input, output);
+            self.as_sse42().transpose(input, output, rows, cols);
         }
     }
 
@@ -108,8 +94,9 @@ impl SimdDescriptor for AvxDescriptor {
 }
 
 impl AvxDescriptor {
+    // TODO(veluca): this inline(never) helps because the optimizer is being silly.
     #[target_feature(enable = "avx2")]
-    #[inline]
+    #[inline(never)]
     fn transpose8x8f32(
         input: &[f32],
         input_stride: usize,
@@ -308,6 +295,8 @@ impl F32SimdVec for F32VecAvx {
     fn_avx!(this: F32VecAvx, fn max(other: F32VecAvx) -> F32VecAvx {
         F32VecAvx(_mm256_max_ps(this.0, other.0), this.1)
     });
+
+    impl_f32_array_interface!();
 }
 
 impl Add<F32VecAvx> for F32VecAvx {

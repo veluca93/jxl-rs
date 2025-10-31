@@ -15,6 +15,8 @@ use std::{
     ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign},
 };
 
+use crate::{Sse42Descriptor, impl_f32_array_interface};
+
 use super::super::{AvxDescriptor, F32SimdVec, I32SimdVec, SimdDescriptor, SimdMask};
 
 // Safety invariant: this type is only ever constructed if avx512f is available.
@@ -40,12 +42,15 @@ impl SimdDescriptor for Avx512Descriptor {
     type I32Vec = I32VecAvx512;
     type Mask = MaskAvx512;
 
-    fn maybe_downgrade_256bit(self) -> Option<impl SimdDescriptor> {
-        Some(self.as_avx())
+    type Descriptor256 = AvxDescriptor;
+    type Descriptor128 = Sse42Descriptor;
+
+    fn maybe_downgrade_256bit(self) -> Self::Descriptor256 {
+        self.as_avx()
     }
 
-    fn maybe_downgrade_128bit(self) -> Option<impl SimdDescriptor> {
-        Some(self.as_avx().as_sse42())
+    fn maybe_downgrade_128bit(self) -> Self::Descriptor128 {
+        self.as_avx().as_sse42()
     }
 
     fn new() -> Option<Self> {
@@ -58,9 +63,16 @@ impl SimdDescriptor for Avx512Descriptor {
     }
 
     #[inline(always)]
-    fn transpose<const ROWS: usize, const COLS: usize>(self, input: &[f32], output: &mut [f32]) {
+    fn transpose(self, input: &[f32], output: &mut [f32], rows: usize, cols: usize) {
+        assert!(
+            rows == cols * 4
+                || rows == cols
+                || rows == cols * 2
+                || rows * 2 == cols
+                || rows * 4 == cols
+        );
         // TODO: implement an AVX-512-specific version
-        self.as_avx().transpose::<ROWS, COLS>(input, output)
+        self.as_avx().transpose(input, output, rows, cols)
     }
 
     fn call<R>(self, f: impl FnOnce(Self) -> R) -> R {
@@ -184,6 +196,8 @@ impl F32SimdVec for F32VecAvx512 {
     fn_avx!(this: F32VecAvx512, fn max(other: F32VecAvx512) -> F32VecAvx512 {
         F32VecAvx512(_mm512_max_ps(this.0, other.0), this.1)
     });
+
+    impl_f32_array_interface!();
 }
 
 impl Add<F32VecAvx512> for F32VecAvx512 {

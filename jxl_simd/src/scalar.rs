@@ -3,6 +3,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+use crate::impl_f32_array_interface;
+
 use super::{F32SimdVec, I32SimdVec, SimdDescriptor, SimdMask};
 
 #[derive(Clone, Copy, Debug)]
@@ -12,27 +14,31 @@ impl SimdDescriptor for ScalarDescriptor {
     type F32Vec = f32;
     type I32Vec = i32;
     type Mask = bool;
+
+    type Descriptor256 = Self;
+    type Descriptor128 = Self;
+
+    fn maybe_downgrade_256bit(self) -> Self::Descriptor256 {
+        self
+    }
+
+    fn maybe_downgrade_128bit(self) -> Self::Descriptor128 {
+        self
+    }
+
     fn new() -> Option<Self> {
         Some(Self)
     }
 
-    fn maybe_downgrade_256bit(self) -> Option<impl SimdDescriptor> {
-        None::<Self>
-    }
-
-    fn maybe_downgrade_128bit(self) -> Option<impl SimdDescriptor> {
-        None::<Self>
-    }
-
     #[inline(always)]
-    fn transpose<const ROWS: usize, const COLS: usize>(self, input: &[f32], output: &mut [f32]) {
-        assert_eq!(input.len(), ROWS * COLS);
-        assert_eq!(output.len(), ROWS * COLS);
+    fn transpose(self, input: &[f32], output: &mut [f32], rows: usize, cols: usize) {
+        assert_eq!(input.len(), rows * cols);
+        assert_eq!(output.len(), rows * cols);
 
-        for r in 0..ROWS {
-            for c in 0..COLS {
-                let input_idx = r * COLS + c;
-                let output_idx = c * ROWS + r;
+        for r in 0..rows {
+            for c in 0..cols {
+                let input_idx = r * cols + c;
+                let output_idx = c * rows + r;
                 output[output_idx] = input[input_idx];
             }
         }
@@ -100,6 +106,8 @@ impl F32SimdVec for f32 {
     fn max(self, other: Self) -> Self {
         self.max(other)
     }
+
+    impl_f32_array_interface!();
 }
 
 impl I32SimdVec for i32 {
