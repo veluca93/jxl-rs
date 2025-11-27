@@ -48,7 +48,8 @@ const _: () = {
 };
 
 /// # Safety
-/// Any type implementing this trait must be a "bag-of-bits" type with no padding.
+/// Any type implementing this trait must be a "bag-of-bits" type with no padding
+/// (this is equivalent to i.e. the requirements for `bytemuck::Pod`).
 /// Moreover, Self::DATA_TYPE_ID.size() must match the size of `Self`.
 pub unsafe trait ImageDataType:
     private::Sealed + Copy + Default + 'static + Debug + PartialEq + Send + Sync
@@ -96,6 +97,7 @@ macro_rules! impl_image_data_type {
         unsafe impl ImageDataType for $ty {
             const DATA_TYPE_ID: DataTypeTag = DataTypeTag::$id;
             fn from_f64(f: f64) -> $ty {
+                const { assert!(DataTypeTag::$id.size() == std::mem::size_of::<$ty>()) };
                 f as $ty
             }
             fn to_f64(self) -> f64 {

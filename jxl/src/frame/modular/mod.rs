@@ -187,7 +187,7 @@ impl ModularBuffer {
     fn get_buffer(&mut self) -> Result<ModularChannel> {
         self.remaining_uses = self.remaining_uses.checked_sub(1).unwrap();
         if self.remaining_uses == 0 {
-            Ok(self.data.borrow_mut().take().unwrap())
+            Ok(self.data.get_mut().take().unwrap())
         } else {
             Ok(self
                 .data
@@ -202,7 +202,7 @@ impl ModularBuffer {
     fn mark_used(&mut self) {
         self.remaining_uses = self.remaining_uses.checked_sub(1).unwrap();
         if self.remaining_uses == 0 {
-            *self.data.borrow_mut() = None;
+            *self.data.get_mut() = None;
         }
     }
 }
