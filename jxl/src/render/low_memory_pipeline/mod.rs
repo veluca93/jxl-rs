@@ -6,6 +6,7 @@
 #![allow(clippy::needless_range_loop)]
 
 use std::any::Any;
+use std::array;
 
 use row_buffers::RowBuffer;
 
@@ -14,7 +15,7 @@ use crate::error::Result;
 use crate::image::{Image, ImageDataType, OwnedRawImage, Rect};
 use crate::render::MAX_BORDER;
 use crate::render::buffer_splitter::{BufferSplitter, SaveStageBufferInfo};
-use crate::render::internal::Stage;
+use crate::render::internal::{ChannelInfo, Stage};
 use crate::util::{ShiftRightCeil, tracing_wrappers::*};
 
 use super::RenderPipeline;
@@ -26,10 +27,60 @@ pub(super) mod row_buffers;
 mod run_stage;
 mod save;
 
+// Named indices for group regions.
+const IDX_TL: usize = 0;
+const IDX_T: usize = 1;
+const IDX_TR: usize = 2;
+const IDX_L: usize = 3;
+const IDX_C: usize = 4;
+const IDX_R: usize = 5;
+const IDX_BL: usize = 6;
+const IDX_B: usize = 7;
+const IDX_BR: usize = 8;
+const NUM_REGIONS: usize = 9;
+
+// We split each group (excluding the ones at the edges of the image) in five
+// parts:
+//
+//   tTTTTTTTTt
+//   LCCCCCCCCR
+//   LCCCCCCCCR
+//   LCCCCCCCCR
+//   bBBBBBBBBb
+//
+// We can always render the C part immediately.
+//
+// We can render L when we have R from the group on the left (and vice-versa).
+// Similarly for T and B.
+//
+// For t/b, we wait until we have all the 4 groups around it available.
+//
+// Upon receiving a group's data, we store the data for T, B, L and R (including
+// additional border pixels), then we proceed with rendering C, then check if
+// any more pieces are renderable.
+//
+// We free border buffers as soon as we successfully render them. This implies that
+// we treat each pass as completely independent.
+//
+// TODO(veluca): try to merge the rendering of L/R into the rendering of C, and
+// that of t/b in T/B. This can be done if there is enough padding available in
+// the input buffers.
 struct InputBuffer {
-    // One buffer per channel.
-    data: Vec<Option<OwnedRawImage>>,
-    completed_passes: usize,
+    // Buffers for each of the different regions of the image. If a buffer
+    // is not stored, the corresponding vector position contains an empty image.
+    // The buffers are allocated with a size that allows storing also all the
+    // padding needed from other groups, to avoid additional copies.
+    buffers: [Vec<OwnedRawImage>; NUM_REGIONS],
+}
+
+impl InputBuffer {
+    fn new(num_channels: usize) -> Result<Self> {
+        Ok(Self {
+            buffers: array::from_fn(|_| {
+                (0..num_channels).map(|_| OwnedRawImage::empty()).collect()
+            }),
+        })
+    }
 }
 
 pub struct LowMemoryRenderPipeline {
@@ -58,14 +109,24 @@ pub struct LowMemoryRenderPipeline {
 }
 
 impl LowMemoryRenderPipeline {
-    // TODO(veluca): most of this logic will need to change to ensure better cache utilization and
-    // lower memory usage.
-    fn render_with_new_group(
+    fn set_buffer_for_group(
         &mut self,
         new_group_id: usize,
         buffer_splitter: &mut BufferSplitter,
+        channel: usize,
+        buf: OwnedRawImage,
     ) -> Result<()> {
         let (gx, gy) = self.shared.group_position(new_group_id);
+
+        self.input_buffers[new_group_id].buffers[IDX_C][channel] = buf;
+
+        // If we don't yet have all the center buffers for this group, do nothing.
+        if self.input_buffers[new_group_id].buffers[IDX_C]
+            .iter()
+            .any(|x| x.byte_size() == (0, 0))
+        {
+            return Ok(());
+        }
 
         // We put groups that are 2 afar here, because even if they could not have become
         // renderable, they might have become freeable.
@@ -194,16 +255,6 @@ impl RenderPipeline for LowMemoryRenderPipeline {
     type Buffer = RowBuffer;
 
     fn new_from_shared(shared: RenderPipelineShared<Self::Buffer>) -> Result<Self> {
-        let mut input_buffers = vec![];
-        for _ in 0..shared.group_chan_ready_passes.len() {
-            input_buffers.push(InputBuffer {
-                data: vec![],
-                completed_passes: 0,
-            });
-            for _ in 0..shared.group_chan_ready_passes[0].len() {
-                input_buffers.last_mut().unwrap().data.push(None);
-            }
-        }
         let nc = shared.channel_info[0].len();
         let mut previous_inout: Vec<_> = (0..nc).map(|x| (0usize, x)).collect();
         let mut stage_input_buffer_index = vec![];
@@ -328,8 +379,13 @@ impl RenderPipeline for LowMemoryRenderPipeline {
             })
             .collect();
 
+        let mut input_buffers = vec![];
+        for _ in 0..shared.group_chan_ready_passes.len() {
+            input_buffers.push(InputBuffer::new(nc)?);
+        }
+
         Ok(Self {
-            input_buffers,
+            input_buffers: vec![],
             stage_input_buffer_index,
             row_buffers,
             padding_was_rendered: false,
@@ -367,10 +423,9 @@ impl RenderPipeline for LowMemoryRenderPipeline {
             channel,
             T::DATA_TYPE_ID,
         );
-        self.input_buffers[group_id].data[channel] = Some(buf.into_raw());
         self.shared.group_chan_ready_passes[group_id][channel] += num_passes;
 
-        self.render_with_new_group(group_id, buffer_splitter)
+        self.set_buffer_for_group(group_id, buffer_splitter, channel, buf.into_raw())
     }
 
     fn check_buffer_sizes(&self, buffers: &mut [Option<JxlOutputBuffer>]) -> Result<()> {

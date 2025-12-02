@@ -20,6 +20,13 @@ pub struct OwnedRawImage {
 }
 
 impl OwnedRawImage {
+    pub fn empty() -> Self {
+        Self {
+            data: RawImageBuffer::empty(),
+            offset: (0, 0),
+            padding: (0, 0),
+        }
+    }
     pub fn new_zeroed_with_padding(
         byte_size: (usize, usize),
         offset: (usize, usize),

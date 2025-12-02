@@ -101,7 +101,7 @@ impl RawImageBuffer {
         }
     }
 
-    fn empty() -> Self {
+    pub(super) fn empty() -> Self {
         // Safety note: the safety invariant is trivially verified.
         RawImageBuffer {
             buf: null_mut(),
