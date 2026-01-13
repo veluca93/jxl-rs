@@ -14,14 +14,15 @@ use crate::error::Result;
 use crate::image::{Image, ImageDataType, OwnedRawImage, Rect};
 use crate::render::MAX_BORDER;
 use crate::render::buffer_splitter::{BufferSplitter, SaveStageBufferInfo};
-use crate::render::internal::Stage;
+use crate::render::internal::{ChannelInfo, Stage};
+use crate::render::low_memory_pipeline::render_rect::apply_x_padding;
 use crate::util::{ShiftRightCeil, tracing_wrappers::*};
 
 use super::RenderPipeline;
 use super::internal::{RenderPipelineShared, RunInOutStage, RunInPlaceStage};
 
 mod helpers;
-mod render_group;
+mod render_rect;
 pub(super) mod row_buffers;
 mod run_stage;
 mod save;
@@ -49,7 +50,8 @@ pub struct LowMemoryRenderPipeline {
     // The amount of pixels that we need to read (for every channel) in non-edge groups to run all
     // stages correctly.
     input_border_pixels: Vec<(usize, usize)>,
-    has_nontrivial_border: bool,
+    // Size of the border, in image (i.e. non-downsampled) pixels.
+    border_size: (usize, usize),
     // For every stage, the downsampling level of *any* channel that the stage uses at that point.
     // Note that this must be equal across all the used channels.
     downsampling_for_stage: Vec<(usize, usize)>,
@@ -103,7 +105,7 @@ impl LowMemoryRenderPipeline {
                 let (gx, gy) = self.shared.group_position(g);
                 let mut fully_ready_passes = ready_passes;
                 // Here we assume that we never need more than one group worth of border.
-                if self.has_nontrivial_border {
+                if self.border_size.0 != 0 || self.border_size.1 != 0 {
                     for dy in -1..=1 {
                         let igy = gy as isize + dy;
                         if igy < 0 || igy >= self.shared.group_count.1 as isize {
@@ -159,7 +161,184 @@ impl LowMemoryRenderPipeline {
                     origin,
                 );
 
-                self.render_group((gx, gy), &mut local_buffers)?;
+                let mut data = vec![];
+
+                for c in 0..self.shared.num_channels() {
+                    let ChannelInfo {
+                        ty,
+                        downsample: (dx, dy),
+                    } = self.shared.channel_info[0][c];
+                    let ty = ty.expect("Channel info should be populated at this point");
+
+                    let bx = self.border_size.0 >> dx;
+                    let bxb = bx * ty.size();
+                    let by = self.border_size.1 >> dy;
+
+                    let gxs = 1 << (self.shared.log_group_size - dx as usize);
+                    let gxsb = gxs * ty.size();
+                    let gys = 1 << (self.shared.log_group_size - dy as usize);
+
+                    let mut buf = OwnedRawImage::new_zeroed_with_padding(
+                        ((gxs + bx * 2) * ty.size(), gys + by * 2),
+                        (0, 0),
+                        (0, 0),
+                    )?;
+
+                    let gys_real = gys.min(
+                        self.input_buffers[g].data[c]
+                            .as_ref()
+                            .unwrap()
+                            .byte_size()
+                            .1,
+                    );
+                    {
+                        let src = self.input_buffers[g].data[c].as_ref().unwrap();
+                        let bs = gxsb.min(src.byte_size().0);
+                        for y in 0..gys_real {
+                            buf.row_mut(y + by)[bxb..bxb + bs].copy_from_slice(&src.row(y)[..bs]);
+                        }
+                    }
+                    if gx > 0 && bx > 0 {
+                        let src = &self.input_buffers[g - 1].data[c].as_ref().unwrap();
+                        for y in 0..gys_real {
+                            buf.row_mut(y + by)[..bxb].copy_from_slice(&src.row(y)[gxsb - bxb..]);
+                        }
+                    }
+                    if gx + 1 < self.shared.group_count.0 && bx > 0 {
+                        let src = &self.input_buffers[g + 1].data[c].as_ref().unwrap();
+                        for y in 0..gys_real {
+                            buf.row_mut(y + by)[bxb + gxsb..].copy_from_slice(&src.row(y)[..bxb]);
+                        }
+                        // TODO(veluca): handle this when saving the leftmost border of the current group.
+                        let data_next = self.shared.group_size(g + 1).0.shrc(dx);
+                        if data_next < bx {
+                            for y in 0..gys_real {
+                                apply_x_padding(
+                                    bxb as isize,
+                                    ty,
+                                    buf.row_mut(y + by),
+                                    (gxs + data_next) as isize..(gxs + bx) as isize,
+                                    0..(gxs + data_next) as isize,
+                                );
+                            }
+                        }
+                    }
+                    if gy > 0 && by > 0 {
+                        {
+                            let src = self.input_buffers[g - self.shared.group_count.0].data[c]
+                                .as_ref()
+                                .unwrap();
+                            let bs = gxsb.min(src.byte_size().0);
+                            for y in 0..by {
+                                buf.row_mut(y)[bxb..bxb + bs]
+                                    .copy_from_slice(&src.row(gys - by + y)[..bs]);
+                            }
+                        }
+                        if gx > 0 && bx > 0 {
+                            let src = &self.input_buffers[g - self.shared.group_count.0 - 1].data
+                                [c]
+                                .as_ref()
+                                .unwrap();
+                            for y in 0..by {
+                                buf.row_mut(y)[..bxb]
+                                    .copy_from_slice(&src.row(gys - by + y)[gxsb - bxb..]);
+                            }
+                        }
+                        if gx + 1 < self.shared.group_count.0 && bx > 0 {
+                            let src = &self.input_buffers[g - self.shared.group_count.0 + 1].data
+                                [c]
+                                .as_ref()
+                                .unwrap();
+                            for y in 0..by {
+                                buf.row_mut(y)[bxb + gxsb..]
+                                    .copy_from_slice(&src.row(gys - by + y)[..bxb]);
+                            }
+                            let data_next = self
+                                .shared
+                                .group_size(g - self.shared.group_count.0 + 1)
+                                .0
+                                .shrc(dx);
+                            if data_next < bx {
+                                for y in 0..by {
+                                    apply_x_padding(
+                                        bxb as isize,
+                                        ty,
+                                        buf.row_mut(y),
+                                        (gxs + data_next) as isize..(gxs + bx) as isize,
+                                        0..(gxs + data_next) as isize,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    if gy + 1 < self.shared.group_count.1 && by > 0 {
+                        {
+                            let src = self.input_buffers[g + self.shared.group_count.0].data[c]
+                                .as_ref()
+                                .unwrap();
+                            let bs = gxsb.min(src.byte_size().0);
+                            for y in 0..by {
+                                buf.row_mut(gys + by + y)[bxb..bxb + bs]
+                                    .copy_from_slice(&src.row(y)[..bs]);
+                            }
+                        }
+                        if gx > 0 && bx > 0 {
+                            let src = &self.input_buffers[g + self.shared.group_count.0 - 1].data
+                                [c]
+                                .as_ref()
+                                .unwrap();
+                            for y in 0..by {
+                                buf.row_mut(gys + by + y)[..bxb]
+                                    .copy_from_slice(&src.row(y)[gxsb - bxb..]);
+                            }
+                        }
+                        if gx + 1 < self.shared.group_count.0 && bx > 0 {
+                            let src = &self.input_buffers[g + self.shared.group_count.0 + 1].data
+                                [c]
+                                .as_ref()
+                                .unwrap();
+                            for y in 0..by {
+                                buf.row_mut(gys + by + y)[bxb + gxsb..]
+                                    .copy_from_slice(&src.row(y)[..bxb]);
+                            }
+                            let data_next = self
+                                .shared
+                                .group_size(g + self.shared.group_count.0 + 1)
+                                .0
+                                .shrc(dx);
+                            if data_next < bx {
+                                for y in 0..by {
+                                    apply_x_padding(
+                                        bxb as isize,
+                                        ty,
+                                        buf.row_mut(gys + by + y),
+                                        (gxs + data_next) as isize..(gxs + bx) as isize,
+                                        0..(gxs + data_next) as isize,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    data.push(buf);
+                }
+
+                let rect = Rect {
+                    size: self.shared.group_size(g),
+                    origin: self.shared.group_offset(g),
+                }
+                .clip(self.shared.input_size);
+
+                let mut rects: Vec<_> = data
+                    .iter_mut()
+                    .map(|x| {
+                        x.get_rect_mut(Rect {
+                            origin: (0, 0),
+                            size: x.byte_size(),
+                        })
+                    })
+                    .collect();
+
+                self.render_rect(rect, &mut rects, &mut local_buffers)?;
 
                 self.input_buffers[g].completed_passes = fully_ready_passes;
             }
@@ -169,7 +348,7 @@ impl LowMemoryRenderPipeline {
         for g in possible_groups.iter().copied() {
             let (gx, gy) = self.shared.group_position(g);
             let mut neigh_complete_passes = self.input_buffers[g].completed_passes;
-            if self.has_nontrivial_border {
+            if self.border_size.0 != 0 || self.border_size.1 != 0 {
                 for dy in -1..=1 {
                     let igy = gy as isize + dy;
                     if igy < 0 || igy >= self.shared.group_count.1 as isize {
@@ -385,6 +564,24 @@ impl RenderPipeline for LowMemoryRenderPipeline {
             })
             .collect();
 
+        let mut border_size = (0, 0);
+        for c in 0..nc {
+            border_size.0 = border_size
+                .0
+                .max(border_pixels[c].0 << shared.channel_info[0][c].downsample.0);
+            border_size.1 = border_size
+                .1
+                .max(border_pixels[c].1 << shared.channel_info[0][c].downsample.1);
+        }
+        for s in 0..shared.stages.len() {
+            border_size.0 = border_size
+                .0
+                .max(border_pixels_per_stage[s].0 << downsampling_for_stage[s].0);
+            border_size.1 = border_size
+                .1
+                .max(border_pixels_per_stage[s].1 << downsampling_for_stage[s].1);
+        }
+
         Ok(Self {
             input_buffers,
             stage_input_buffer_index,
@@ -392,7 +589,7 @@ impl RenderPipeline for LowMemoryRenderPipeline {
             padding_was_rendered: false,
             save_buffer_info,
             stage_output_border_pixels: border_pixels_per_stage,
-            has_nontrivial_border: border_pixels.iter().any(|x| *x != (0, 0)),
+            border_size,
             input_border_pixels: border_pixels,
             local_states: shared
                 .stages
