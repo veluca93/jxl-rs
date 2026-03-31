@@ -16,16 +16,14 @@ use crate::{
             common::{make_pixel, precompute_references},
         },
         predict::{PredictionData, WeightedPredictorState, clamped_gradient},
-        tree::{
-            FlatTreeNode, NUM_NONREF_PROPERTIES, PROPERTIES_PER_PREVCHAN, TreeNode, predict_flat,
-        },
+        tree::{FlatTree, NUM_NONREF_PROPERTIES, PROPERTIES_PER_PREVCHAN, TreeNode},
     },
     headers::modular::GroupHeader,
     image::Image,
 };
 
 pub struct NoWpTree {
-    flat_nodes: Vec<FlatTreeNode>,
+    flat_tree: FlatTree,
     references: Image<i32>,
     property_buffer: Vec<i32>,
 }
@@ -48,10 +46,10 @@ impl NoWpTree {
         property_buffer[0] = channel as i32;
         property_buffer[1] = stream as i32;
 
-        let flat_nodes = Tree::build_flat_tree(&nodes)?;
+        let flat_tree = Tree::build_flat_tree(&nodes)?;
 
         Ok(Self {
-            flat_nodes,
+            flat_tree,
             references,
             property_buffer,
         })
@@ -76,8 +74,7 @@ impl ModularChannelDecoder for NoWpTree {
         br: &mut BitReader,
         histograms: &Histograms,
     ) -> i32 {
-        let prediction_result = predict_flat(
-            &self.flat_nodes,
+        let prediction_result = self.flat_tree.predict(
             prediction_data,
             xsize,
             None,
@@ -130,8 +127,7 @@ impl ModularChannelDecoder for GeneralTree {
         br: &mut BitReader,
         histograms: &Histograms,
     ) -> i32 {
-        let prediction_result = predict_flat(
-            &self.no_wp_tree.flat_nodes,
+        let prediction_result = self.no_wp_tree.flat_tree.predict(
             prediction_data,
             xsize,
             Some(&mut self.wp_state),
