@@ -7,7 +7,7 @@ use std::{collections::VecDeque, ops::Range};
 
 use crate::{
     bit_reader::BitReader,
-    entropy_coding::decode::{Histograms, SymbolReader},
+    entropy_coding::decode::{Histograms, SymbolReader, unpack_signed},
     error::Result,
     frame::modular::{
         ModularChannel, Predictor, Tree,
@@ -383,8 +383,33 @@ impl ModularChannelDecoder for NoTree {
     }
 }
 
+pub struct NoTreeSingleSymbol {
+    value: i32,
+}
+
+impl ModularChannelDecoder for NoTreeSingleSymbol {
+    const NEEDS_TOP: bool = false;
+    const NEEDS_TOPTOP: bool = false;
+
+    fn init_row(&mut self, _: &mut [&mut ModularChannel], _: usize, _: usize) {}
+
+    #[inline(always)]
+    fn decode_one(
+        &mut self,
+        _: PredictionData,
+        _: (usize, usize),
+        _: usize,
+        _: &mut SymbolReader,
+        _: &mut BitReader,
+        _: &Histograms,
+    ) -> i32 {
+        self.value
+    }
+}
+
 #[allow(clippy::large_enum_variant)]
 pub enum TreeSpecialCase {
+    NoTreeSingleSymbol(NoTreeSingleSymbol),
     NoTree(NoTree),
     NoWp(NoWpTree),
     WpOnlyConfig420(WpOnlyLookupConfig420),
@@ -467,6 +492,11 @@ pub fn specialize_tree(
         },
     ] = &*pruned_tree
     {
+        if let Some(sym) = tree.histograms.single_symbol(*id as usize) {
+            return Ok(TreeSpecialCase::NoTreeSingleSymbol(NoTreeSingleSymbol {
+                value: unpack_signed(sym),
+            }));
+        }
         return Ok(TreeSpecialCase::NoTree(NoTree {
             clustered_ctx: *id as usize,
         }));
