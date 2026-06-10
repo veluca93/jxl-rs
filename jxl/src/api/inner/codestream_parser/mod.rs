@@ -65,8 +65,11 @@ struct FrameStartInfo {
     visible_count_before: usize,
 }
 
+use crate::image::BufferPool;
+use std::sync::Arc;
+
 pub(super) struct CodestreamParser {
-    // TODO(veluca): this would probably be cleaner with some kind of state enum.
+    // ... (rest of fields)
     pub(super) file_header: Option<FileHeader>,
     notified_image_info: bool,
     icc_parser: Option<IncrementalIccReader>,
@@ -147,10 +150,12 @@ pub(super) struct CodestreamParser {
     pub frame_callback: Option<Box<FrameCallback>>,
     #[cfg(test)]
     pub decoded_frames: usize,
+
+    pub(super) pool: Arc<BufferPool>,
 }
 
 impl CodestreamParser {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(pool: Arc<BufferPool>) -> Self {
         Self {
             file_header: None,
             notified_image_info: false,
@@ -195,6 +200,7 @@ impl CodestreamParser {
             frame_callback: None,
             #[cfg(test)]
             decoded_frames: 0,
+            pool,
         }
     }
 
@@ -341,7 +347,7 @@ impl CodestreamParser {
     /// Rewinds for animation loop replay, keeping pixel_format setting.
     pub(super) fn rewind(&mut self) -> Option<JxlPixelFormat> {
         let pixel_format = self.pixel_format.take();
-        *self = Self::new();
+        *self = Self::new(self.pool.clone());
         self.pixel_format = pixel_format.clone();
         pixel_format
     }

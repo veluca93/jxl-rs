@@ -30,10 +30,10 @@ pub(super) struct RawImageBuffer {
     // Note that wrapper structs around RawImageBuffer might have a safety invariant that declares
     // that the struct has write access to the accessible bytes of a RawImageBuffer; in that case,
     // that is equivalent to saying that `buf` is *also* valid for *writes*.
-    buf: *mut u8,
-    bytes_per_row: usize,
-    num_rows: usize,
-    bytes_between_rows: usize,
+    pub(super) buf: *mut u8,
+    pub(super) bytes_per_row: usize,
+    pub(super) num_rows: usize,
+    pub(super) bytes_between_rows: usize,
 }
 
 // SAFETY: The safety invariant on RawImageBuffer enforces ownership rules on the contained data,
@@ -95,6 +95,18 @@ impl RawImageBuffer {
             bytes_between_rows,
             num_rows,
         }
+    }
+
+    pub(super) unsafe fn configure(
+        &mut self,
+        bytes_per_row: usize,
+        num_rows: usize,
+        bytes_between_rows: usize,
+    ) {
+        RawImageBuffer::check_vals(num_rows, bytes_per_row, bytes_between_rows);
+        self.bytes_per_row = bytes_per_row;
+        self.num_rows = num_rows;
+        self.bytes_between_rows = bytes_between_rows;
     }
 
     fn empty() -> Self {
@@ -203,6 +215,8 @@ impl RawImageBuffer {
     pub(super) unsafe fn try_allocate(
         byte_size: (usize, usize),
         copy_from: Option<&RawImageBuffer>,
+        zero_fill: bool,
+        alloc_size: usize,
     ) -> Result<RawImageBuffer> {
         let (bytes_per_row, num_rows) = byte_size;
         // To simplify modular transform logic, we allow empty images, because some modular
@@ -224,7 +238,13 @@ impl RawImageBuffer {
             .checked_add(bytes_per_row)
             .unwrap();
         assert_ne!(allocation_len, 0);
-        let layout = Layout::from_size_align(allocation_len, CACHE_LINE_BYTE_SIZE).unwrap();
+        assert!(
+            alloc_size >= allocation_len,
+            "alloc_size {} must be >= allocation_len {}",
+            alloc_size,
+            allocation_len
+        );
+        let layout = Layout::from_size_align(alloc_size, CACHE_LINE_BYTE_SIZE).unwrap();
         let memory = if let Some(src) = copy_from {
             // SAFETY: we just checked that allocation_len is not 0.
             let memory = unsafe { alloc(layout) };
@@ -241,9 +261,16 @@ impl RawImageBuffer {
             // The caller ensures that `src` is valid for reads of `data_len` bytes.
             unsafe { std::ptr::copy_nonoverlapping(src.buf, memory, data_len) };
             memory
-        } else {
+        } else if zero_fill {
             // SAFETY: we just checked that allocation_len is not 0.
             let memory = unsafe { alloc_zeroed(layout) };
+            if memory.is_null() {
+                return Err(Error::ImageOutOfMemory(bytes_per_row, num_rows));
+            }
+            memory
+        } else {
+            // SAFETY: we just checked that allocation_len is not 0.
+            let memory = unsafe { alloc(layout) };
             if memory.is_null() {
                 return Err(Error::ImageOutOfMemory(bytes_per_row, num_rows));
             }
@@ -267,10 +294,10 @@ impl RawImageBuffer {
     /// The caller must ensure that the data referenced by self -- *all*
     /// self.minimum_allocation_size() bytes starting from self.buf, not just the accessible bytes
     /// -- can be read.
-    pub(super) unsafe fn try_clone(&self) -> Result<Self> {
+    pub(super) unsafe fn try_clone(&self, alloc_size: usize) -> Result<Self> {
         // SAFETY: the safety requirement of this method matches the safety requirement
         // of `try_allocate`.
-        unsafe { RawImageBuffer::try_allocate(self.byte_size(), Some(self)) }
+        unsafe { RawImageBuffer::try_allocate(self.byte_size(), Some(self), false, alloc_size) }
     }
 
     /// Deallocates an owning buffer that was allocated by try_allocate.

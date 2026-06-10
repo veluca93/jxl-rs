@@ -39,7 +39,7 @@ use crate::{
         frame_header::{Encoding, FrameHeader},
         toc::Toc,
     },
-    image::Image,
+    image::{BufferPool, Image},
     render::RenderPipeline,
     util::{CeilLog2, Xorshift128Plus, tracing_wrappers::*},
 };
@@ -56,6 +56,7 @@ fn upsample_lf_group(
     lf_image: &[Image<f32>; 3],
     header: &FrameHeader,
     factors: &CustomTransformData,
+    pool: &Arc<BufferPool>,
 ) -> Result<()> {
     let group_dim = header.group_dim();
     let lf_group_dim = group_dim / 8;
@@ -70,9 +71,17 @@ fn upsample_lf_group(
 
     // Temporary buffer for 8 output rows
     // We reuse this buffer for each iteration to minimize allocation
-    let mut temp_out_buf: [_; 8] = std::array::from_fn(|_| vec![0.0f32; max_width + 128]);
+    let mut temp_out_buf = Vec::with_capacity(8);
+    for _ in 0..8 {
+        temp_out_buf.push(Image::new_in_pool((max_width + 128, 1), pool)?);
+    }
+    let mut temp_out_buf: [Image<f32>; 8] = temp_out_buf.try_into().unwrap();
 
-    let mut input_rows_storage: [_; 5] = std::array::from_fn(|_| vec![0.0; max_width / 8 + 32]);
+    let mut input_rows_storage = Vec::with_capacity(5);
+    for _ in 0..5 {
+        input_rows_storage.push(Image::new_in_pool((max_width / 8 + 32, 1), pool)?);
+    }
+    let mut input_rows_storage: [Image<f32>; 5] = input_rows_storage.try_into().unwrap();
 
     for c in 0..3 {
         let lf_img = &lf_image[c];
@@ -103,29 +112,31 @@ fn upsample_lf_group(
                 let iy = mirror(iy, lf_height);
 
                 let storage = &mut input_rows_storage[(dy + 2) as usize];
+                let storage_row = storage.row_mut(0);
 
                 let save_start = if start_x == lf_x0 { 2 } else { 0 };
                 let save_end = save_start + copy_width;
 
-                storage[save_start..save_end].copy_from_slice(&lf_img.row(iy)[start_x..end_x]);
+                storage_row[save_start..save_end].copy_from_slice(&lf_img.row(iy)[start_x..end_x]);
 
                 if start_x == lf_x0 {
-                    storage[0] = storage[2 + mirror(-2, copy_width)];
-                    storage[1] = storage[2 + mirror(-1, copy_width)];
+                    storage_row[0] = storage_row[2 + mirror(-2, copy_width)];
+                    storage_row[1] = storage_row[2 + mirror(-1, copy_width)];
                 }
                 if end_x == lf_x1 {
-                    storage[save_end] = storage[save_start + mirror(save_end as isize, save_end)];
-                    storage[save_end + 1] =
-                        storage[save_start + mirror(save_end as isize + 1, save_end)];
+                    storage_row[save_end] =
+                        storage_row[save_start + mirror(save_end as isize, save_end)];
+                    storage_row[save_end + 1] =
+                        storage_row[save_start + mirror(save_end as isize + 1, save_end)];
                 }
             }
 
-            let input_rows_refs = input_rows_storage.iter().map(|x| &x[..]).collect();
+            let input_rows_refs = input_rows_storage.iter().map(|x| x.row(0)).collect();
             let input_channels = Channels::new(input_rows_refs, 1, 5);
 
             {
                 // Prepare output refs
-                let output_rows_refs = temp_out_buf.iter_mut().map(|x| &mut x[..]).collect();
+                let output_rows_refs = temp_out_buf.iter_mut().map(|x| x.row_mut(0)).collect();
                 let mut output_channels = ChannelsMut::new(output_rows_refs, 1, 8);
 
                 upsample.process_row_chunk(
@@ -142,7 +153,7 @@ fn upsample_lf_group(
             for (i, buf) in temp_out_buf.iter().enumerate() {
                 let out_y = base_y + i;
                 if out_y < out_height {
-                    out_img.row_mut(out_y)[..out_width].copy_from_slice(&buf[..out_width]);
+                    out_img.row_mut(out_y)[..out_width].copy_from_slice(&buf.row(0)[..out_width]);
                 }
             }
         }
@@ -412,9 +423,13 @@ impl Frame {
 
         let lf_global = self.lf_global.as_mut().unwrap();
 
-        lf_global
-            .modular_global
-            .read_section0(&self.header, &lf_global.tree, br, allow_partial)?;
+        lf_global.modular_global.read_section0(
+            &self.header,
+            &lf_global.tree,
+            br,
+            allow_partial,
+            &self.decoder_state.pool,
+        )?;
 
         Ok(())
     }
@@ -437,6 +452,7 @@ impl Frame {
                 self.lf_image.as_mut().unwrap(),
                 &mut self.quant_lf,
                 br,
+                &self.decoder_state.pool,
             )?;
         }
 
@@ -447,6 +463,7 @@ impl Frame {
             &self.header,
             &lf_global.tree,
             br,
+            &self.decoder_state.pool,
         )?;
         if self.header.encoding == Encoding::VarDCT {
             info!("decoding HF metadata with group id {}", group);
@@ -458,6 +475,7 @@ impl Frame {
                 &lf_global.tree,
                 hf_meta,
                 br,
+                &self.decoder_state.pool,
             )?;
         }
         Ok(())
@@ -721,6 +739,7 @@ impl Frame {
                     self.lf_image.as_ref().unwrap(),
                     &self.header,
                     &self.decoder_state.file_header.transform_data,
+                    &self.decoder_state.pool,
                 )?;
             } else {
                 info!("Decoding VarDCT group {group}");
@@ -763,6 +782,7 @@ impl Frame {
                 &self.header,
                 &lf_global.tree,
                 br,
+                &self.decoder_state.pool,
             )?;
         }
         Ok(do_render)

@@ -201,6 +201,7 @@ impl Frame {
                 self.header.passes.num_passes as usize,
                 self.header.num_groups(),
                 self.header.num_lf_groups(),
+                &self.decoder_state.pool,
             )?;
         }
 
@@ -223,7 +224,12 @@ impl Frame {
                 pipeline!(self, p, p.mark_group_to_rerender(group));
                 Ok(())
             };
-            modular_global.process_output(&self.header, true, &mut pass_to_pipeline)?;
+            modular_global.process_output(
+                &self.header,
+                true,
+                &mut pass_to_pipeline,
+                &self.decoder_state.pool,
+            )?;
         }
 
         // STEP 3: decode the groups, eagerly rendering VarDCT channels and noise.
@@ -255,7 +261,12 @@ impl Frame {
                 );
                 Ok(())
             };
-            modular_global.process_output(&self.header, false, &mut pass_to_pipeline)?;
+            modular_global.process_output(
+                &self.header,
+                false,
+                &mut pass_to_pipeline,
+                &self.decoder_state.pool,
+            )?;
 
             // STEP 5: re-render VarDCT/noise data in rendered groups for which it was
             // not rendered, or re-send to pipeline modular channels that were not

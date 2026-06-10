@@ -3,11 +3,15 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use std::{fmt::Debug, marker::PhantomData};
+use std::{
+    fmt::Debug,
+    marker::PhantomData,
+    sync::{Arc, Weak},
+};
 
 use crate::{error::Result, util::CACHE_LINE_BYTE_SIZE};
 
-use super::{Rect, internal::RawImageBuffer};
+use super::{Rect, internal::RawImageBuffer, pool::BufferPool};
 
 pub struct OwnedRawImage {
     // Safety invariant: all the accessible bytes of `self.data` are initialized, and
@@ -17,6 +21,8 @@ pub struct OwnedRawImage {
     pub(super) data: RawImageBuffer,
     offset: (usize, usize),
     padding: (usize, usize),
+    pub(super) pool: Option<Weak<BufferPool>>,
+    pub(super) allocation_size: usize,
 }
 
 impl OwnedRawImage {
@@ -34,19 +40,92 @@ impl OwnedRawImage {
         if !(padding.0 + byte_size.0).is_multiple_of(CACHE_LINE_BYTE_SIZE) {
             padding.0 += CACHE_LINE_BYTE_SIZE - (padding.0 + byte_size.0) % CACHE_LINE_BYTE_SIZE;
         }
+        let bytes_per_row = byte_size.0 + padding.0;
+        let num_rows = byte_size.1 + padding.1;
+        let allocation_len = num_rows * bytes_per_row;
         Ok(Self {
             // Safety note: the returned memory is initialized and part of a single allocation of
             // the correct length.
             // SAFETY: `copy_from` is `None`.
             data: unsafe {
-                RawImageBuffer::try_allocate(
-                    (byte_size.0 + padding.0, byte_size.1 + padding.1),
-                    None,
-                )?
+                RawImageBuffer::try_allocate((bytes_per_row, num_rows), None, true, allocation_len)?
             },
             offset,
             padding,
+            pool: None,
+            allocation_size: allocation_len,
         })
+    }
+
+    pub fn new_in_pool_with_padding(
+        byte_size: (usize, usize),
+        offset: (usize, usize),
+        mut padding: (usize, usize),
+        pool: &std::sync::Arc<BufferPool>,
+        zero_fill: bool,
+    ) -> Result<Self> {
+        if !(padding.0 + byte_size.0).is_multiple_of(CACHE_LINE_BYTE_SIZE) {
+            padding.0 += CACHE_LINE_BYTE_SIZE - (padding.0 + byte_size.0) % CACHE_LINE_BYTE_SIZE;
+        }
+        let bytes_per_row = byte_size.0 + padding.0;
+        let num_rows = byte_size.1 + padding.1;
+        let bytes_between_rows =
+            bytes_per_row.div_ceil(CACHE_LINE_BYTE_SIZE) * CACHE_LINE_BYTE_SIZE;
+        let req_size = num_rows * bytes_between_rows; // total allocation size (since bytes_per_row is aligned, req_size = num_rows * bytes_per_row)
+
+        // Find size class
+        let idx = super::pool::COMMON_SIZES
+            .iter()
+            .position(|&s| s >= req_size);
+
+        if let Some(idx) = idx {
+            let size_class = super::pool::COMMON_SIZES[idx];
+            if let Some(mut img) = pool.alloc(req_size) {
+                // Configure the retrieved buffer
+                unsafe {
+                    img.data
+                        .configure(bytes_per_row, num_rows, bytes_between_rows);
+                }
+                img.offset = offset;
+                img.padding = padding;
+                img.pool = Some(Arc::downgrade(pool));
+                img.allocation_size = size_class;
+
+                if zero_fill {
+                    unsafe { std::ptr::write_bytes(img.data.buf, 0, size_class) };
+                }
+                return Ok(img);
+            }
+
+            // Allocate new buffer of size_class size
+            let data = unsafe {
+                RawImageBuffer::try_allocate(
+                    (bytes_per_row, num_rows),
+                    None,
+                    zero_fill,
+                    size_class,
+                )?
+            };
+            Ok(Self {
+                data,
+                offset,
+                padding,
+                pool: Some(Arc::downgrade(pool)),
+                allocation_size: size_class,
+            })
+        } else {
+            // Too large for pool, allocate exact size and don't pool
+            let data = unsafe {
+                RawImageBuffer::try_allocate((bytes_per_row, num_rows), None, zero_fill, req_size)?
+            };
+            Ok(Self {
+                data,
+                offset,
+                padding,
+                pool: None,
+                allocation_size: req_size,
+            })
+        }
     }
 
     pub fn get_rect_including_padding_mut(&mut self, rect: Rect) -> RawImageRectMut<'_> {
@@ -120,15 +199,32 @@ impl OwnedRawImage {
             // SAFETY: we own the data that self.data references, so it is all accessible.
             // Moreover, it is initialized and try_clone creates a copy, so the resulting data is
             // owned and initialized.
-            data: unsafe { self.data.try_clone()? },
+            data: unsafe { self.data.try_clone(self.allocation_size)? },
             offset: self.offset,
             padding: self.padding,
+            pool: self.pool.clone(),
+            allocation_size: self.allocation_size,
         })
     }
 }
 
 impl Drop for OwnedRawImage {
     fn drop(&mut self) {
+        if let Some(ref weak_pool) = self.pool {
+            if let Some(pool) = weak_pool.upgrade() {
+                // Transfer resources to a non-pooled image to avoid recursion
+                let img = OwnedRawImage {
+                    data: self.data,
+                    offset: self.offset,
+                    padding: self.padding,
+                    pool: None,
+                    allocation_size: self.allocation_size,
+                };
+                self.data.buf = std::ptr::null_mut(); // Prevent double free
+                pool.free(img);
+                return;
+            }
+        }
         // SAFETY: we own the data referenced by self.data, and it was allocated by
         // RawImageBuffer::try_allocate.
         unsafe {

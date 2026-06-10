@@ -5,10 +5,12 @@
 
 use std::ops::DerefMut;
 
+use std::sync::Arc;
+
 use crate::{
     error::Result,
     frame::modular::{IMAGE_OFFSET, IMAGE_PADDING},
-    image::Image,
+    image::{BufferPool, Image},
     util::AtomicRefMut,
 };
 
@@ -18,6 +20,7 @@ pub fn with_buffers<T>(
     buffers: &[ModularBufferInfo],
     indices: &[usize],
     grid: usize,
+    pool: &Arc<BufferPool>,
     f: impl FnOnce(Vec<&mut ModularChannel>) -> Result<T>,
 ) -> Result<T> {
     let mut bufs = vec![];
@@ -28,7 +31,13 @@ pub fn with_buffers<T>(
         let mut data = b.data.borrow_mut();
         if data.is_none() {
             *data = Some(ModularChannel {
-                data: Image::new_with_padding(b.size, IMAGE_OFFSET, IMAGE_PADDING)?,
+                data: Image::new_in_pool_with_padding(
+                    b.size,
+                    IMAGE_OFFSET,
+                    IMAGE_PADDING,
+                    pool,
+                    false,
+                )?,
                 auxiliary_data: None,
                 shift: buf.info.shift,
                 bit_depth: buf.info.bit_depth,

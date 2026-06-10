@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use std::{fmt::Debug, marker::PhantomData};
+use std::{fmt::Debug, marker::PhantomData, sync::Arc};
 
 use crate::{
     error::Result,
@@ -11,7 +11,7 @@ use crate::{
     util::{CACHE_LINE_BYTE_SIZE, tracing_wrappers::*},
 };
 
-use super::{ImageDataType, OwnedRawImage, RawImageRect, RawImageRectMut, Rect};
+use super::{BufferPool, ImageDataType, OwnedRawImage, RawImageRect, RawImageRectMut, Rect};
 
 #[repr(transparent)]
 pub struct Image<T: ImageDataType> {
@@ -41,7 +41,31 @@ impl<T: ImageDataType> Image<T> {
     pub fn new(size: (usize, usize)) -> Result<Image<T>> {
         Self::new_with_padding(size, (0, 0), (0, 0))
     }
+    pub fn new_in_pool(size: (usize, usize), pool: &Arc<BufferPool>) -> Result<Self> {
+        Self::new_in_pool_with_padding(size, (0, 0), (0, 0), pool, false)
+    }
 
+    pub fn new_zeroed_in_pool(size: (usize, usize), pool: &Arc<BufferPool>) -> Result<Self> {
+        Self::new_in_pool_with_padding(size, (0, 0), (0, 0), pool, true)
+    }
+
+    pub fn new_in_pool_with_padding(
+        size: (usize, usize),
+        offset: (usize, usize),
+        padding: (usize, usize),
+        pool: &Arc<BufferPool>,
+        zero_fill: bool,
+    ) -> Result<Self> {
+        let s = T::DATA_TYPE_ID.size();
+        let img = OwnedRawImage::new_in_pool_with_padding(
+            (size.0 * s, size.1),
+            (offset.0 * s, offset.1),
+            (padding.0 * s, padding.1),
+            pool,
+            zero_fill,
+        )?;
+        Ok(Self::from_raw(img))
+    }
     pub fn new_with_value(size: (usize, usize), value: T) -> Result<Image<T>> {
         // TODO(veluca): skip zero-initializing the allocation if this becomes
         // performance-sensitive.

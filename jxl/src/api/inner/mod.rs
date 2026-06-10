@@ -16,20 +16,26 @@ mod box_parser;
 mod codestream_parser;
 mod process;
 
+use crate::image::BufferPool;
+use std::sync::Arc;
+
 /// Low-level, less-type-safe API.
 pub struct JxlDecoderInner {
     options: JxlDecoderOptions,
     box_parser: BoxParser,
     codestream_parser: CodestreamParser,
+    pool: Arc<BufferPool>,
 }
 
 impl JxlDecoderInner {
     /// Creates a new decoder with the given options and, optionally, CMS.
     pub fn new(options: JxlDecoderOptions) -> Self {
+        let pool = Arc::new(BufferPool::new(64 * 1024 * 1024)); // 64 MB limit
         JxlDecoderInner {
             options,
             box_parser: BoxParser::new(),
-            codestream_parser: CodestreamParser::new(),
+            codestream_parser: CodestreamParser::new(pool.clone()),
+            pool,
         }
     }
 
@@ -105,7 +111,7 @@ impl JxlDecoderInner {
     pub fn reset(&mut self) {
         // TODO(veluca): keep track of frame offsets for skipping.
         self.box_parser = BoxParser::new();
-        self.codestream_parser = CodestreamParser::new();
+        self.codestream_parser = CodestreamParser::new(self.pool.clone());
     }
 
     /// Rewinds for animation loop replay, keeping pixel_format setting.

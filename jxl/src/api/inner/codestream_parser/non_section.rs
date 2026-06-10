@@ -193,6 +193,7 @@ impl CodestreamParser {
             self.decoder_state = Some(DecoderState::new(
                 self.file_header.clone().unwrap(),
                 decode_options,
+                self.pool.clone(),
             ));
             return Ok(());
         }

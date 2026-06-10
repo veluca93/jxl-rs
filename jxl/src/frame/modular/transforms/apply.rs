@@ -7,6 +7,8 @@ use std::{collections::HashMap, fmt::Debug};
 
 use num_traits::FromPrimitive;
 
+use std::sync::Arc;
+
 use crate::{
     error::{Error, Result},
     frame::modular::{
@@ -20,7 +22,7 @@ use crate::{
         frame_header::FrameHeader,
         modular::{TransformId, WeightedHeader},
     },
-    image::Rect,
+    image::{BufferPool, Rect},
     util::{AtomicRef, AtomicRefMut, tracing_wrappers::*},
 };
 use std::ops::Deref;
@@ -101,6 +103,7 @@ impl TransformStepChunk {
         buffers: &[ModularBufferInfo],
         is_final: bool,
         tranform_scratch_space: &mut TransformScratchSpace,
+        pool: &Arc<BufferPool>,
     ) -> Result<()> {
         let buf_out = self.buf_out();
         let out_grid_kind = buffers[buf_out[0]].grid_kind;
@@ -127,7 +130,7 @@ impl TransformStepChunk {
                     *buffers[buf_out[i]].buffer_grid[out_grid].data.borrow_mut() =
                         Some(buffers[buf_in[i]].buffer_grid[out_grid].get_buffer(is_final)?);
                 }
-                with_buffers(buffers, buf_out, out_grid, |mut bufs| {
+                with_buffers(buffers, buf_out, out_grid, pool, |mut bufs| {
                     super::rct::do_rct_step(&mut bufs, *op, *perm);
                     Ok(())
                 })?;
@@ -141,7 +144,7 @@ impl TransformStepChunk {
                 // Nothing to do, just bookkeeping.
                 buffers[*buf_in].buffer_grid[out_grid].mark_used(is_final);
                 buffers[*buf_pal].buffer_grid[0].mark_used(is_final);
-                with_buffers(buffers, buf_out, out_grid, |_| Ok(()))?;
+                with_buffers(buffers, buf_out, out_grid, pool, |_| Ok(()))?;
             }
             TransformStep::Palette {
                 buf_in,
@@ -166,7 +169,7 @@ impl TransformStepChunk {
                         });
                     // Ensure that the output buffers are present.
                     // TODO(szabadka): Extend the callback to support many grid points.
-                    with_buffers(buffers, buf_out, out_grid, |_| Ok(()))?;
+                    with_buffers(buffers, buf_out, out_grid, pool, |_| Ok(()))?;
                     let grid_shape = buffers[buf_out[0]].grid_shape;
                     let grid_x = out_grid % grid_shape.0;
                     let grid_y = out_grid / grid_shape.0;
@@ -231,7 +234,7 @@ impl TransformStepChunk {
                         ));
                         // Ensure that the output buffers are present.
                         // TODO(szabadka): Extend the callback to support many grid points.
-                        with_buffers(buffers, buf_out, out_grid + grid_x, |_| Ok(()))?;
+                        with_buffers(buffers, buf_out, out_grid + grid_x, pool, |_| Ok(()))?;
                     }
                     let in_buf_refs: Vec<&ModularChannel> =
                         in_bufs.iter().map(|x| x.deref()).collect();
@@ -336,7 +339,7 @@ impl TransformStepChunk {
                         ))
                     };
 
-                    with_buffers(buffers, &[*buf_out], out_grid, |mut bufs| {
+                    with_buffers(buffers, &[*buf_out], out_grid, pool, |mut bufs| {
                         if bufs.is_empty() {
                             return Ok(());
                         }
@@ -453,7 +456,7 @@ impl TransformStepChunk {
                     let res_grid_rect =
                         buf_res.get_grid_rect(frame_header, out_grid_kind, (gx, gy));
 
-                    with_buffers(buffers, &[*buf_out], out_grid, |mut bufs| {
+                    with_buffers(buffers, &[*buf_out], out_grid, pool, |mut bufs| {
                         if bufs.is_empty() {
                             return Ok(());
                         }

@@ -8,8 +8,13 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Debug,
     ops::Range,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
+
+use crate::image::BufferPool;
 
 use crate::{
     bit_reader::BitReader,
@@ -150,6 +155,28 @@ impl ModularChannel {
     ) -> Result<Self> {
         Ok(ModularChannel {
             data: Image::new_with_padding(size, IMAGE_OFFSET, IMAGE_PADDING)?,
+            auxiliary_data: None,
+            shift,
+            bit_depth,
+        })
+    }
+
+    pub fn new_in_pool(
+        size: (usize, usize),
+        bit_depth: BitDepth,
+        pool: &Arc<BufferPool>,
+    ) -> Result<Self> {
+        Self::new_in_pool_with_shift(size, Some((0, 0)), bit_depth, pool)
+    }
+
+    pub fn new_in_pool_with_shift(
+        size: (usize, usize),
+        shift: Option<(usize, usize)>,
+        bit_depth: BitDepth,
+        pool: &Arc<BufferPool>,
+    ) -> Result<Self> {
+        Ok(ModularChannel {
+            data: Image::new_in_pool_with_padding(size, IMAGE_OFFSET, IMAGE_PADDING, pool, false)?,
             auxiliary_data: None,
             shift,
             bit_depth,
@@ -651,6 +678,7 @@ impl FullModularImage {
         global_tree: &Option<Tree>,
         br: &mut BitReader,
         allow_partial: bool,
+        pool: &Arc<BufferPool>,
     ) -> Result<()> {
         let allow_partial = allow_partial && self.can_do_early_partial_render;
         let mut decoded_if_partial = 0;
@@ -658,6 +686,7 @@ impl FullModularImage {
             &self.buffer_info,
             &self.section_buffer_indices[0],
             0,
+            pool,
             |bufs| {
                 decode_modular_subbitstream(
                     bufs,
@@ -715,6 +744,7 @@ impl FullModularImage {
         frame_header: &FrameHeader,
         global_tree: &Option<Tree>,
         br: &mut BitReader,
+        pool: &Arc<BufferPool>,
     ) -> Result<()> {
         if self.buffer_info.is_empty() {
             info!("No modular channels to decode");
@@ -734,6 +764,7 @@ impl FullModularImage {
             &self.buffer_info,
             &self.section_buffer_indices[section_id],
             grid,
+            pool,
             |bufs| {
                 decode_modular_subbitstream(
                     bufs,
@@ -833,6 +864,7 @@ impl FullModularImage {
         frame_header: &FrameHeader,
         dry_run: bool,
         pass_to_pipeline: &mut dyn FnMut(usize, usize, bool, Option<Image<i32>>) -> Result<()>,
+        pool: &Arc<BufferPool>,
     ) -> Result<()> {
         // TODO(veluca): consider using `used_channel_mask` to avoid running transforms that produce
         // channels that are not used.
@@ -918,6 +950,7 @@ impl FullModularImage {
                         &self.buffer_info,
                         is_final,
                         &mut self.transform_scratch_space,
+                        pool,
                     )?;
                 }
 
@@ -996,6 +1029,7 @@ impl FullModularImage {
         num_passes: usize,
         num_groups: usize,
         num_lf_groups: usize,
+        pool: &Arc<BufferPool>,
     ) -> Result<()> {
         if !self.can_do_partial_render() {
             return Ok(());
@@ -1009,6 +1043,7 @@ impl FullModularImage {
                 &self.buffer_info,
                 &self.section_buffer_indices[section],
                 grid,
+                pool,
                 |_| Ok(()),
             )?;
             for b in self.section_buffer_indices[section].iter() {
@@ -1157,6 +1192,7 @@ pub fn decode_vardct_lf(
     lf_image: &mut [Image<f32>; 3],
     quant_lf: &mut Image<u8>,
     br: &mut BitReader,
+    pool: &Arc<BufferPool>,
 ) -> Result<()> {
     let extra_precision = br.read(2)?;
     debug!(?extra_precision);
@@ -1172,9 +1208,9 @@ pub fn decode_vardct_lf(
         )
     };
     let mut buffers = [
-        ModularChannel::new(shrink_rect(r.size, 1), image_metadata.bit_depth)?,
-        ModularChannel::new(shrink_rect(r.size, 0), image_metadata.bit_depth)?,
-        ModularChannel::new(shrink_rect(r.size, 2), image_metadata.bit_depth)?,
+        ModularChannel::new_in_pool(shrink_rect(r.size, 1), image_metadata.bit_depth, pool)?,
+        ModularChannel::new_in_pool(shrink_rect(r.size, 0), image_metadata.bit_depth, pool)?,
+        ModularChannel::new_in_pool(shrink_rect(r.size, 2), image_metadata.bit_depth, pool)?,
     ];
     decode_modular_subbitstream(
         buffers.iter_mut().collect(),
@@ -1205,6 +1241,7 @@ pub fn decode_hf_metadata(
     global_tree: &Option<Tree>,
     hf_meta: &mut HfMetadata,
     br: &mut BitReader,
+    pool: &Arc<BufferPool>,
 ) -> Result<()> {
     let stream_id = ModularStreamId::LFMeta(group).get_id(frame_header);
     debug!(?stream_id);
@@ -1219,10 +1256,20 @@ pub fn decode_hf_metadata(
         size: (r.size.0.div_ceil(8), r.size.1.div_ceil(8)),
     };
     let mut buffers = [
-        ModularChannel::new_with_shift(cr.size, Some((3, 3)), image_metadata.bit_depth)?,
-        ModularChannel::new_with_shift(cr.size, Some((3, 3)), image_metadata.bit_depth)?,
-        ModularChannel::new((count, 2), image_metadata.bit_depth)?,
-        ModularChannel::new(r.size, image_metadata.bit_depth)?,
+        ModularChannel::new_in_pool_with_shift(
+            cr.size,
+            Some((3, 3)),
+            image_metadata.bit_depth,
+            pool,
+        )?,
+        ModularChannel::new_in_pool_with_shift(
+            cr.size,
+            Some((3, 3)),
+            image_metadata.bit_depth,
+            pool,
+        )?,
+        ModularChannel::new_in_pool((count, 2), image_metadata.bit_depth, pool)?,
+        ModularChannel::new_in_pool(r.size, image_metadata.bit_depth, pool)?,
     ];
     decode_modular_subbitstream(
         buffers.iter_mut().collect(),

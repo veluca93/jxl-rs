@@ -8,11 +8,14 @@
 mod data_type;
 mod internal;
 mod output_buffer;
+mod pool;
 mod raw;
 mod rect;
 #[cfg(test)]
 mod test;
 mod typed;
+
+pub use pool::BufferPool;
 
 pub use data_type::DataTypeTag;
 pub use data_type::ImageDataType;

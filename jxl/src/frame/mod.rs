@@ -113,6 +113,8 @@ impl ReferenceFrame {
     }
 }
 
+use crate::image::BufferPool;
+
 #[derive(Debug)]
 pub struct DecoderState {
     pub(super) file_header: FileHeader,
@@ -129,13 +131,18 @@ pub struct DecoderState {
     // If this is set to `true`, early flushing in the main frame
     // (before HF is available) will do nothing.
     pub lf_frame_was_rendered: bool,
+    pub(super) pool: Arc<BufferPool>,
 }
 
 impl DecoderState {
     pub const MAX_STORED_FRAMES: usize = 4;
     pub const NUM_LF_FRAMES: usize = 4;
 
-    pub fn new(file_header: FileHeader, options: &JxlDecoderOptions) -> Self {
+    pub fn new(
+        file_header: FileHeader,
+        options: &JxlDecoderOptions,
+        pool: Arc<BufferPool>,
+    ) -> Self {
         Self {
             file_header,
             reference_frames: Arc::new([None, None, None, None]),
@@ -148,6 +155,7 @@ impl DecoderState {
             high_precision: options.high_precision,
             premultiply_output: options.premultiply_output,
             lf_frame_was_rendered: false,
+            pool,
         }
     }
 
