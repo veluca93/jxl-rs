@@ -481,6 +481,48 @@ declare_test_file!(tree_max_property_20, "tree_max_property_20.jxl");
 declare_test_file!(upsampled_alpha, "upsampled_alpha.jxl");
 declare_test_file!(with_icc, "with_icc.jxl");
 declare_test_file!(with_preview, "with_preview.jxl");
+// Multi-group stress corpus for concurrency testing (see stress/README.md).
+declare_test_file!(stress_alpha, "stress/stress_alpha.jxl");
+declare_test_file!(stress_alpha_lossless, "stress/stress_alpha_lossless.jxl");
+declare_test_file!(stress_alpha_premul, "stress/stress_alpha_premul.jxl");
+declare_test_file!(stress_edges_epf3, "stress/stress_edges_epf3.jxl");
+declare_test_file!(
+    stress_gray_lossless_g1,
+    "stress/stress_gray_lossless_g1.jxl"
+);
+declare_test_file!(stress_gray_upsample4, "stress/stress_gray_upsample4.jxl");
+declare_test_file!(stress_palette_delta, "stress/stress_palette_delta.jxl");
+declare_test_file!(
+    stress_palette_lossless,
+    "stress/stress_palette_lossless.jxl"
+);
+declare_test_file!(
+    stress_photo_centerfirst,
+    "stress/stress_photo_centerfirst.jxl"
+);
+declare_test_file!(stress_photo_lossless, "stress/stress_photo_lossless.jxl");
+declare_test_file!(
+    stress_photo_lossless_g0,
+    "stress/stress_photo_lossless_g0.jxl"
+);
+declare_test_file!(stress_photo_noise, "stress/stress_photo_noise.jxl");
+declare_test_file!(
+    stress_photo_progressive,
+    "stress/stress_photo_progressive.jxl"
+);
+declare_test_file!(stress_photo_qprog, "stress/stress_photo_qprog.jxl");
+declare_test_file!(stress_photo_resp0, "stress/stress_photo_resp0.jxl");
+declare_test_file!(stress_photo_vardct, "stress/stress_photo_vardct.jxl");
+declare_test_file!(stress_photo_upsample4, "stress/stress_photo_upsample4.jxl");
+declare_test_file!(stress_photo_wp, "stress/stress_photo_wp.jxl");
+declare_test_file!(stress_tall_multilf, "stress/stress_tall_multilf.jxl");
+declare_test_file!(stress_tiles_patches, "stress/stress_tiles_patches.jxl");
+declare_test_file!(stress_wide_multilf, "stress/stress_wide_multilf.jxl");
+declare_test_file!(
+    stress_wide_multilf_lossless,
+    "stress/stress_wide_multilf_lossless.jxl"
+);
+
 declare_test_file!(
     zoltan_tasi_unsplash,
     "zoltan_tasi_unsplash.jxl",
