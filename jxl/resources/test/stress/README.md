@@ -33,3 +33,12 @@ with cjxl v0.7.0:
 | stress_alpha | -d 1.0 -e 6 |
 | stress_alpha_premul | -d 1.0 -e 6 --premultiply=1 |
 | stress_alpha_lossless | -d 0 -e 7 |
+| stress_anim | -d 1.0 -e 6 (3-frame APNG, full frames) |
+| stress_anim_lossless | -d 0 -e 7 (3-frame APNG) |
+| stress_anim_subrect | -d 1.0 -e 6 (APNG with sub-rect frames, blend over) |
+| stress_gray16_lossless | -d 0 -e 7 (16-bit grayscale) |
+| stress_rgb16_lossless | -d 0 -e 7 (16-bit RGB) |
+| stress_dots | -d 1.5 -e 7 --dots=1 |
+| stress_jpeg_recompress | -j 1 (from q~85 JPEG of the photo input) |
+| stress_photo_lossy_modular | -d 1.0 -m 1 -e 7 |
+| stress_palette_delta_wp | -d 1 -m 1 --modular_lossy_palette -P 6 -e 7 |

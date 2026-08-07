@@ -482,6 +482,21 @@ declare_test_file!(upsampled_alpha, "upsampled_alpha.jxl");
 declare_test_file!(with_icc, "with_icc.jxl");
 declare_test_file!(with_preview, "with_preview.jxl");
 // Multi-group stress corpus for concurrency testing (see stress/README.md).
+declare_test_file!(stress_anim, "stress/stress_anim.jxl");
+declare_test_file!(stress_anim_lossless, "stress/stress_anim_lossless.jxl");
+declare_test_file!(stress_anim_subrect, "stress/stress_anim_subrect.jxl");
+declare_test_file!(stress_dots, "stress/stress_dots.jxl");
+declare_test_file!(stress_gray16_lossless, "stress/stress_gray16_lossless.jxl");
+declare_test_file!(stress_jpeg_recompress, "stress/stress_jpeg_recompress.jxl");
+declare_test_file!(
+    stress_palette_delta_wp,
+    "stress/stress_palette_delta_wp.jxl"
+);
+declare_test_file!(
+    stress_photo_lossy_modular,
+    "stress/stress_photo_lossy_modular.jxl"
+);
+declare_test_file!(stress_rgb16_lossless, "stress/stress_rgb16_lossless.jxl");
 declare_test_file!(stress_alpha, "stress/stress_alpha.jxl");
 declare_test_file!(stress_alpha_lossless, "stress/stress_alpha_lossless.jxl");
 declare_test_file!(stress_alpha_premul, "stress/stress_alpha_premul.jxl");
