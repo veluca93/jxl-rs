@@ -13,11 +13,11 @@ use crate::util::tracing_wrappers::*;
 /// Reads bits from a sequence of bytes.
 #[derive(Clone)]
 pub struct BitReader<'a> {
-    data: &'a [u8],
-    bit_buf: u64,
-    bits_in_buf: usize,
-    total_bits_read: usize,
-    initial_bits: usize,
+    pub(crate) data: &'a [u8],
+    pub(crate) bit_buf: u64,
+    pub(crate) bits_in_buf: usize,
+    pub(crate) total_bits_read: usize,
+    pub(crate) initial_bits: usize,
 }
 
 impl Debug for BitReader<'_> {

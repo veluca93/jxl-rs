@@ -235,6 +235,10 @@ pub(super) fn decode_modular_channel(
         return Ok(());
     }
 
+    if super::jit::decode_modular_channel_jit(buffers, chan, stream_id, header, tree, reader, br)? {
+        return Ok(());
+    }
+
     run_on_specialized_tree(tree, chan, stream_id, size.0, header, {
         |t| decode_modular_channel_impl(t, buffers, chan, &tree.histograms, reader, br)
     })?;

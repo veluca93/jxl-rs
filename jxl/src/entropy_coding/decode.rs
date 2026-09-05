@@ -232,6 +232,14 @@ impl SymbolReader {
             errors: ErrorState::new(),
         })
     }
+
+    pub fn ans_reader(&self) -> &AnsReader {
+        &self.ans_reader
+    }
+
+    pub fn ans_reader_mut(&mut self) -> &mut AnsReader {
+        &mut self.ans_reader
+    }
 }
 
 impl SymbolReader {

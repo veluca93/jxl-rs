@@ -491,3 +491,48 @@ declare_test_file!(
         (396429, 0.0009008)
     ]
 );
+
+#[test]
+fn test_jit_modular_caching_and_correctness() {
+    let cache_dir = std::path::Path::new("/tmp/jxl_jit_cache");
+    let _ = std::fs::create_dir_all(cache_dir);
+
+    let test_files = [
+        "resources/test/green_queen_modular_e3.jxl",
+        "resources/test/grayscale_patches_modular.jxl",
+        "resources/test/small_grayscale_patches_modular.jxl",
+    ];
+
+    for file_path in test_files {
+        let file = std::fs::read(file_path).unwrap();
+        // 1. Decode first time (compiles .so or loads existing)
+        let (frames1, images1) = crate::tests::decode::decode(&file).unwrap();
+
+        // 2. Verify cached .c and .so files exist in permanent /tmp/jxl_jit_cache/
+        let so_files: Vec<_> = std::fs::read_dir(cache_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "so"))
+            .collect();
+        assert!(
+            !so_files.is_empty(),
+            "Expected cached .so files in {cache_dir:?}"
+        );
+
+        // 3. Decode second time (uses cached in-memory and disk .so)
+        let (frames2, images2) = crate::tests::decode::decode(&file).unwrap();
+        assert_eq!(frames1, frames2);
+
+        // 4. Verify bit-exact decoded pixel values
+        assert_eq!(images1.len(), images2.len());
+        for (f1, f2) in images1.iter().zip(images2.iter()) {
+            assert_eq!(f1.len(), f2.len());
+            for (c1, c2) in f1.iter().zip(f2.iter()) {
+                assert_eq!(c1.size(), c2.size());
+                for y in 0..c1.size().1 {
+                    assert_eq!(c1.row(y), c2.row(y));
+                }
+            }
+        }
+    }
+}

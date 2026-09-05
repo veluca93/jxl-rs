@@ -19,9 +19,10 @@ const DEFAULT_CODE_LENGTH: u8 = 8;
 const CODE_LENGTH_REPEAT_CODE: u8 = 16;
 
 #[derive(Clone, Copy)]
-struct TableEntry {
-    bits: u8,
-    value: u16,
+#[repr(C)]
+pub(crate) struct TableEntry {
+    pub(crate) bits: u8,
+    pub(crate) value: u16,
 }
 
 impl Debug for TableEntry {
@@ -33,6 +34,12 @@ impl Debug for TableEntry {
 #[derive(Debug)]
 pub(crate) struct Table {
     entries: Vec<TableEntry>,
+}
+
+impl Table {
+    pub(crate) fn entries(&self) -> &[TableEntry] {
+        &self.entries
+    }
 }
 
 /* Returns reverse(reverse(key, len) + 1, len), where reverse(key, len) is the
@@ -502,6 +509,10 @@ impl HuffmanCodes {
 
     pub(crate) fn table(&self, ctx: usize) -> &Table {
         &self.tables[ctx]
+    }
+
+    pub(crate) fn tables(&self) -> &[Table] {
+        &self.tables
     }
 }
 

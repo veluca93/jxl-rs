@@ -14,7 +14,7 @@ const SUM_PROBS: u16 = 1 << LOG_SUM_PROBS;
 const RLE_MARKER_SYM: u16 = LOG_SUM_PROBS as u16 + 1;
 
 #[derive(Debug)]
-struct AnsHistogram {
+pub(crate) struct AnsHistogram {
     // Safety invariant:
     // - log_bucket_size <= LOG_SUM_PROBS
     // - buckets.len() = 2^(LOG_SUM_PROBS - log_bucket_size)
@@ -31,12 +31,12 @@ struct AnsHistogram {
 // log_alphabet_size <= 8 and log_bucket_size <= 7, so u8 is sufficient for symbols and cutoffs.
 #[derive(Debug, Copy, Clone)]
 #[repr(C)]
-struct Bucket {
-    alias_symbol: u8,
-    alias_cutoff: u8,
-    dist: u16,
-    alias_offset: u16,
-    alias_dist_xor: u16,
+pub(crate) struct Bucket {
+    pub(crate) alias_symbol: u8,
+    pub(crate) alias_cutoff: u8,
+    pub(crate) dist: u16,
+    pub(crate) alias_offset: u16,
+    pub(crate) alias_dist_xor: u16,
 }
 
 impl AnsHistogram {
@@ -399,6 +399,18 @@ impl AnsHistogram {
     pub fn single_symbol(&self) -> Option<u32> {
         self.single_symbol
     }
+
+    pub(crate) fn buckets(&self) -> &[Bucket] {
+        &self.buckets
+    }
+
+    pub(crate) fn log_bucket_size(&self) -> usize {
+        self.log_bucket_size
+    }
+
+    pub(crate) fn bucket_mask(&self) -> u32 {
+        self.bucket_mask
+    }
 }
 
 #[derive(Debug)]
@@ -421,6 +433,10 @@ impl AnsCodes {
     pub fn max_symbol_for_cluster(&self, cluster: usize) -> u32 {
         self.histograms[cluster].alphabet_size.saturating_sub(1) as u32
     }
+
+    pub(crate) fn histograms(&self) -> &[AnsHistogram] {
+        &self.histograms
+    }
 }
 
 #[derive(Debug)]
@@ -437,6 +453,14 @@ impl AnsReader {
     pub fn init(br: &mut BitReader) -> Result<Self> {
         let initial_state = br.read(32)? as u32;
         Ok(Self(initial_state))
+    }
+
+    pub fn state(&self) -> u32 {
+        self.0
+    }
+
+    pub fn set_state(&mut self, state: u32) {
+        self.0 = state;
     }
 
     #[inline]

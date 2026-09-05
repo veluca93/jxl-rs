@@ -25,6 +25,7 @@ jxl_macros = { path = "../jxl_macros", version = "=0.6.0" }
 jxl_simd = { path = "../jxl_simd", version = "=0.6.0" }
 shuttle = { version = "0.9", optional = true }
 brotli-decompressor = { version = "6.0.0", optional = true }
+libc = "0.2"
 
 [dev-dependencies]
 arbtest = "0.3.2"
