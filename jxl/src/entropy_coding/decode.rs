@@ -643,6 +643,27 @@ pub struct Checkpoint<const N: usize> {
 }
 
 #[cfg(test)]
+impl Histograms {
+    pub(crate) fn dummy_for_test() -> Histograms {
+        let huff = HuffmanCodes::byte_histogram();
+        let uint_config = HybridUint::new(4, 2, 0);
+        Histograms {
+            lz77_params: Lz77Params {
+                enabled: false,
+                min_symbol: None,
+                min_length: None,
+            },
+            lz77_length_uint: None,
+            context_map: vec![0],
+            lz_dist_cluster: 0,
+            log_alpha_size: 15,
+            uint_configs: vec![uint_config],
+            codes: Codes::Huffman(huff),
+        }
+    }
+}
+
+#[cfg(test)]
 mod test {
     use super::*;
 
