@@ -191,16 +191,17 @@ pub fn linear_to_pq_precise(intensity_target: f32, samples: &mut [f32]) {
     let mult = intensity_target as f64 * 10000f64.recip();
 
     for s in samples {
-        if *s == 0.0 {
+        if *s <= 0.0 {
+            *s = 0.0;
             continue;
         }
 
-        let a = s.abs() as f64;
+        let a = *s as f64;
         let xp = (a * mult).powf(PQ_M1);
         let num = PQ_C1 + xp * PQ_C2;
         let den = 1.0 + xp * PQ_C3;
         let e = (num / den).powf(PQ_M2);
-        *s = (e as f32).copysign(*s);
+        *s = (e as f32).min(1.0);
     }
 }
 
@@ -261,7 +262,12 @@ pub fn linear_to_pq(intensity_target: f32, samples: &mut [f32]) {
     let y_mult = intensity_target * 10000f32.recip();
 
     for s in samples {
-        let a = s.abs();
+        if *s <= 0.0 {
+            *s = 0.0;
+            continue;
+        }
+
+        let a = *s;
         let a_scaled = a * y_mult;
         let a_1_4 = a_scaled.sqrt().sqrt();
 
@@ -271,7 +277,7 @@ pub fn linear_to_pq(intensity_target: f32, samples: &mut [f32]) {
             eval_rational_poly(a_1_4, PQ_INV_EOTF_P, PQ_INV_EOTF_Q)
         };
 
-        *s = y.copysign(*s);
+        *s = y.min(1.0);
     }
 }
 
@@ -292,7 +298,9 @@ pub fn linear_to_pq_simd_vec<D: SimdDescriptor>(
     let y_large = eval_rational_poly_simd(d, a_1_4, PQ_INV_EOTF_P, PQ_INV_EOTF_Q);
     let y = threshold.gt(a).if_then_else_f32(y_small, y_large);
 
-    y.copysign(s)
+    let zero = D::F32Vec::splat(d, 0.0);
+    let one = D::F32Vec::splat(d, 1.0);
+    y.copysign(s).max(zero).min(one)
 }
 
 /// Converts PQ signal to linear sample using PQ EOTF, where linear sample value of 1.0 represents
@@ -470,7 +478,7 @@ pub fn scene_to_hlg_precise(samples: &mut [f32]) {
             // TODO(tirr-c): maybe use mul_add?
             HLG_A * (12.0 * a - HLG_B).ln() + HLG_C
         };
-        *s = (y as f32).copysign(*s);
+        *s = (y as f32).copysign(*s).clamp(-0.074, 1.1);
     }
 }
 
@@ -504,7 +512,7 @@ pub fn scene_to_hlg(samples: &mut [f32]) {
             // log2 x = ln x / ln 2, therefore ln x = (ln 2)(log2 x)
             (HLG_A * std::f64::consts::LN_2) as f32 * log + HLG_C as f32
         };
-        *s = y.copysign(*s);
+        *s = y.copysign(*s).clamp(-0.074, 1.1);
     }
 }
 
@@ -527,9 +535,13 @@ pub(crate) fn scene_to_hlg_vec<D: SimdDescriptor>(d: D, s: D::F32Vec) -> D::F32V
         )
     };
     let a_threshold = D::F32Vec::splat(d, 1.0 / 12.0);
+    let min_val = D::F32Vec::splat(d, -0.074);
+    let max_val = D::F32Vec::splat(d, 1.1);
     a.gt(a_threshold)
         .if_then_else_f32(y_large, y_small)
         .copysign(s)
+        .max(min_val)
+        .min(max_val)
 }
 
 /// Converts HLG signal to scene-referred linear sample.
