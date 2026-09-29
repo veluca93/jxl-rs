@@ -34,6 +34,7 @@ struct LowMemoryRenderPipelinePerThread {
     row_buffers: Vec<Vec<RowBuffer>>,
     // Local states of each stage, if any.
     local_states: Vec<Option<Box<ErasedLocalState>>>,
+    save_scratch: Vec<u8>,
 }
 
 impl Debug for LowMemoryRenderPipelinePerThread {
@@ -81,6 +82,8 @@ impl LowMemoryRenderPipelinePerThread {
             .iter()
             .map(|x| x.init_local_state())
             .collect::<Result<_>>()?;
+        let scratch_len = 64 + 4 * (p.shared.chunk_size.div_ceil(64) * 64 + 64) * 4;
+        self.save_scratch.resize(scratch_len, 0);
         Ok(())
     }
 }
@@ -108,9 +111,6 @@ pub struct LowMemoryRenderPipeline {
     // For every stage, the downsampling level of *any* channel that the stage uses at that point.
     // Note that this must be equal across all the used channels.
     downsampling_for_stage: Vec<(usize, usize)>,
-    // Pre-filled opaque alpha buffers for stages that need fill_opaque_alpha.
-    // Indexed by stage index; None if stage doesn't need alpha fill.
-    opaque_alpha_buffers: Vec<Option<RowBuffer>>,
     // Sorted indices to call get_distinct_indices.
     sorted_buffer_indices: Vec<Vec<(usize, usize, usize)>>,
 }
@@ -219,25 +219,6 @@ impl RenderPipeline for LowMemoryRenderPipeline {
             })
             .collect();
 
-        // Create opaque alpha buffers for save stages that need fill_opaque_alpha
-        let mut opaque_alpha_buffers = vec![];
-        for (i, stage) in shared.stages.iter().enumerate() {
-            if let Stage::Save(s) = stage {
-                if s.fill_opaque_alpha {
-                    let (dx, _dy) = downsampling_for_stage[i];
-                    let row_len = shared.chunk_size >> dx;
-                    let fill_pattern = s.data_format.opaque_alpha_bytes();
-                    let buf =
-                        RowBuffer::new_filled(s.data_format.data_type(), row_len, &fill_pattern)?;
-                    opaque_alpha_buffers.push(Some(buf));
-                } else {
-                    opaque_alpha_buffers.push(None);
-                }
-            } else {
-                opaque_alpha_buffers.push(None);
-            }
-        }
-
         let default_channels: Vec<usize> = (0..nc).collect();
         for (s, ibi) in stage_input_buffer_index.iter_mut().enumerate() {
             let mut filtered = vec![];
@@ -292,6 +273,7 @@ impl RenderPipeline for LowMemoryRenderPipeline {
             per_thread_data: PerThreadStorage::new(|| LowMemoryRenderPipelinePerThread {
                 row_buffers: vec![],
                 local_states: vec![],
+                save_scratch: vec![],
             }),
             padding_was_rendered: false,
             save_buffer_info,
@@ -300,7 +282,6 @@ impl RenderPipeline for LowMemoryRenderPipeline {
             input_border_pixels: border_pixels,
             shared,
             downsampling_for_stage,
-            opaque_alpha_buffers,
             sorted_buffer_indices,
         })
     }

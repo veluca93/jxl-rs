@@ -424,14 +424,10 @@ impl LowMemoryRenderPipeline {
                     Stage::Save(s) => {
                         // Find buffers for channels that will be saved.
                         // Channel ordering is handled in stage_input_buffer_index construction.
-                        let mut input_data: ChannelVec<_> = self.stage_input_buffer_index[i]
+                        let input_data: ChannelVec<_> = self.stage_input_buffer_index[i]
                             .iter()
                             .map(|(si, ci)| &data.row_buffers[*si][*ci])
                             .collect();
-                        // Append opaque alpha buffer if fill_opaque_alpha is set
-                        if let Some(ref alpha_buf) = self.opaque_alpha_buffers[i] {
-                            input_data.push(alpha_buf);
-                        }
                         s.save_lowmem(
                             &input_data,
                             &mut *buffers,
@@ -440,6 +436,7 @@ impl LowMemoryRenderPipeline {
                             (x0 >> dx, y0 >> dy),
                             current_size,
                             current_origin,
+                            &mut data.save_scratch,
                         )?;
                     }
                     Stage::Extend(s) => {
@@ -568,14 +565,10 @@ impl LowMemoryRenderPipeline {
                     Stage::Save(s) => {
                         // Find buffers for channels that will be saved.
                         // Channel ordering is handled in stage_input_buffer_index construction.
-                        let mut input_data: ChannelVec<_> = self.stage_input_buffer_index[i]
+                        let input_data: ChannelVec<_> = self.stage_input_buffer_index[i]
                             .iter()
                             .map(|(si, ci)| &data.row_buffers[*si][*ci])
                             .collect();
-                        // Append opaque alpha buffer if fill_opaque_alpha is set
-                        if let Some(ref alpha_buf) = self.opaque_alpha_buffers[i] {
-                            input_data.push(alpha_buf);
-                        }
                         s.save_lowmem(
                             &input_data,
                             &mut *buffers,
@@ -584,6 +577,7 @@ impl LowMemoryRenderPipeline {
                             (x0, y0),
                             (xrange.end, yrange.end), // this is not true, but works out correctly.
                             (0, 0),
+                            &mut data.save_scratch,
                         )?;
                     }
                     Stage::Extend(_) => {

@@ -156,6 +156,96 @@ fn test_fill_opaque_alpha_both_pipelines() {
                 );
             }
         }
+
+        let frames = decode::<u8>(
+            &file,
+            DecodeParams {
+                pixel_format: Some(JxlPixelFormat::rgba8(0)),
+                use_simple_pipeline: use_simple,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let color_buffer = &frames[0][0];
+        let (xs, height) = color_buffer.size();
+        let width = xs / 4;
+
+        for y in 0..height {
+            let row = color_buffer.row(y);
+            for x in 0..width {
+                let alpha = row[x * 4 + 3];
+                assert_eq!(
+                    alpha, 255,
+                    "Alpha at ({},{}) should be 255, got {} (use_simple={})",
+                    x, y, alpha, use_simple
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_fill_opaque_alpha_grayscale() {
+    let file = std::fs::read("resources/test/grayscale_patches_modular.jxl").unwrap();
+
+    for use_simple in [true, false] {
+        let frames = decode::<f32>(
+            &file,
+            DecodeParams {
+                pixel_format: Some(JxlPixelFormat {
+                    color_type: JxlColorType::GrayscaleAlpha,
+                    color_data_format: Some(JxlDataFormat::f32()),
+                    extra_channel_format: vec![],
+                }),
+                use_simple_pipeline: use_simple,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let color_buffer = &frames[0][0];
+        let (xs, height) = color_buffer.size();
+        let width = xs / 2;
+
+        for y in 0..height {
+            let row = color_buffer.row(y);
+            for x in 0..width {
+                let alpha = row[x * 2 + 1];
+                assert_eq!(
+                    alpha, 1.0,
+                    "Alpha at ({},{}) should be 1.0, got {} (use_simple={})",
+                    x, y, alpha, use_simple
+                );
+            }
+        }
+
+        let frames = decode::<u8>(
+            &file,
+            DecodeParams {
+                pixel_format: Some(JxlPixelFormat {
+                    color_type: JxlColorType::GrayscaleAlpha,
+                    color_data_format: Some(JxlDataFormat::U8 { bit_depth: 8 }),
+                    extra_channel_format: vec![],
+                }),
+                use_simple_pipeline: use_simple,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let color_buffer = &frames[0][0];
+        let (xs, height) = color_buffer.size();
+        let width = xs / 2;
+
+        for y in 0..height {
+            let row = color_buffer.row(y);
+            for x in 0..width {
+                let alpha = row[x * 2 + 1];
+                assert_eq!(
+                    alpha, 255,
+                    "Alpha at ({},{}) should be 255, got {} (use_simple={})",
+                    x, y, alpha, use_simple
+                );
+            }
+        }
     }
 }
 

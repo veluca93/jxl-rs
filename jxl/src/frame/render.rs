@@ -28,6 +28,7 @@ use crate::image::{Image, OwnedRawImage, Rect};
 #[cfg(test)]
 use crate::render::SimpleRenderPipeline;
 use crate::render::buffer_splitter::BufferSplitter;
+use crate::render::save::PipelineChannelType;
 use crate::render::stages::*;
 use crate::render::{LowMemoryRenderPipeline, RenderPipeline, RenderPipelineBuilder};
 use crate::util::SmallVec;
@@ -100,44 +101,6 @@ macro_rules! pipeline {
 pub(super) use pipeline;
 
 impl Frame {
-    /// Add conversion stages for non-float output formats.
-    /// This is needed before saving to U8/U16/F16 formats to convert from the pipeline's f32.
-    fn add_conversion_stages<P: RenderPipeline>(
-        mut pipeline: RenderPipelineBuilder<P>,
-        channels: &[usize],
-        data_format: JxlDataFormat,
-        clamp_range_for_f16: Option<(f32, f32)>,
-    ) -> RenderPipelineBuilder<P> {
-        use crate::render::stages::{
-            ConvertF32ToF16Stage, ConvertF32ToU8Stage, ConvertF32ToU16Stage,
-        };
-
-        match data_format {
-            JxlDataFormat::U8 { bit_depth } => {
-                for &channel in channels {
-                    pipeline =
-                        pipeline.add_inout_stage(ConvertF32ToU8Stage::new(channel, bit_depth));
-                }
-            }
-            JxlDataFormat::U16 { bit_depth, .. } => {
-                for &channel in channels {
-                    pipeline =
-                        pipeline.add_inout_stage(ConvertF32ToU16Stage::new(channel, bit_depth));
-                }
-            }
-            JxlDataFormat::F16 { .. } => {
-                for &channel in channels {
-                    pipeline = pipeline.add_inout_stage(
-                        ConvertF32ToF16Stage::new_with_clamp_range(channel, clamp_range_for_f16),
-                    );
-                }
-            }
-            // F32 doesn't need conversion - the pipeline already uses f32
-            JxlDataFormat::F32 { .. } => {}
-        }
-        pipeline
-    }
-
     /// Returns `true` if any pixels were written to the output buffers during
     /// this call, `false` if the call was a no-op for the buffers (e.g. no new
     /// HF groups, no flush work, or the render pipeline was not yet ready).
@@ -581,39 +544,37 @@ impl Frame {
             buffer_recycler,
         );
 
+        let get_bit_depth = |c: usize| {
+            if c < 3 {
+                metadata.bit_depth
+            } else {
+                metadata.extra_channel_info[c - 3].bit_depth()
+            }
+        };
+
+        let modular_type = |c: usize| match decoder_state.modular_storage() {
+            ModularStorage::I16 => PipelineChannelType::I16(get_bit_depth(c)),
+            ModularStorage::I32 => PipelineChannelType::I32(get_bit_depth(c)),
+        };
+        let mut channel_types = vec![PipelineChannelType::F32; num_channels + num_temp_channels];
         if frame_header.encoding == Encoding::Modular {
-            let modular_storage = decoder_state.modular_storage();
-            if decoder_state.file_header.image_metadata.xyb_encoded {
-                if modular_storage == ModularStorage::I16 {
-                    pipeline =
-                        pipeline.add_inout_stage(ConvertModular16XYBToF32Stage::new(0, lf_quant));
-                } else {
-                    pipeline =
-                        pipeline.add_inout_stage(ConvertModularXYBToF32Stage::new(0, lf_quant));
-                }
-            } else {
-                for i in 0..3 {
-                    if modular_storage == ModularStorage::I16 {
-                        pipeline = pipeline.add_inout_stage(ConvertModular16ToF32Stage::new(
-                            i,
-                            metadata.bit_depth,
-                        ));
-                    } else {
-                        pipeline = pipeline
-                            .add_inout_stage(ConvertModularToF32Stage::new(i, metadata.bit_depth));
-                    }
-                }
+            for (c, ty) in channel_types.iter_mut().enumerate().take(3) {
+                *ty = modular_type(c);
             }
         }
-        for i in 3..num_channels {
-            let ec_bit_depth = metadata.extra_channel_info[i - 3].bit_depth();
-            if decoder_state.modular_storage() == ModularStorage::I16 {
-                pipeline =
-                    pipeline.add_inout_stage(ConvertModular16ToF32Stage::new(i, ec_bit_depth));
-            } else {
-                pipeline = pipeline.add_inout_stage(ConvertModularToF32Stage::new(i, ec_bit_depth));
-            }
+        for (c, ty) in channel_types
+            .iter_mut()
+            .enumerate()
+            .take(num_channels)
+            .skip(3)
+        {
+            *ty = modular_type(c);
         }
+        pipeline.set_modular_channel_types(
+            channel_types,
+            metadata.xyb_encoded,
+            Some(lf_quant.clone()),
+        );
 
         for c in 0..3 {
             if frame_header.hshift(c) != 0 {
@@ -753,7 +714,6 @@ impl Frame {
                     num_api_buffers + i,
                     JxlColorType::Grayscale,
                     JxlDataFormat::f32(),
-                    false,
                 );
             }
         }
@@ -765,7 +725,6 @@ impl Frame {
                     num_api_buffers + i,
                     JxlColorType::Grayscale,
                     JxlDataFormat::f32(),
-                    false,
                 );
             }
         }
@@ -785,18 +744,6 @@ impl Frame {
                 )
             })
             .unwrap_or_else(|| output_color_info.tf.clone());
-
-        // Clamp transfer-domain values while converting to f16 so we don't
-        // emit wild out-of-range values to downstream consumers.
-        //
-        // PQ has a bounded signal domain [0,1].
-        // HLG may carry modest overshoot/undershoot (e.g. from narrow-range
-        // workflows), so preserve headroom with a looser clamp.
-        let clamp_range_for_f16 = match &output_tf {
-            TransferFunction::Pq { .. } => Some((0.0, 1.0)),
-            TransferFunction::Hlg { .. } => Some((-0.074, 1.1)),
-            _ => None,
-        };
 
         let xyb_encoded = decoder_state.file_header.image_metadata.xyb_encoded;
 
@@ -831,7 +778,6 @@ impl Frame {
                     num_api_buffers + i,
                     JxlColorType::Grayscale,
                     JxlDataFormat::f32(),
-                    false,
                 );
             }
         }
@@ -881,11 +827,6 @@ impl Frame {
             if pixel_format.color_type.is_grayscale() && num_color_channels == 3 {
                 return Err(Error::NotGrayscale);
             }
-            // Determine if we need to fill opaque alpha:
-            // - color_type requests alpha (has_alpha() is true)
-            // - but no actual alpha channel exists in the image (alpha_in_color is None)
-            let fill_opaque_alpha = pixel_format.color_type.has_alpha() && alpha_in_color.is_none();
-
             // Determine if we should premultiply:
             // - premultiply_output is requested
             // - there is an alpha channel in the output
@@ -937,20 +878,12 @@ impl Frame {
                         alpha_channel,
                     ));
                 }
-                // Add conversion stages for non-float output formats
-                pipeline = Self::add_conversion_stages(
-                    pipeline,
-                    color_source_channels,
-                    *df,
-                    clamp_range_for_f16,
-                );
                 pipeline = pipeline.add_save_stage(
                     color_source_channels,
                     output_orientation,
                     0,
                     pixel_format.color_type,
                     *df,
-                    fill_opaque_alpha,
                 );
             }
             let mut save_idx = if pixel_format.color_data_format.is_some() {
@@ -960,15 +893,12 @@ impl Frame {
             };
             for i in 0..frame_header.num_extra_channels as usize {
                 if let Some(df) = &pixel_format.extra_channel_format[i] {
-                    // Add conversion stages for non-float output formats
-                    pipeline = Self::add_conversion_stages(pipeline, &[3 + i], *df, None);
                     pipeline = pipeline.add_save_stage(
                         &[3 + i],
                         output_orientation,
                         save_idx,
                         JxlColorType::Grayscale,
                         *df,
-                        false,
                     );
                     save_idx += 1;
                 }
