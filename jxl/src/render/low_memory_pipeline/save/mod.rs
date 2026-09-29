@@ -67,6 +67,18 @@ impl SaveStage {
         let xlen = save_size.0;
         let nc = data.len();
 
+        if self.try_fused_identity_store(
+            data,
+            buf,
+            save_start,
+            save_size,
+            relative_y,
+            frame_y,
+            group_origin,
+        ) {
+            return Ok(());
+        }
+
         let out_channels = self.output_channels();
         let total_channels = out_channels.max(nc);
         let padded_len = xlen.div_ceil(64) * 64 + 64;
@@ -137,15 +149,14 @@ impl SaveStage {
                         ChannelConversion::I32ToU8 { multiplier, max } => {
                             let off = RowBuffer::x0_offset::<i32>() + save_start.0;
                             let in_slice = &d.get_row::<i32>(frame_y)[off..];
-                            let out_scratch = &mut out_scratch_chunk[..padded_len];
+                            let out_scratch = &mut out_scratch_chunk[..xlen];
                             identity::i32_to_u8_simd_dispatch(
                                 in_slice,
                                 out_scratch,
                                 multiplier,
                                 max,
-                                xlen,
                             );
-                            u8_slices[c] = &out_scratch[..xlen];
+                            u8_slices[c] = out_scratch;
                         }
                         _ => unreachable!("unsupported conversion to U8"),
                     }
@@ -208,9 +219,8 @@ impl SaveStage {
                                 u16::cast_slice_mut(&mut out_scratch_chunk[..padded_len * 2]);
                             identity::f32_to_u16_simd_dispatch(
                                 in_slice,
-                                out_scratch,
+                                &mut out_scratch[..xlen],
                                 ((1 << bit_depth) - 1) as f32,
-                                xlen,
                             );
                             u16_slices[c] = &out_scratch[..xlen];
                         }
@@ -221,8 +231,7 @@ impl SaveStage {
                                 u16::cast_slice_mut(&mut out_scratch_chunk[..padded_len * 2]);
                             identity::f32_to_f16_simd_dispatch(
                                 in_slice,
-                                out_scratch,
-                                xlen,
+                                &mut out_scratch[..xlen],
                             );
                             u16_slices[c] = &out_scratch[..xlen];
                         }
@@ -338,5 +347,238 @@ impl SaveStage {
             }
         }
         Ok(())
+    }
+
+    fn try_fused_identity_store(
+        &self,
+        data: &[&RowBuffer],
+        buf: &mut OutputChannelRef,
+        save_start: (usize, usize),
+        save_size: (usize, usize),
+        relative_y: usize,
+        frame_y: usize,
+        group_origin: (usize, usize),
+    ) -> bool {
+        let out_row = match self.orientation {
+            Orientation::Identity => buf.row_mut(relative_y),
+            Orientation::FlipVertical => buf.row_mut(save_size.1 - 1 - relative_y),
+            _ => return false,
+        };
+
+        let nc = data.len();
+        let out_channels = self.output_channels();
+        if !((nc == 3 || nc == 4) && (out_channels == 3 || out_channels == 4)) {
+            return false;
+        }
+
+        match self.data_format {
+            JxlDataFormat::U8 { .. } => {
+                let c0 = self.conversions.get(0).copied().unwrap_or(ChannelConversion::None);
+                let c1 = self.conversions.get(1).copied().unwrap_or(ChannelConversion::None);
+                let c2 = self.conversions.get(2).copied().unwrap_or(ChannelConversion::None);
+
+                if let (
+                    ChannelConversion::F32ToU8 { bit_depth: bd0, dither_channel: dc0 },
+                    ChannelConversion::F32ToU8 { bit_depth: bd1, dither_channel: dc1 },
+                    ChannelConversion::F32ToU8 { bit_depth: bd2, dither_channel: dc2 },
+                ) = (c0, c1, c2)
+                    && bd0 == bd1
+                    && bd1 == bd2
+                {
+                    let off = RowBuffer::x0_offset::<f32>() + save_start.0;
+                    let s0 = identity::ChannelSourceU8::F32 {
+                        slice: &data[0].get_row::<f32>(frame_y)[off..],
+                        dither_channel: dc0,
+                    };
+                    let s1 = identity::ChannelSourceU8::F32 {
+                        slice: &data[1].get_row::<f32>(frame_y)[off..],
+                        dither_channel: dc1,
+                    };
+                    let s2 = identity::ChannelSourceU8::F32 {
+                        slice: &data[2].get_row::<f32>(frame_y)[off..],
+                        dither_channel: dc2,
+                    };
+                    let max = ((1u32 << bd0) - 1) as f32;
+                    let mut mult = 0i16;
+                    let mut max_i16 = 0i16;
+
+                    if out_channels == 3 {
+                        identity::store_fused_3_u8(
+                            s0,
+                            s1,
+                            s2,
+                            &mut out_row[..save_size.0 * 3],
+                            max,
+                            mult,
+                            max_i16,
+                            (group_origin.0 + save_start.0, frame_y),
+                        );
+                        return true;
+                    }
+
+                    let s3 = if nc == 4 {
+                        match self.conversions.get(3).copied().unwrap_or(ChannelConversion::None) {
+                            ChannelConversion::F32ToU8 { bit_depth: bd3, dither_channel: dc3 }
+                                if bd3 == bd0 =>
+                            {
+                                identity::ChannelSourceU8::F32 {
+                                    slice: &data[3].get_row::<f32>(frame_y)[off..],
+                                    dither_channel: dc3,
+                                }
+                            }
+                            ChannelConversion::I16ToU8 { multiplier: m3, max: mx3 } => {
+                                mult = m3 as i16;
+                                max_i16 = mx3 as i16;
+                                let off_i16 = RowBuffer::x0_offset::<i16>() + save_start.0;
+                                identity::ChannelSourceU8::I16 {
+                                    slice: &data[3].get_row::<i16>(frame_y)[off_i16..],
+                                }
+                            }
+                            _ => return false,
+                        }
+                    } else if self.fill_opaque_alpha {
+                        identity::ChannelSourceU8::OpaqueAlpha
+                    } else {
+                        return false;
+                    };
+
+                    identity::store_fused_4_u8(
+                        s0,
+                        s1,
+                        s2,
+                        s3,
+                        &mut out_row[..save_size.0 * 4],
+                        max,
+                        mult,
+                        max_i16,
+                        (group_origin.0 + save_start.0, frame_y),
+                    );
+                    return true;
+                }
+
+                if let (
+                    ChannelConversion::I16ToU8 { multiplier: m0, max: mx0 },
+                    ChannelConversion::I16ToU8 { multiplier: m1, max: mx1 },
+                    ChannelConversion::I16ToU8 { multiplier: m2, max: mx2 },
+                ) = (c0, c1, c2)
+                    && m0 == m1
+                    && m1 == m2
+                    && mx0 == mx1
+                    && mx1 == mx2
+                {
+                    let off = RowBuffer::x0_offset::<i16>() + save_start.0;
+                    let s0 = identity::ChannelSourceU8::I16 {
+                        slice: &data[0].get_row::<i16>(frame_y)[off..],
+                    };
+                    let s1 = identity::ChannelSourceU8::I16 {
+                        slice: &data[1].get_row::<i16>(frame_y)[off..],
+                    };
+                    let s2 = identity::ChannelSourceU8::I16 {
+                        slice: &data[2].get_row::<i16>(frame_y)[off..],
+                    };
+                    let mult = m0 as i16;
+                    let max_i16 = mx0 as i16;
+
+                    if out_channels == 3 {
+                        identity::store_fused_3_u8(
+                            s0,
+                            s1,
+                            s2,
+                            &mut out_row[..save_size.0 * 3],
+                            0.0,
+                            mult,
+                            max_i16,
+                            (0, 0),
+                        );
+                        return true;
+                    }
+
+                    let s3 = if nc == 4 {
+                        match self.conversions.get(3).copied().unwrap_or(ChannelConversion::None) {
+                            ChannelConversion::I16ToU8 { multiplier: m3, max: mx3 }
+                                if m3 == m0 && mx3 == mx0 =>
+                            {
+                                identity::ChannelSourceU8::I16 {
+                                    slice: &data[3].get_row::<i16>(frame_y)[off..],
+                                }
+                            }
+                            _ => return false,
+                        }
+                    } else if self.fill_opaque_alpha {
+                        identity::ChannelSourceU8::OpaqueAlpha
+                    } else {
+                        return false;
+                    };
+
+                    identity::store_fused_4_u8(
+                        s0,
+                        s1,
+                        s2,
+                        s3,
+                        &mut out_row[..save_size.0 * 4],
+                        0.0,
+                        mult,
+                        max_i16,
+                        (0, 0),
+                    );
+                    return true;
+                }
+
+                false
+            }
+            JxlDataFormat::F16 { endianness } if endianness == Endianness::native() => {
+                let c0 = self.conversions.get(0).copied().unwrap_or(ChannelConversion::None);
+                let c1 = self.conversions.get(1).copied().unwrap_or(ChannelConversion::None);
+                let c2 = self.conversions.get(2).copied().unwrap_or(ChannelConversion::None);
+
+                if let (
+                    ChannelConversion::F32ToF16,
+                    ChannelConversion::F32ToF16,
+                    ChannelConversion::F32ToF16,
+                ) = (c0, c1, c2)
+                {
+                    let off = RowBuffer::x0_offset::<f32>() + save_start.0;
+                    let s0 = &data[0].get_row::<f32>(frame_y)[off..];
+                    let s1 = &data[1].get_row::<f32>(frame_y)[off..];
+                    let s2 = &data[2].get_row::<f32>(frame_y)[off..];
+
+                    let ptr = out_row.as_mut_ptr();
+                    if ptr.align_offset(std::mem::align_of::<u16>()) != 0 {
+                        return false;
+                    }
+                    let out_u16 = u16::cast_slice_mut(out_row);
+
+                    if out_channels == 3 {
+                        identity::store_fused_3_f16(s0, s1, s2, &mut out_u16[..save_size.0 * 3]);
+                        return true;
+                    }
+
+                    let s3 = if nc == 4 {
+                        match self.conversions.get(3).copied().unwrap_or(ChannelConversion::None) {
+                            ChannelConversion::F32ToF16 => identity::ChannelSourceU16::F32 {
+                                slice: &data[3].get_row::<f32>(frame_y)[off..],
+                            },
+                            _ => return false,
+                        }
+                    } else if self.fill_opaque_alpha {
+                        identity::ChannelSourceU16::OpaqueAlpha
+                    } else {
+                        return false;
+                    };
+
+                    identity::store_fused_4_f16(
+                        s0,
+                        s1,
+                        s2,
+                        s3,
+                        &mut out_u16[..save_size.0 * 4],
+                    );
+                    return true;
+                }
+
+                false
+            }
+            _ => false,
+        }
     }
 }
