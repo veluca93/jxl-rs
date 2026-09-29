@@ -82,8 +82,6 @@ impl LowMemoryRenderPipelinePerThread {
             .iter()
             .map(|x| x.init_local_state())
             .collect::<Result<_>>()?;
-        let scratch_len = 64 + 4 * (p.shared.chunk_size.div_ceil(64) * 64 + 64) * 4;
-        self.save_scratch.resize(scratch_len, 0);
         Ok(())
     }
 }

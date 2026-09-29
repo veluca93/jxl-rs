@@ -10,6 +10,7 @@ use crate::headers::Orientation;
 use crate::image::ImageDataType;
 use crate::render::buffer_splitter::OutputChannelRef;
 use crate::render::save::{ChannelConversion, SaveStage};
+use crate::util::{SmallVec, StackOnly};
 
 mod identity;
 
@@ -65,272 +66,155 @@ impl SaveStage {
         let relative_y = group_y - save_start.1;
         let save_size = (save_end.0 - save_start.0, save_end.1 - save_start.1);
         let xlen = save_size.0;
-        let nc = data.len();
-
         let out_channels = self.output_channels();
-        let total_channels = out_channels.max(nc);
-        let padded_len = xlen.div_ceil(64) * 64 + 64;
-        let channel_stride = (padded_len * 4 + 63) & !63;
-        let total_needed = 64 + total_channels * channel_stride;
-        if save_scratch.len() < total_needed {
-            save_scratch.resize(total_needed, 0);
-        }
-        let base_align = save_scratch.as_ptr().align_offset(64);
+        let bps = self.data_format.bytes_per_sample();
+        let pixel_bytes = out_channels * bps;
+        let row_bytes = xlen * pixel_bytes;
 
-        macro_rules! write_pixel {
-            ($px: expr, $endianness: expr, $y: expr, $x: expr) => {
-                let px = $px;
-                let px_bytes = if $endianness == Endianness::LittleEndian {
-                    px.to_le_bytes()
-                } else {
-                    px.to_be_bytes()
-                };
-                buf.row_mut($y)[$x..][..px_bytes.len()].copy_from_slice(&px_bytes);
-            };
+        let is_native_endian = match self.data_format {
+            JxlDataFormat::U8 { .. } => true,
+            JxlDataFormat::U16 { endianness, .. }
+            | JxlDataFormat::F16 { endianness }
+            | JxlDataFormat::F32 { endianness } => endianness == Endianness::native(),
+        };
+
+        let direct_out_y = if is_native_endian {
+            match self.orientation {
+                Orientation::Identity => Some(relative_y),
+                Orientation::FlipVertical => Some(save_size.1 - 1 - relative_y),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        let position = (group_origin.0 + save_start.0, frame_y);
+
+        if let Some(out_y) = direct_out_y
+            && buf.row_mut(out_y).as_ptr().align_offset(bps) == 0
+        {
+            self.convert_and_interleave_row(
+                data,
+                save_start.0,
+                xlen,
+                frame_y,
+                position,
+                &mut buf.row_mut(out_y)[..row_bytes],
+            );
+            return Ok(());
         }
 
+        let needed = row_bytes + 4;
+        if save_scratch.len() < needed {
+            save_scratch.resize(needed, 0);
+        }
+        let align = save_scratch.as_ptr().align_offset(4);
+        let target_bytes = &mut save_scratch[align..align + row_bytes];
+
+        self.convert_and_interleave_row(data, save_start.0, xlen, frame_y, position, target_bytes);
+
+        if !is_native_endian {
+            match bps {
+                2 => {
+                    for chunk in target_bytes.chunks_exact_mut(2) {
+                        chunk.swap(0, 1);
+                    }
+                }
+                4 => {
+                    for chunk in target_bytes.chunks_exact_mut(4) {
+                        chunk.reverse();
+                    }
+                }
+                _ => {}
+            }
+        }
+        let (x0, y0) = self.orientation.display_pixel((0, relative_y), save_size);
+        let (dx, dy) = self.orientation.display_row_step();
+        for (ix, px_bytes) in target_bytes.chunks_exact(pixel_bytes).enumerate() {
+            let y = (y0 as isize + dy * ix as isize) as usize;
+            let x = (x0 as isize + dx * ix as isize) as usize;
+            buf.row_mut(y)[x * pixel_bytes..][..pixel_bytes].copy_from_slice(px_bytes);
+        }
+
+        Ok(())
+    }
+
+    fn convert_and_interleave_row(
+        &self,
+        data: &[&RowBuffer],
+        x_start: usize,
+        xlen: usize,
+        frame_y: usize,
+        position: (usize, usize),
+        target_bytes: &mut [u8],
+    ) {
         match self.data_format {
             JxlDataFormat::U8 { .. } => {
-                let mut u8_slices: [&[u8]; 4] = [&[]; 4];
-                let mut scratch_chunks =
-                    save_scratch[base_align..].chunks_exact_mut(channel_stride);
+                let mut sources: SmallVec<identity::ChannelSourceU8, 4, StackOnly> =
+                    SmallVec::new();
                 for (c, d) in data.iter().enumerate() {
-                    let out_scratch_chunk = scratch_chunks.next().unwrap();
-                    let conv = self
-                        .conversions
-                        .get(c)
-                        .copied()
-                        .unwrap_or(ChannelConversion::None);
-                    match conv {
-                        ChannelConversion::None => {
-                            let off = RowBuffer::x0_offset::<u8>() + save_start.0;
-                            u8_slices[c] = &d.get_row::<u8>(frame_y)[off..off + xlen];
-                        }
+                    let src = match self.conversions[c] {
                         ChannelConversion::F32ToU8 {
                             bit_depth,
                             dither_channel,
                         } => {
-                            let off = RowBuffer::x0_offset::<f32>() + save_start.0;
-                            let in_slice = &d.get_row::<f32>(frame_y)[off..];
-                            let out_scratch = &mut out_scratch_chunk[..xlen];
-                            identity::f32_to_u8_simd(
-                                in_slice,
-                                out_scratch,
-                                ((1 << bit_depth) - 1) as f32,
-                                (group_origin.0 + save_start.0, frame_y),
+                            let off = RowBuffer::x0_offset::<f32>() + x_start;
+                            identity::ChannelSourceU8::F32 {
+                                slice: &d.get_row::<f32>(frame_y)[off..off + xlen],
+                                max: ((1u32 << bit_depth) - 1) as f32,
                                 dither_channel,
-                            );
-                            u8_slices[c] = out_scratch;
+                            }
                         }
                         ChannelConversion::I16ToU8 { multiplier, max } => {
-                            let off = RowBuffer::x0_offset::<i16>() + save_start.0;
-                            let in_slice = &d.get_row::<i16>(frame_y)[off..];
-                            let out_scratch = &mut out_scratch_chunk[..xlen];
-                            identity::i16_to_u8_simd(
-                                in_slice,
-                                out_scratch,
-                                multiplier as i16,
-                                max as i16,
-                            );
-                            u8_slices[c] = out_scratch;
+                            let off = RowBuffer::x0_offset::<i16>() + x_start;
+                            identity::ChannelSourceU8::I16 {
+                                slice: &d.get_row::<i16>(frame_y)[off..off + xlen],
+                                mult: multiplier as i16,
+                                max: max as i16,
+                            }
                         }
                         ChannelConversion::I32ToU8 { multiplier, max } => {
-                            let off = RowBuffer::x0_offset::<i32>() + save_start.0;
-                            let in_slice = &d.get_row::<i32>(frame_y)[off..];
-                            let out_scratch = &mut out_scratch_chunk[..padded_len];
-                            identity::i32_to_u8_simd_dispatch(
-                                in_slice,
-                                out_scratch,
-                                multiplier,
+                            let off = RowBuffer::x0_offset::<i32>() + x_start;
+                            identity::ChannelSourceU8::I32 {
+                                slice: &d.get_row::<i32>(frame_y)[off..off + xlen],
+                                mult: multiplier,
                                 max,
-                                xlen,
-                            );
-                            u8_slices[c] = &out_scratch[..xlen];
+                            }
                         }
                         _ => unreachable!("unsupported conversion to U8"),
-                    }
-                }
-
-                let actual_nc = if self.fill_opaque_alpha && nc < out_channels {
-                    let out_scratch_chunk = scratch_chunks.next().unwrap();
-                    out_scratch_chunk[..xlen].fill(255);
-                    u8_slices[nc] = &out_scratch_chunk[..xlen];
-                    out_channels
-                } else {
-                    nc
-                };
-
-                let num_fast = match self.orientation {
-                    Orientation::Identity => {
-                        identity::store_u8(&u8_slices[..actual_nc], buf.row_mut(relative_y))
-                    }
-                    Orientation::FlipVertical => identity::store_u8(
-                        &u8_slices[..actual_nc],
-                        buf.row_mut(save_size.1 - 1 - relative_y),
-                    ),
-                    _ => 0,
-                };
-
-                if num_fast < xlen {
-                    let (x0, y0) = self.orientation.display_pixel((0, relative_y), save_size);
-                    let x0 = x0 as isize;
-                    let y0 = y0 as isize;
-                    let (dx, dy) = self.orientation.display_row_step();
-                    for (c, slice) in u8_slices[..actual_nc].iter().enumerate() {
-                        for (ix, &px) in slice.iter().enumerate().skip(num_fast) {
-                            let y = (y0 + (dy * ix as isize)) as usize;
-                            let x = (x0 + (dx * ix as isize)) as usize;
-                            write_pixel!(px, Endianness::LittleEndian, y, x * actual_nc + c);
-                        }
-                    }
-                }
-            }
-            JxlDataFormat::U16 { endianness, .. } | JxlDataFormat::F16 { endianness, .. } => {
-                let mut u16_slices: [&[u16]; 4] = [&[]; 4];
-                let mut scratch_chunks =
-                    save_scratch[base_align..].chunks_exact_mut(channel_stride);
-                for (c, d) in data.iter().enumerate() {
-                    let out_scratch_chunk = scratch_chunks.next().unwrap();
-                    let conv = self
-                        .conversions
-                        .get(c)
-                        .copied()
-                        .unwrap_or(ChannelConversion::None);
-                    match conv {
-                        ChannelConversion::None => {
-                            let off = RowBuffer::x0_offset::<u16>() + save_start.0;
-                            u16_slices[c] = &d.get_row::<u16>(frame_y)[off..off + xlen];
-                        }
-                        ChannelConversion::F32ToU16 { bit_depth } => {
-                            let off = RowBuffer::x0_offset::<f32>() + save_start.0;
-                            let in_slice = &d.get_row::<f32>(frame_y)[off..];
-                            let out_scratch =
-                                u16::cast_slice_mut(&mut out_scratch_chunk[..padded_len * 2]);
-                            identity::f32_to_u16_simd_dispatch(
-                                in_slice,
-                                out_scratch,
-                                ((1 << bit_depth) - 1) as f32,
-                                xlen,
-                            );
-                            u16_slices[c] = &out_scratch[..xlen];
-                        }
-                        ChannelConversion::F32ToF16 => {
-                            let off = RowBuffer::x0_offset::<f32>() + save_start.0;
-                            let in_slice = &d.get_row::<f32>(frame_y)[off..];
-                            let out_scratch =
-                                u16::cast_slice_mut(&mut out_scratch_chunk[..padded_len * 2]);
-                            identity::f32_to_f16_simd_dispatch(in_slice, out_scratch, xlen);
-                            u16_slices[c] = &out_scratch[..xlen];
-                        }
-                        _ => unreachable!("unsupported conversion to U16/F16"),
-                    }
-                }
-
-                let actual_nc = if self.fill_opaque_alpha && nc < out_channels {
-                    let out_scratch_chunk = scratch_chunks.next().unwrap();
-                    let out_scratch = u16::cast_slice_mut(&mut out_scratch_chunk[..padded_len * 2]);
-                    let alpha_val = if matches!(self.data_format, JxlDataFormat::F16 { .. }) {
-                        0x3C00
-                    } else {
-                        65535
                     };
-                    out_scratch[..xlen].fill(alpha_val);
-                    u16_slices[nc] = &out_scratch[..xlen];
-                    out_channels
-                } else {
-                    nc
-                };
-
-                let is_native = endianness == Endianness::native();
-                let num_fast = if is_native {
-                    match self.orientation {
-                        Orientation::Identity => {
-                            identity::store_u16(&u16_slices[..actual_nc], buf.row_mut(relative_y))
-                        }
-                        Orientation::FlipVertical => identity::store_u16(
-                            &u16_slices[..actual_nc],
-                            buf.row_mut(save_size.1 - 1 - relative_y),
-                        ),
-                        _ => 0,
-                    }
-                } else {
-                    0
-                };
-
-                if num_fast < xlen {
-                    let (x0, y0) = self.orientation.display_pixel((0, relative_y), save_size);
-                    let x0 = x0 as isize;
-                    let y0 = y0 as isize;
-                    let (dx, dy) = self.orientation.display_row_step();
-                    for (c, slice) in u16_slices[..actual_nc].iter().enumerate() {
-                        for (ix, &px) in slice.iter().enumerate().skip(num_fast) {
-                            let y = (y0 + (dy * ix as isize)) as usize;
-                            let x = (x0 + (dx * ix as isize)) as usize;
-                            write_pixel!(px, endianness, y, (x * actual_nc + c) * 2);
-                        }
-                    }
+                    sources.push(src);
                 }
+                identity::store_fused_u8(&sources, self.fill_opaque_alpha, position, target_bytes);
             }
-            JxlDataFormat::F32 { endianness, .. } => {
-                let mut f32_slices: [&[f32]; 4] = [&[]; 4];
-                for (c, d) in data.iter().enumerate() {
-                    let conv = self
-                        .conversions
-                        .get(c)
-                        .copied()
-                        .unwrap_or(ChannelConversion::None);
-                    match conv {
-                        ChannelConversion::None => {
-                            let off = RowBuffer::x0_offset::<f32>() + save_start.0;
-                            f32_slices[c] = &d.get_row::<f32>(frame_y)[off..off + xlen];
-                        }
-                        _ => unreachable!("unsupported conversion to F32"),
-                    }
-                }
-
-                let actual_nc = if self.fill_opaque_alpha && nc < out_channels {
-                    let mut scratch_chunks =
-                        save_scratch[base_align..].chunks_exact_mut(channel_stride);
-                    let out_scratch_chunk = scratch_chunks.next().unwrap();
-                    let out_scratch = f32::cast_slice_mut(&mut out_scratch_chunk[..padded_len * 4]);
-                    out_scratch[..xlen].fill(1.0);
-                    f32_slices[nc] = &out_scratch[..xlen];
-                    out_channels
-                } else {
-                    nc
-                };
-
-                let is_native = endianness == Endianness::native();
-                let num_fast = if is_native {
-                    match self.orientation {
-                        Orientation::Identity => {
-                            identity::store_f32(&f32_slices[..actual_nc], buf.row_mut(relative_y))
-                        }
-                        Orientation::FlipVertical => identity::store_f32(
-                            &f32_slices[..actual_nc],
-                            buf.row_mut(save_size.1 - 1 - relative_y),
-                        ),
-                        _ => 0,
-                    }
-                } else {
-                    0
-                };
-
-                if num_fast < xlen {
-                    let (x0, y0) = self.orientation.display_pixel((0, relative_y), save_size);
-                    let x0 = x0 as isize;
-                    let y0 = y0 as isize;
-                    let (dx, dy) = self.orientation.display_row_step();
-                    for (c, slice) in f32_slices[..actual_nc].iter().enumerate() {
-                        for (ix, &px) in slice.iter().enumerate().skip(num_fast) {
-                            let y = (y0 + (dy * ix as isize)) as usize;
-                            let x = (x0 + (dx * ix as isize)) as usize;
-                            write_pixel!(px, endianness, y, (x * actual_nc + c) * 4);
-                        }
-                    }
-                }
+            JxlDataFormat::U16 { bit_depth, .. } => {
+                let off = RowBuffer::x0_offset::<f32>() + x_start;
+                let slices: SmallVec<&[f32], 4, StackOnly> = data
+                    .iter()
+                    .map(|d| &d.get_row::<f32>(frame_y)[off..off + xlen])
+                    .collect();
+                let max = ((1u32 << bit_depth) - 1) as f32;
+                let target_u16 = u16::cast_slice_mut(target_bytes);
+                identity::store_fused_u16(&slices, max, self.fill_opaque_alpha, target_u16);
+            }
+            JxlDataFormat::F16 { .. } => {
+                let off = RowBuffer::x0_offset::<f32>() + x_start;
+                let slices: SmallVec<&[f32], 4, StackOnly> = data
+                    .iter()
+                    .map(|d| &d.get_row::<f32>(frame_y)[off..off + xlen])
+                    .collect();
+                let target_u16 = u16::cast_slice_mut(target_bytes);
+                identity::store_fused_f16(&slices, self.fill_opaque_alpha, target_u16);
+            }
+            JxlDataFormat::F32 { .. } => {
+                let off = RowBuffer::x0_offset::<f32>() + x_start;
+                let slices: SmallVec<&[f32], 4, StackOnly> = data
+                    .iter()
+                    .map(|d| &d.get_row::<f32>(frame_y)[off..off + xlen])
+                    .collect();
+                let target_f32 = f32::cast_slice_mut(target_bytes);
+                identity::store_fused_f32(&slices, self.fill_opaque_alpha, target_f32);
             }
         }
-        Ok(())
     }
 }
