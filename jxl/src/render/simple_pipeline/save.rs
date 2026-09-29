@@ -7,7 +7,7 @@ use crate::api::{Endianness, JxlDataFormat, JxlOutputBuffer};
 use crate::error::Result;
 use crate::image::Image;
 use crate::render::buffer_splitter::OutputChannelRef;
-use crate::render::save::SaveStage;
+use crate::render::save::{ChannelConversion, PipelineChannelType, SaveStage};
 use crate::util::f16;
 
 impl SaveStage {
@@ -50,20 +50,57 @@ impl SaveStage {
                         };
                     }
 
+                    let conv = self
+                        .conversions
+                        .get(c)
+                        .copied()
+                        .unwrap_or(ChannelConversion::None);
+
                     match self.data_format {
                         JxlDataFormat::U8 { .. } => {
-                            // Conversion stages already handle bit depth scaling
-                            write_pixel!(px as u8, Endianness::LittleEndian);
+                            let val = match conv {
+                                ChannelConversion::None => px as u8,
+                                ChannelConversion::F32ToU8 {
+                                    bit_depth,
+                                    dither_channel,
+                                } => {
+                                    let max = ((1 << bit_depth) - 1) as f64;
+                                    let dither = crate::util::DITHER_TABLE
+                                        [(y + dither_channel * 13) % 32]
+                                        [(x + dither_channel * 23) % 32]
+                                        as f64;
+                                    (px * max + dither).clamp(0.0, max).round() as u8
+                                }
+                                ChannelConversion::I16ToU8 { multiplier, max }
+                                | ChannelConversion::I32ToU8 { multiplier, max } => {
+                                    (px as i64 * multiplier as i64).clamp(0, max as i64) as u8
+                                }
+                                _ => unreachable!("unsupported conversion to U8"),
+                            };
+                            write_pixel!(val, Endianness::LittleEndian);
                         }
                         JxlDataFormat::U16 { endianness, .. } => {
-                            // Conversion stages already handle bit depth scaling
-                            write_pixel!(px as u16, endianness);
+                            let val = match conv {
+                                ChannelConversion::None => px as u16,
+                                ChannelConversion::F32ToU16 { bit_depth } => {
+                                    let max = ((1 << bit_depth) - 1) as f64;
+                                    (px * max).clamp(0.0, max).round() as u16
+                                }
+                                _ => unreachable!("unsupported conversion to U16"),
+                            };
+                            write_pixel!(val, endianness);
                         }
                         JxlDataFormat::F32 { endianness } => {
                             write_pixel!(px as f32, endianness);
                         }
                         JxlDataFormat::F16 { endianness } => {
-                            write_pixel!(f16::from_f64(px), endianness);
+                            let val = match conv {
+                                ChannelConversion::None | ChannelConversion::F32ToF16 => {
+                                    f16::from_f64(px)
+                                }
+                                _ => unreachable!("unsupported conversion to F16"),
+                            };
+                            write_pixel!(val, endianness);
                         }
                     }
                 }
@@ -101,7 +138,6 @@ mod test {
     use crate::image::Rect;
     use crate::render::buffer_splitter::OutputChannelSplitter;
     use crate::tests::assert_close;
-
     #[test]
     fn save_stage() -> Result<()> {
         let save_stage = SaveStage::new(
@@ -110,7 +146,7 @@ mod test {
             0,
             JxlColorType::Grayscale,
             JxlDataFormat::U8 { bit_depth: 8 },
-            false,
+            &[PipelineChannelType::F32],
         );
         let mut rng = XorShiftRng::seed_from_u64(0);
         let src = [Image::<f64>::new_random((128, 128), &mut rng)?];
@@ -129,8 +165,9 @@ mod test {
 
         for y in 0..128 {
             for x in 0..128 {
-                // Conversion stages handle bit depth scaling, save stage just casts
-                let expected = src[0].row(y)[x] as u8;
+                let dither = crate::util::DITHER_TABLE[y % 32][x % 32] as f64;
+                let expected =
+                    (src[0].row(y)[x] * 255.0 + dither).clamp(0.0, 255.0).round() as u8;
                 assert_eq!(expected, dst.row(y)[x]);
             }
         }
@@ -158,7 +195,7 @@ mod test {
             0,
             JxlColorType::Grayscale,
             JxlDataFormat::f32(),
-            false,
+            &[PipelineChannelType::F32],
         );
 
         let mut rng = XorShiftRng::seed_from_u64(0);

@@ -127,7 +127,6 @@ fn make_and_run_simple_pipeline_impl<InputT: ImageDataType, OutputT: ImageDataTy
             i,
             JxlColorType::Grayscale,
             jxl_data_type,
-            false,
         );
     }
     let pipeline = pipeline.build()?;

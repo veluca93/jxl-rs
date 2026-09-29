@@ -141,6 +141,7 @@ impl JxlDataFormat {
     }
 
     /// Returns the byte representation of opaque alpha (1.0) for this format.
+    #[cfg(test)]
     pub(crate) fn opaque_alpha_bytes(&self) -> Vec<u8> {
         match self {
             JxlDataFormat::U8 { bit_depth } => {

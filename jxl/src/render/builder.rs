@@ -3,25 +3,29 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use std::sync::Arc;
-
-use super::internal::{RenderPipelineShared, Stage};
+use super::internal::{ChannelInfo, InOutStage, InPlaceStage, RenderPipelineShared, Stage};
 use super::stages::ExtendToImageDimensionsStage;
 use super::{RenderPipeline, RenderPipelineInOutStage, RenderPipelineInPlaceStage};
 use crate::api::{JxlColorType, JxlDataFormat};
 use crate::error::{Error, Result};
+use crate::frame::quantizer::LfQuantFactors;
 use crate::headers::Orientation;
-use crate::image::BufferRecycler;
-use crate::render::StageSpecialCase;
-use crate::render::internal::ChannelInfo;
-use crate::render::save::SaveStage;
-use crate::render::stages::{ConvertI16ToU8Stage, ConvertI32ToU8Stage};
-use crate::util::ShiftRightCeil;
+use crate::image::{BufferRecycler, DataTypeTag};
+use crate::render::save::{ChannelConversion, PipelineChannelType, SaveStage};
+use crate::render::stages::{
+    ConvertModular16ToF32Stage, ConvertModular16XYBToF32Stage, ConvertModularToF32Stage,
+    ConvertModularXYBToF32Stage,
+};
 use crate::util::sync::atomic::{AtomicBool, Ordering};
+use crate::util::sync::{Arc, RwLock};
 use crate::util::tracing_wrappers::*;
+use crate::util::{ShiftRightCeil, SmallVec, StackOnly};
 
 pub(crate) struct RenderPipelineBuilder<Pipeline: RenderPipeline> {
     shared: RenderPipelineShared<Pipeline::Buffer>,
+    channel_types: Vec<PipelineChannelType>,
+    xyb_encoded: bool,
+    lf_quant: Option<Arc<RwLock<LfQuantFactors>>>,
 }
 
 impl<Pipeline: RenderPipeline> RenderPipelineBuilder<Pipeline> {
@@ -62,12 +66,66 @@ impl<Pipeline: RenderPipeline> RenderPipelineBuilder<Pipeline> {
                 channel_is_used: vec![false; num_channels],
                 buffer_recycler,
             },
+            channel_types: vec![PipelineChannelType::F32; num_channels],
+            xyb_encoded: false,
+            lf_quant: None,
         }
     }
 
     pub(super) fn add_stage_internal(mut self, stage: Stage<Pipeline::Buffer>) -> Self {
         self.shared.stages.push(stage);
         self
+    }
+
+    pub fn set_modular_channel_types(
+        &mut self,
+        channel_types: Vec<PipelineChannelType>,
+        xyb_encoded: bool,
+        lf_quant: Option<Arc<RwLock<LfQuantFactors>>>,
+    ) {
+        self.channel_types = channel_types;
+        self.xyb_encoded = xyb_encoded;
+        self.lf_quant = lf_quant;
+    }
+
+    pub fn ensure_f32(&mut self, channels: &[usize]) {
+        for &c in channels {
+            if self.channel_types[c] == PipelineChannelType::F32 {
+                continue;
+            }
+            if c < 3 && self.xyb_encoded {
+                if self.channel_types[0] != PipelineChannelType::F32 {
+                    let lf_quant = self.lf_quant.as_ref().unwrap().clone();
+                    if matches!(self.channel_types[0], PipelineChannelType::I16(_)) {
+                        self.shared.stages.push(Stage::InOut(Pipeline::box_inout_stage(
+                            ConvertModular16XYBToF32Stage::new(0, lf_quant),
+                        )));
+                    } else {
+                        self.shared.stages.push(Stage::InOut(Pipeline::box_inout_stage(
+                            ConvertModularXYBToF32Stage::new(0, lf_quant),
+                        )));
+                    }
+                    self.channel_types[0] = PipelineChannelType::F32;
+                    self.channel_types[1] = PipelineChannelType::F32;
+                    self.channel_types[2] = PipelineChannelType::F32;
+                }
+            } else {
+                let bit_depth = match self.channel_types[c] {
+                    PipelineChannelType::I16(bd) | PipelineChannelType::I32(bd) => bd,
+                    PipelineChannelType::F32 => unreachable!(),
+                };
+                if matches!(self.channel_types[c], PipelineChannelType::I16(_)) {
+                    self.shared.stages.push(Stage::InOut(Pipeline::box_inout_stage(
+                        ConvertModular16ToF32Stage::new(c, bit_depth),
+                    )));
+                } else {
+                    self.shared.stages.push(Stage::InOut(Pipeline::box_inout_stage(
+                        ConvertModularToF32Stage::new(c, bit_depth),
+                    )));
+                }
+                self.channel_types[c] = PipelineChannelType::F32;
+            }
+        }
     }
 
     pub fn new(
@@ -88,34 +146,62 @@ impl<Pipeline: RenderPipeline> RenderPipelineBuilder<Pipeline> {
     }
 
     pub fn add_save_stage(
-        self,
+        mut self,
         channels: &[usize],
         orientation: Orientation,
         output_buffer_index: usize,
         color_type: JxlColorType,
         data_format: JxlDataFormat,
-        fill_opaque_alpha: bool,
     ) -> Self {
+        for &c in channels {
+            let need_f32 = match self.channel_types[c] {
+                PipelineChannelType::F32 => false,
+                PipelineChannelType::I16(bd) | PipelineChannelType::I32(bd) => {
+                    !ChannelConversion::can_save_integer(data_format, bd)
+                }
+            };
+            if need_f32 {
+                self.ensure_f32(&[c]);
+            }
+        }
+        let chan_types: SmallVec<PipelineChannelType, 4, StackOnly> =
+            channels.iter().map(|&c| self.channel_types[c]).collect();
         let stage = SaveStage::new(
             channels,
             orientation,
             output_buffer_index,
             color_type,
             data_format,
-            fill_opaque_alpha,
+            &chan_types,
         );
         self.add_stage_internal(Stage::Save(stage))
     }
 
-    pub fn add_extend_stage(self, extend: ExtendToImageDimensionsStage) -> Self {
+    pub fn add_extend_stage(mut self, extend: ExtendToImageDimensionsStage) -> Self {
+        let channels: Vec<usize> = (0..self.shared.num_channels()).collect();
+        self.ensure_f32(&channels);
         self.add_stage_internal(Stage::Extend(extend))
     }
 
-    pub fn add_inplace_stage<S: RenderPipelineInPlaceStage>(self, stage: S) -> Self {
+    pub fn add_inplace_stage<S: RenderPipelineInPlaceStage>(mut self, stage: S) -> Self {
+        if stage.ty() == DataTypeTag::F32 {
+            for c in 0..self.shared.num_channels() {
+                if stage.uses_channel(c) {
+                    self.ensure_f32(&[c]);
+                }
+            }
+        }
         self.add_stage_internal(Stage::InPlace(Pipeline::box_inplace_stage(stage)))
     }
 
-    pub fn add_inout_stage<S: RenderPipelineInOutStage>(self, stage: S) -> Self {
+    pub fn add_inout_stage<S: RenderPipelineInOutStage>(mut self, stage: S) -> Self {
+        if stage.input_type() == DataTypeTag::F32 {
+            for c in 0..self.shared.num_channels() {
+                if stage.uses_channel(c) {
+                    self.ensure_f32(&[c]);
+                }
+            }
+        }
         self.add_stage_internal(Stage::InOut(Pipeline::box_inout_stage(stage)))
     }
 
@@ -123,15 +209,13 @@ impl<Pipeline: RenderPipeline> RenderPipelineBuilder<Pipeline> {
     pub fn build(mut self) -> Result<Box<Pipeline>> {
         let mut stage_is_used = vec![false; self.shared.stages.len()];
         let num_channels = self.shared.num_channels();
-        let mut channel_next_use = vec![None; num_channels];
         // Prune unused stages.
         for i in (0..self.shared.stages.len()).rev() {
             let stage = &self.shared.stages[i];
             if matches!(stage, Stage::Save(_)) {
-                for (c, next_use) in channel_next_use.iter_mut().enumerate() {
+                for c in 0..num_channels {
                     if stage.uses_channel(c) {
                         self.shared.channel_is_used[c] = true;
-                        *next_use = Some(i);
                     }
                 }
             }
@@ -149,52 +233,9 @@ impl<Pipeline: RenderPipeline> RenderPipelineBuilder<Pipeline> {
                 stage_is_used[i] = true;
             }
             if stage_is_used[i] {
-                match self.shared.stages[i].is_special_case() {
-                    None => (),
-                    Some(StageSpecialCase::F32ToU8 { .. }) => (),
-                    Some(StageSpecialCase::ModularToF32 { channel, bit_depth }) => {
-                        let n = channel_next_use[channel].unwrap();
-                        if let Some(StageSpecialCase::F32ToU8 {
-                            channel: c,
-                            bit_depth: b,
-                        }) = self.shared.stages[n].is_special_case()
-                        {
-                            assert_eq!(c, channel);
-                            if b % bit_depth == 0 {
-                                let mult = ((1 << b) - 1) / ((1 << bit_depth) - 1);
-                                // Remove the next stage, and replace the current stage with I32 -> U8
-                                // conversion.
-                                stage_is_used[n] = false;
-                                self.shared.stages[i] = Stage::InOut(Pipeline::box_inout_stage(
-                                    ConvertI32ToU8Stage::new(c, mult, (1 << b) - 1),
-                                ));
-                            }
-                        }
-                    }
-                    Some(StageSpecialCase::Modular16ToF32 { channel, bit_depth }) => {
-                        let n = channel_next_use[channel].unwrap();
-                        if let Some(StageSpecialCase::F32ToU8 {
-                            channel: c,
-                            bit_depth: b,
-                        }) = self.shared.stages[n].is_special_case()
-                        {
-                            assert_eq!(c, channel);
-                            if b % bit_depth == 0 {
-                                let mult = ((1 << b) - 1) / ((1 << bit_depth) - 1);
-                                // Remove the next stage, and replace the current stage with I16 -> U8
-                                // conversion.
-                                stage_is_used[n] = false;
-                                self.shared.stages[i] = Stage::InOut(Pipeline::box_inout_stage(
-                                    ConvertI16ToU8Stage::new(c, mult, (1 << b) - 1),
-                                ));
-                            }
-                        }
-                    }
-                }
-                for (c, next_use) in channel_next_use.iter_mut().enumerate() {
+                for c in 0..num_channels {
                     if self.shared.stages[i].uses_channel(c) {
                         self.shared.channel_is_used[c] = true;
-                        *next_use = Some(i);
                     }
                 }
             }
@@ -207,7 +248,6 @@ impl<Pipeline: RenderPipeline> RenderPipelineBuilder<Pipeline> {
             .filter_map(|(s, used)| used.then_some(s))
             .collect();
         for (i, stage) in self.shared.stages.iter().enumerate() {
-            let input_type = stage.input_type();
             let output_type = stage.output_type();
             let shift = stage.shift();
             let border = stage.border();
@@ -226,18 +266,19 @@ impl<Pipeline: RenderPipeline> RenderPipelineBuilder<Pipeline> {
                         downsample: (0, 0),
                     });
                 } else {
+                    let channel_in_ty = stage.channel_input_type(c);
                     if let Some(ty) = info.ty
-                        && ty != input_type
+                        && ty != channel_in_ty
                     {
                         return Err(Error::PipelineChannelTypeMismatch(
                             stage.to_string(),
                             c,
-                            input_type,
+                            channel_in_ty,
                             ty,
                         ));
                     }
                     after_info.push(ChannelInfo {
-                        ty: Some(output_type.unwrap_or(input_type)),
+                        ty: Some(output_type.unwrap_or(channel_in_ty)),
                         downsample: shift,
                     });
                 }
@@ -269,7 +310,7 @@ impl<Pipeline: RenderPipeline> RenderPipelineBuilder<Pipeline> {
                 let cur_chan = &mut current_info[chan];
                 let next_chan = &mut next_info[chan];
                 let uses_channel = stage.uses_channel(chan);
-                let input_type = stage.input_type();
+                let input_type = stage.channel_input_type(chan);
 
                 if cur_chan.ty.is_none() {
                     cur_chan.ty = if uses_channel {

@@ -12,7 +12,7 @@ use super::stages::ExtendToImageDimensionsStage;
 use super::{RenderPipelineInOutStage, RenderPipelineInPlaceStage};
 use crate::error::Result;
 use crate::image::{BufferRecycler, DataTypeTag, ImageDataType};
-use crate::render::{ErasedLocalState, StageSpecialCase};
+use crate::render::ErasedLocalState;
 use crate::util::ShiftRightCeil;
 use crate::util::sync::atomic::AtomicBool;
 
@@ -67,19 +67,18 @@ impl<Buffer: 'static> Stage<Buffer> {
             Stage::Extend(_) => DataTypeTag::F32,
             Stage::InPlace(s) => s.ty(),
             Stage::InOut(s) => s.input_type(),
-            Stage::Save(s) => s.input_type(),
+            Stage::Save(_) => unreachable!("SaveStage has per-channel input types; use channel_input_type"),
+        }
+    }
+    pub(super) fn channel_input_type(&self, c: usize) -> DataTypeTag {
+        match self {
+            Stage::Save(s) => s.channel_input_type(c),
+            _ => self.input_type(),
         }
     }
     pub(super) fn output_type(&self) -> Option<DataTypeTag> {
         match self {
             Stage::InOut(s) => Some(s.output_type()),
-            _ => None,
-        }
-    }
-    pub(super) fn is_special_case(&self) -> Option<StageSpecialCase> {
-        match self {
-            Stage::InOut(s) => s.is_special_case(),
-            Stage::InPlace(s) => s.is_special_case(),
             _ => None,
         }
     }
@@ -190,7 +189,6 @@ pub trait InPlaceStage: Any + Display + Send + Sync {
     fn init_local_state(&self) -> Result<Option<Box<ErasedLocalState>>>;
     fn uses_channel(&self, c: usize) -> bool;
     fn ty(&self) -> DataTypeTag;
-    fn is_special_case(&self) -> Option<StageSpecialCase>;
 }
 
 pub trait RunInPlaceStage<Buffer: PipelineBuffer>: InPlaceStage {
@@ -212,9 +210,6 @@ impl<T: RenderPipelineInPlaceStage> InPlaceStage for T {
     fn ty(&self) -> DataTypeTag {
         T::Type::DATA_TYPE_ID
     }
-    fn is_special_case(&self) -> Option<StageSpecialCase> {
-        self.is_special_case()
-    }
 }
 
 pub trait InOutStage: Any + Display + Send + Sync {
@@ -224,7 +219,6 @@ pub trait InOutStage: Any + Display + Send + Sync {
     fn uses_channel(&self, c: usize) -> bool;
     fn input_type(&self) -> DataTypeTag;
     fn output_type(&self) -> DataTypeTag;
-    fn is_special_case(&self) -> Option<StageSpecialCase>;
 }
 
 impl<T: RenderPipelineInOutStage> InOutStage for T {
@@ -245,9 +239,6 @@ impl<T: RenderPipelineInOutStage> InOutStage for T {
     }
     fn output_type(&self) -> DataTypeTag {
         T::OutputT::DATA_TYPE_ID
-    }
-    fn is_special_case(&self) -> Option<StageSpecialCase> {
-        self.is_special_case()
     }
 }
 
