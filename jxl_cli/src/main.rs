@@ -144,7 +144,7 @@ fn main() -> Result<()> {
     if opt.info {
         let mut reader = BufReader::new(&mut file);
         let decoder = dec::decode_header(&mut reader, None, options(true))?;
-        let info = decoder.basic_info();
+        let info = decoder.basic_info().unwrap();
         println!("Image size: {}x{}", info.size.0, info.size.1);
         println!("Bit depth: {:?}", info.bit_depth);
         println!("Orientation: {:?}", info.orientation);
@@ -167,7 +167,7 @@ fn main() -> Result<()> {
     if opt.preview {
         let mut reader = BufReader::new(&mut file);
         let decoder = dec::decode_header(&mut reader, None, options(true))?;
-        let info = decoder.basic_info();
+        let info = decoder.basic_info().unwrap();
         if info.preview_size.is_none() {
             return Err(eyre!("This file does not contain a preview frame"));
         }

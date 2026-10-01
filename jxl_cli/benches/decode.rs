@@ -46,7 +46,8 @@ fn decode_benches(c: &mut Criterion) {
         let mut header_input = bytes.as_slice();
         let header_decoder =
             decode_header(&mut header_input, None, JxlDecoderOptions::default()).unwrap();
-        let pixel_count = header_decoder.basic_info().size.0 * header_decoder.basic_info().size.1;
+        let pixel_count = header_decoder.basic_info().unwrap().size.0
+            * header_decoder.basic_info().unwrap().size.1;
         group.throughput(criterion::Throughput::Elements(pixel_count as u64));
         group.bench_with_input(
             BenchmarkId::from_parameter(path.to_string_lossy()),
