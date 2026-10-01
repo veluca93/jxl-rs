@@ -5,17 +5,10 @@
 #![no_main]
 
 use jxl::api::{
-    JxlColorType, JxlDecoder, JxlDecoderOptions, JxlParallelRunner, ProcessingResult, states,
+    JxlDecoderInner as JxlDecoder, JxlDecoderOptions, JxlDecoderStatus, JxlParallelRunner,
 };
 use jxl::image::{Image, JxlOutputBuffer, Rect};
 use libfuzzer_sys::fuzz_target;
-
-fn as_complete<T, U, E>(result: Result<ProcessingResult<T, U>, E>) -> Result<T, ()> {
-    match result {
-        Ok(ProcessingResult::Complete { result }) => Ok(result),
-        _ => Err(()),
-    }
-}
 
 struct SimpleParallelRunner {
     max_threads: usize,
@@ -78,70 +71,50 @@ impl JxlParallelRunner for SimpleParallelRunner {
     }
 }
 
-fn reborrow<'a>(
-    runner: &'a mut Option<&mut dyn JxlParallelRunner>,
-) -> Option<&'a mut dyn JxlParallelRunner> {
-    match runner {
-        Some(r) => Some(&mut **r),
-        None => None,
-    }
-}
-
 fn fuzz_decode_parallel(mut data: &[u8]) -> Result<(), ()> {
     let mut runner = SimpleParallelRunner { max_threads: 2 };
-    let mut runner_opt: Option<&mut dyn JxlParallelRunner> = Some(&mut runner);
 
     let mut decoder_options = JxlDecoderOptions::default();
     decoder_options.sample_limit = Some(1 << 22);
-    let initialized_decoder = JxlDecoder::<states::Initialized>::new(decoder_options);
-    let mut decoder_with_image_info =
-        as_complete(initialized_decoder.process(&mut data, reborrow(&mut runner_opt)))?;
-
-    let info = decoder_with_image_info.basic_info();
-
-    let extra_channels = info.extra_channels.len();
-    let pixel_format = decoder_with_image_info.current_pixel_format().clone();
-    let color_type = pixel_format.color_type;
-    let samples_per_pixel = if color_type == JxlColorType::Grayscale {
-        1
-    } else {
-        3
-    };
-
-    loop {
-        let decoder_with_frame_info =
-            as_complete(decoder_with_image_info.process(&mut data, reborrow(&mut runner_opt)))?;
-        let frame_header = decoder_with_frame_info.frame_header();
-        let frame_size = frame_header.size;
-
-        let mut outputs =
-            vec![Image::<f32>::new((frame_size.0 * samples_per_pixel, frame_size.1)).unwrap()];
-
-        for _ in 0..extra_channels {
-            outputs.push(Image::<f32>::new(frame_size).unwrap());
-        }
-
-        let mut output_bufs: Vec<JxlOutputBuffer<'_>> = outputs
-            .iter_mut()
-            .map(|x| {
-                let rect = Rect {
-                    size: x.size(),
-                    origin: (0, 0),
-                };
-                JxlOutputBuffer::from_image_rect_mut(x.get_rect_mut(rect).into_raw())
-            })
-            .collect();
-
-        decoder_with_image_info = as_complete(decoder_with_frame_info.process(
-            &mut data,
-            &mut output_bufs,
-            reborrow(&mut runner_opt),
-        ))?;
-
-        if !decoder_with_image_info.has_more_frames() {
-            break;
-        }
+    let mut decoder = JxlDecoder::new(decoder_options);
+    match decoder.process(&mut data, None, Some(&mut runner)) {
+        Ok(JxlDecoderStatus::BasicInfo) => {}
+        _ => return Err(()),
     }
+    match decoder.process(&mut data, None, Some(&mut runner)) {
+        Ok(JxlDecoderStatus::FrameHeader) => {}
+        _ => return Err(()),
+    }
+
+    let info = decoder.basic_info().unwrap();
+    let frame_size = info.size;
+    let extra_channels = info.extra_channels.len();
+    let samples_per_pixel = decoder
+        .current_pixel_format()
+        .unwrap()
+        .color_type
+        .samples_per_pixel();
+
+    let mut outputs =
+        vec![Image::<f32>::new((frame_size.0 * samples_per_pixel, frame_size.1)).map_err(|_| ())?];
+    for _ in 0..extra_channels {
+        outputs.push(Image::<f32>::new(frame_size).map_err(|_| ())?);
+    }
+    let mut output_bufs: Vec<JxlOutputBuffer<'_>> = outputs
+        .iter_mut()
+        .map(|x| {
+            let rect = Rect {
+                size: x.size(),
+                origin: (0, 0),
+            };
+            JxlOutputBuffer::from_image_rect_mut(x.get_rect_mut(rect).into_raw())
+        })
+        .collect();
+
+    while matches!(
+        decoder.process(&mut data, Some(&mut output_bufs), Some(&mut runner)),
+        Ok(JxlDecoderStatus::FrameHeader | JxlDecoderStatus::FrameComplete)
+    ) {}
 
     Ok(())
 }

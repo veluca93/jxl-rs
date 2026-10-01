@@ -6,11 +6,11 @@
 use std::path::Path;
 
 use crate::api::{
-    JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderInner, JxlDecoderOptions, JxlDecoderStatus,
-    JxlPixelFormat, JxlTransferFunction, ProcessingResult, states,
+    JxlColorType, JxlDataFormat, JxlDecoderInner as JxlDecoder, JxlDecoderOptions,
+    JxlDecoderStatus, JxlPixelFormat, JxlTransferFunction,
 };
 use crate::error::Error;
-use crate::image::{Image, JxlOutputBuffer, Rect};
+use crate::image::Image;
 use crate::tests::decode::{
     DecodeParams, as_output_buffers, compare_frames, decode, decode_internal,
     scan_frames_with_decoder,
@@ -32,78 +32,76 @@ fn decode_ooo_jxlp_invalid_animated_container() {
 #[test]
 fn test_preview_size_none_for_regular_files() {
     let file = std::fs::read("resources/test/basic.jxl").unwrap();
-    let options = JxlDecoderOptions::default();
-    let mut decoder = JxlDecoder::<states::Initialized>::new(options);
+    let mut decoder = JxlDecoder::default();
     let mut input = file.as_slice();
-    let decoder = loop {
-        match decoder.process(&mut input, None).unwrap() {
-            ProcessingResult::Complete { result } => break result,
-            ProcessingResult::NeedsMoreInput { fallback, .. } => decoder = fallback,
-        }
-    };
-    assert!(decoder.basic_info().preview_size.is_none());
+    assert_eq!(
+        decoder.process(&mut input, None, None).unwrap(),
+        JxlDecoderStatus::BasicInfo
+    );
+    assert!(decoder.basic_info().unwrap().preview_size.is_none());
 }
 
 #[test]
 fn test_preview_size_some_for_preview_files() {
     let file = std::fs::read("resources/test/with_preview.jxl").unwrap();
-    let options = JxlDecoderOptions::default();
-    let mut decoder = JxlDecoder::<states::Initialized>::new(options);
+    let mut decoder = JxlDecoder::default();
     let mut input = file.as_slice();
-    let decoder = loop {
-        match decoder.process(&mut input, None).unwrap() {
-            ProcessingResult::Complete { result } => break result,
-            ProcessingResult::NeedsMoreInput { fallback, .. } => decoder = fallback,
-        }
-    };
-    assert_eq!(decoder.basic_info().preview_size, Some((16, 16)));
+    assert_eq!(
+        decoder.process(&mut input, None, None).unwrap(),
+        JxlDecoderStatus::BasicInfo
+    );
+    assert_eq!(decoder.basic_info().unwrap().preview_size, Some((16, 16)));
 }
 
 #[test]
 fn test_set_pixel_format() {
     let file = std::fs::read("resources/test/basic.jxl").unwrap();
-    let options = JxlDecoderOptions::default();
-    let mut decoder = JxlDecoder::<states::Initialized>::new(options);
-    let mut input = file.as_slice();
-    let mut decoder = loop {
-        match decoder.process(&mut input, None).unwrap() {
-            ProcessingResult::Complete { result } => break result,
-            ProcessingResult::NeedsMoreInput { fallback, .. } => decoder = fallback,
-        }
-    };
-    let default_format = decoder.current_pixel_format().clone();
-    assert_eq!(default_format.color_type, JxlColorType::Rgb);
-
+    let mut decoder = JxlDecoder::default();
     let new_format = JxlPixelFormat {
         color_type: JxlColorType::Grayscale,
         color_data_format: Some(JxlDataFormat::U8 { bit_depth: 8 }),
         extra_channel_format: vec![],
     };
+    assert!(decoder.set_pixel_format(new_format.clone()).is_err());
+
+    let mut input = file.as_slice();
+    assert_eq!(
+        decoder.process(&mut input, None, None).unwrap(),
+        JxlDecoderStatus::BasicInfo
+    );
+    let default_format = decoder.current_pixel_format().unwrap().clone();
+    assert_eq!(default_format.color_type, JxlColorType::Rgb);
+
     decoder.set_pixel_format(new_format.clone()).unwrap();
-    assert_eq!(decoder.current_pixel_format(), &new_format);
+    assert_eq!(decoder.current_pixel_format(), Some(&new_format));
 }
 
 #[test]
 fn test_default_output_tf_by_pixel_format() {
     let file = std::fs::read("resources/test/lossy_with_icc.jxl").unwrap();
-    let options = JxlDecoderOptions::default();
-    let mut decoder = JxlDecoder::<states::Initialized>::new(options);
+    let mut decoder = JxlDecoder::default();
     let mut input = file.as_slice();
-    let mut decoder = loop {
-        match decoder.process(&mut input, None).unwrap() {
-            ProcessingResult::Complete { result } => break result,
-            ProcessingResult::NeedsMoreInput { fallback, .. } => decoder = fallback,
-        }
-    };
+    assert_eq!(
+        decoder.process(&mut input, None, None).unwrap(),
+        JxlDecoderStatus::BasicInfo
+    );
 
     assert_eq!(
-        *decoder.output_color_profile().transfer_function().unwrap(),
+        *decoder
+            .output_color_profile()
+            .unwrap()
+            .transfer_function()
+            .unwrap(),
         JxlTransferFunction::Linear,
     );
 
     decoder.set_pixel_format(JxlPixelFormat::rgba8(0)).unwrap();
     assert_eq!(
-        *decoder.output_color_profile().transfer_function().unwrap(),
+        *decoder
+            .output_color_profile()
+            .unwrap()
+            .transfer_function()
+            .unwrap(),
         JxlTransferFunction::SRGB,
     );
 
@@ -111,13 +109,21 @@ fn test_default_output_tf_by_pixel_format() {
         .set_pixel_format(JxlPixelFormat::rgba_f16(0))
         .unwrap();
     assert_eq!(
-        *decoder.output_color_profile().transfer_function().unwrap(),
+        *decoder
+            .output_color_profile()
+            .unwrap()
+            .transfer_function()
+            .unwrap(),
         JxlTransferFunction::Linear,
     );
 
     decoder.set_pixel_format(JxlPixelFormat::rgba16(0)).unwrap();
     assert_eq!(
-        *decoder.output_color_profile().transfer_function().unwrap(),
+        *decoder
+            .output_color_profile()
+            .unwrap()
+            .transfer_function()
+            .unwrap(),
         JxlTransferFunction::SRGB,
     );
 }
@@ -337,170 +343,6 @@ fn test_premultiply_output_already_premultiplied() {
             }
         }
     }
-}
-
-/// Test that animations with reference frames work correctly.
-#[test]
-fn test_animation_with_reference_frames() {
-    let file =
-        std::fs::read("resources/test/conformance_test_images/animation_spline.jxl").unwrap();
-
-    let options = JxlDecoderOptions::default();
-    let decoder = JxlDecoder::<states::Initialized>::new(options);
-    let mut input = file.as_slice();
-
-    let mut decoder = decoder;
-    let mut decoder = loop {
-        match decoder.process(&mut input, None).unwrap() {
-            ProcessingResult::Complete { result } => break result,
-            ProcessingResult::NeedsMoreInput { fallback, .. } => {
-                decoder = fallback;
-            }
-        }
-    };
-
-    let rgb_format = JxlPixelFormat {
-        color_type: JxlColorType::Rgb,
-        color_data_format: Some(JxlDataFormat::f32()),
-        extra_channel_format: vec![],
-    };
-    decoder.set_pixel_format(rgb_format).unwrap();
-
-    let basic_info = decoder.basic_info().clone();
-    let (width, height) = basic_info.size;
-
-    let mut frame_count = 0;
-
-    loop {
-        let mut decoder_frame = loop {
-            match decoder.process(&mut input, None).unwrap() {
-                ProcessingResult::Complete { result } => break result,
-                ProcessingResult::NeedsMoreInput { fallback, .. } => {
-                    decoder = fallback;
-                }
-            }
-        };
-
-        let mut color_buffer = Image::<f32>::new((width * 3, height)).unwrap();
-        let mut buffers: Vec<_> = vec![JxlOutputBuffer::from_image_rect_mut(
-            color_buffer
-                .get_rect_mut(Rect {
-                    origin: (0, 0),
-                    size: (width * 3, height),
-                })
-                .into_raw(),
-        )];
-
-        decoder = loop {
-            match decoder_frame
-                .process(&mut input, &mut buffers, None)
-                .unwrap()
-            {
-                ProcessingResult::Complete { result } => break result,
-                ProcessingResult::NeedsMoreInput { fallback, .. } => {
-                    decoder_frame = fallback;
-                }
-            }
-        };
-
-        frame_count += 1;
-
-        if !decoder.has_more_frames() {
-            break;
-        }
-    }
-
-    assert!(
-        frame_count > 1,
-        "Expected multiple frames in animation, got {}",
-        frame_count
-    );
-}
-
-#[test]
-fn test_skip_frame_then_decode_next() {
-    let file =
-        std::fs::read("resources/test/conformance_test_images/animation_spline.jxl").unwrap();
-
-    let options = JxlDecoderOptions::default();
-    let decoder = JxlDecoder::<states::Initialized>::new(options);
-    let mut input = file.as_slice();
-
-    let mut decoder = decoder;
-    let mut decoder = loop {
-        match decoder.process(&mut input, None).unwrap() {
-            ProcessingResult::Complete { result } => break result,
-            ProcessingResult::NeedsMoreInput { fallback, .. } => {
-                decoder = fallback;
-            }
-        }
-    };
-
-    let rgb_format = JxlPixelFormat {
-        color_type: JxlColorType::Rgb,
-        color_data_format: Some(JxlDataFormat::f32()),
-        extra_channel_format: vec![],
-    };
-    decoder.set_pixel_format(rgb_format).unwrap();
-
-    let basic_info = decoder.basic_info().clone();
-    let (width, height) = basic_info.size;
-
-    let mut decoder_frame = loop {
-        match decoder.process(&mut input, None).unwrap() {
-            ProcessingResult::Complete { result } => break result,
-            ProcessingResult::NeedsMoreInput { fallback, .. } => {
-                decoder = fallback;
-            }
-        }
-    };
-
-    let mut decoder = loop {
-        match decoder_frame.skip_frame(&mut input).unwrap() {
-            ProcessingResult::Complete { result } => break result,
-            ProcessingResult::NeedsMoreInput { fallback, .. } => {
-                decoder_frame = fallback;
-            }
-        }
-    };
-
-    assert!(
-        decoder.has_more_frames(),
-        "Animation should have more frames"
-    );
-
-    let mut decoder_frame = loop {
-        match decoder.process(&mut input, None).unwrap() {
-            ProcessingResult::Complete { result } => break result,
-            ProcessingResult::NeedsMoreInput { fallback, .. } => {
-                decoder = fallback;
-            }
-        }
-    };
-
-    let mut color_buffer = Image::<f32>::new((width * 3, height)).unwrap();
-    let mut buffers: Vec<_> = vec![JxlOutputBuffer::from_image_rect_mut(
-        color_buffer
-            .get_rect_mut(Rect {
-                origin: (0, 0),
-                size: (width * 3, height),
-            })
-            .into_raw(),
-    )];
-
-    let decoder = loop {
-        match decoder_frame
-            .process(&mut input, &mut buffers, None)
-            .unwrap()
-        {
-            ProcessingResult::Complete { result } => break result,
-            ProcessingResult::NeedsMoreInput { fallback, .. } => {
-                decoder_frame = fallback;
-            }
-        }
-    };
-
-    let _ = decoder.has_more_frames();
 }
 
 fn check_output_format_matches_f32<T: crate::image::ImageDataType>() {
@@ -845,14 +687,13 @@ fn wrap_with_jxlp_chunks(codestream: &[u8], chunk_starts: &[usize]) -> Vec<u8> {
 
 fn assert_start_new_frame_matches_sequential(data: &[u8]) {
     let scanned_frames = scan_frames_with_decoder(data, usize::MAX);
-
     let sequential_frames = decode(data).unwrap();
 
     arbtest::arbtest(|u| {
         let initial_offset =
             u.int_in_range(scanned_frames[0].file_offset..=data.len() as u64)? as usize;
 
-        let mut decoder = JxlDecoderInner::default();
+        let mut decoder = JxlDecoder::default();
         let mut input = &data[..initial_offset];
 
         while let Ok(status) = decoder.process(&mut input, None, None) {
@@ -1093,7 +934,7 @@ fn test_fuzzer_xyb_icc_no_panic() {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x11, 0x25, 0x00,
     ];
 
-    let mut decoder = JxlDecoderInner::default();
+    let mut decoder = JxlDecoder::default();
     let mut input = data;
 
     if let Ok(JxlDecoderStatus::BasicInfo) = decoder.process(&mut input, None, None)
@@ -1117,7 +958,7 @@ fn test_scan_frames_only_empty_followup_no_panic_502853162() {
         scan_frames_only: true,
         ..Default::default()
     };
-    let mut decoder = JxlDecoderInner::new(opts);
+    let mut decoder = JxlDecoder::new(opts);
 
     let mut input = data;
     while !matches!(

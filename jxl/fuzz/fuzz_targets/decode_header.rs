@@ -4,12 +4,11 @@
 // license that can be found in the LICENSE file.
 #![no_main]
 
-use jxl::api::{JxlDecoder, JxlDecoderOptions, states};
+use jxl::api::JxlDecoderInner as JxlDecoder;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let mut data = data;
-    let decoder_options = JxlDecoderOptions::default();
-    let initialized_decoder = JxlDecoder::<states::Initialized>::new(decoder_options);
-    let _ = initialized_decoder.process(&mut data, None);
+    let mut decoder = JxlDecoder::default();
+    let _ = decoder.process(&mut data, None, None);
 });

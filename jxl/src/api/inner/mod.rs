@@ -12,7 +12,7 @@ use crate::error::{Error, Result};
 
 mod box_parser;
 mod codestream_parser;
-pub(crate) mod process;
+mod process;
 
 pub use box_parser::{BoxParserCheckpoint, JxlAuxBox, JxlAuxBoxType};
 
