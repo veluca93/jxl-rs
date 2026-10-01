@@ -6,12 +6,9 @@
 use std::collections::{HashSet, VecDeque};
 use std::io::IoSliceMut;
 
-use crate::api::inner::CodestreamParser;
-use crate::api::inner::box_parser::CodestreamInput;
-use crate::api::inner::codestream_parser::{
-    ProcessMode, check_size_limit, validate_output_buffers,
-};
-use crate::api::inner::process::SmallBuffer;
+use super::super::box_parser::CodestreamInput;
+use super::super::process::SmallBuffer;
+use super::{CodestreamParser, ProcessMode, check_size_limit, validate_output_buffers};
 use crate::api::{
     JxlColorProfile, JxlDecoderOptions, JxlOutputBuffer, JxlParallelRunner, JxlPixelFormat,
 };

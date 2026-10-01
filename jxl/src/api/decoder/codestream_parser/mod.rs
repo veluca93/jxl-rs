@@ -413,11 +413,4 @@ impl CodestreamParser {
             size,
         })
     }
-
-    pub(super) fn has_more_frames(&self) -> bool {
-        !matches!(
-            self.state,
-            ParserState::ConsumingTrailing | ParserState::Finished
-        )
-    }
 }

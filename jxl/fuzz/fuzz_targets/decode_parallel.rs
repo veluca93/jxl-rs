@@ -4,9 +4,7 @@
 // license that can be found in the LICENSE file.
 #![no_main]
 
-use jxl::api::{
-    JxlDecoderInner as JxlDecoder, JxlDecoderOptions, JxlDecoderStatus, JxlParallelRunner,
-};
+use jxl::api::{JxlDecoder, JxlDecoderOptions, JxlDecoderStatus, JxlParallelRunner};
 use jxl::image::{Image, JxlOutputBuffer, Rect};
 use libfuzzer_sys::fuzz_target;
 

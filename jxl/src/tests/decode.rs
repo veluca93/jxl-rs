@@ -6,8 +6,8 @@
 use std::path::Path;
 
 use crate::api::{
-    JxlDecoderInner as JxlDecoder, JxlDecoderOptions, JxlDecoderStatus, JxlParallelRunner,
-    JxlPixelFormat, TestOptions, VisibleFrameInfo,
+    JxlDecoder, JxlDecoderOptions, JxlDecoderStatus, JxlParallelRunner, JxlPixelFormat,
+    TestOptions, VisibleFrameInfo,
 };
 use crate::error::{Error, Result};
 use crate::headers::FileHeader;

@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{IoSliceMut, Read};
 
-use crate::api::inner::process::SmallBuffer;
+use crate::api::decoder::process::SmallBuffer;
 use crate::api::{
     CONTAINER_SIGNATURE, JxlBitstreamInput, JxlSignature, ProfileLevel, check_signature,
 };

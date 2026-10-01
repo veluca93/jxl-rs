@@ -4,7 +4,7 @@
 // license that can be found in the LICENSE file.
 #![no_main]
 
-use jxl::api::JxlDecoderInner as JxlDecoder;
+use jxl::api::JxlDecoder;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

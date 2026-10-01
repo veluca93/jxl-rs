@@ -8,7 +8,7 @@ use std::ops::{Deref, Range};
 
 use super::box_parser::CodestreamInput;
 use crate::api::{
-    JxlBitstreamInput, JxlDecoderInner, JxlDecoderStatus, JxlOutputBuffer, JxlParallelRunner,
+    JxlBitstreamInput, JxlDecoder, JxlDecoderStatus, JxlOutputBuffer, JxlParallelRunner,
     JxlParallelRunnerFun,
 };
 use crate::bit_reader::BitReader;
@@ -142,7 +142,7 @@ impl JxlParallelRunner for SequentialRunner {
     }
 }
 
-impl JxlDecoderInner {
+impl JxlDecoder {
     /// Process more of the input file.
     /// This function will return when reaching the next decoding stage (i.e. finished decoding
     /// file/frame header, or finished decoding a frame).

@@ -16,7 +16,7 @@ use image::hooks::{GenericReader, register_decoding_hook, register_format_detect
 use image::{ColorType, ImageError, ImageResult, LimitSupport, Limits};
 use jxl::api::{
     Endianness, ExtraChannel, JxlBitDepth, JxlColorType, JxlDataFormat,
-    JxlDecoderInner as ApiJxlDecoder, JxlDecoderStatus, JxlOutputBuffer, JxlPixelFormat,
+    JxlDecoder as ApiJxlDecoder, JxlDecoderStatus, JxlOutputBuffer, JxlPixelFormat,
 };
 
 const CODESTREAM_SIGNATURE: [u8; 2] = [0xff, 0x0a];

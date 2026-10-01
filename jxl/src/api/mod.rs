@@ -8,7 +8,6 @@
 mod color;
 mod data_types;
 mod decoder;
-mod inner;
 mod input;
 mod options;
 mod signature;
@@ -19,7 +18,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub use color::*;
 pub use data_types::*;
 pub use decoder::*;
-pub use inner::*;
 pub use input::*;
 pub use options::*;
 pub use signature::*;
@@ -27,35 +25,6 @@ pub use signature::*;
 use crate::error::Result;
 pub use crate::headers::image_metadata::Orientation;
 pub use crate::image::JxlOutputBuffer;
-
-/// This type represents the return value of a function that reads input from a bitstream. The
-/// variant `Complete` indicates that the operation was completed successfully, and its return
-/// value is available. The variant `NeedsMoreInput` indicates that more input is needed, and the
-/// function should be called again. This variant comes with a `size_hint`, representing an
-/// estimate of the number of additional bytes needed, and a `fallback`, representing additional
-/// information that might be needed to call the function again (i.e. because it takes a decoder
-/// object by value).
-#[derive(Debug, PartialEq)]
-pub enum ProcessingResult<T, U> {
-    Complete { result: T },
-    NeedsMoreInput { size_hint: usize, fallback: U },
-}
-
-impl<T> ProcessingResult<T, ()> {
-    #[allow(dead_code)]
-    fn new(
-        result: Result<T, crate::error::Error>,
-    ) -> Result<ProcessingResult<T, ()>, crate::error::Error> {
-        match result {
-            Ok(v) => Ok(ProcessingResult::Complete { result: v }),
-            Err(crate::error::Error::OutOfBounds(v)) => Ok(ProcessingResult::NeedsMoreInput {
-                size_hint: v,
-                fallback: (),
-            }),
-            Err(e) => Err(e),
-        }
-    }
-}
 
 #[derive(Clone)]
 pub struct ToneMapping {

@@ -2537,7 +2537,7 @@ mod test {
     /// Integration test: decode actual HDR PQ test file and verify ICC profile
     #[test]
     fn test_hdr_pq_file_icc_profile() {
-        use crate::api::{JxlDecoderInner as JxlDecoder, JxlDecoderStatus};
+        use crate::api::{JxlDecoder, JxlDecoderStatus};
 
         let data = std::fs::read("resources/test/hdr_pq_test.jxl")
             .expect("Failed to read hdr_pq_test.jxl - run from jxl crate directory");
@@ -2578,7 +2578,7 @@ mod test {
     /// Integration test: decode actual HDR HLG test file and verify ICC profile
     #[test]
     fn test_hdr_hlg_file_icc_profile() {
-        use crate::api::{JxlDecoderInner as JxlDecoder, JxlDecoderStatus};
+        use crate::api::{JxlDecoder, JxlDecoderStatus};
 
         let data = std::fs::read("resources/test/hdr_hlg_test.jxl")
             .expect("Failed to read hdr_hlg_test.jxl - run from jxl crate directory");

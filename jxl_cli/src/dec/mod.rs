@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use color_eyre::eyre::{Result, eyre};
 use jxl::api::{
     Endianness, ExtraChannel, JxlAnimation, JxlBitDepth, JxlBitstreamInput, JxlColorEncoding,
-    JxlColorProfile, JxlColorType, JxlDataFormat, JxlDecoderInner as JxlDecoder, JxlDecoderOptions,
-    JxlDecoderStatus, JxlOutputBuffer, JxlParallelRunner, JxlParallelRunnerFun, JxlPixelFormat,
+    JxlColorProfile, JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlDecoderStatus,
+    JxlOutputBuffer, JxlParallelRunner, JxlParallelRunnerFun, JxlPixelFormat,
 };
 use jxl::image::{OwnedRawImage, Rect, f16};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};

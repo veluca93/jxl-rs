@@ -67,7 +67,7 @@ pub struct VisibleFrameSeekTarget {
     /// File byte offset to start feeding input from.
     pub decode_start_file_offset: u64,
     /// State of the box parser at the file offset we want to seek to.
-    /// Pass this to [`JxlDecoderInner::start_new_frame`].
+    /// Pass this to [`JxlDecoder::start_new_frame`].
     pub box_parser_checkpoint: BoxParserCheckpoint,
     /// Number of visible frames to skip after seek-start before decoding the
     /// requested target frame.
@@ -75,17 +75,17 @@ pub struct VisibleFrameSeekTarget {
 }
 
 /// Event-driven JPEG XL decoder.
-pub struct JxlDecoderInner {
+pub struct JxlDecoder {
     options: JxlDecoderOptions,
     box_parser: BoxParser,
     codestream_parser: CodestreamParser,
 }
 
-impl JxlDecoderInner {
+impl JxlDecoder {
     /// Creates a new decoder with the given options.
     pub fn new(options: JxlDecoderOptions) -> Self {
         let box_parser = BoxParser::with_aux_boxes(options.request_aux_boxes.iter().copied());
-        JxlDecoderInner {
+        JxlDecoder {
             options,
             box_parser,
             codestream_parser: CodestreamParser::new(),
@@ -214,10 +214,6 @@ impl JxlDecoderInner {
     /// Returns the total length of the JPEG XL file, once decoding is finished.
     /// This is needed because the decoder might over-consume bytes from the
     /// provided input stream in some cases.
-    pub(crate) fn has_more_frames(&self) -> bool {
-        self.codestream_parser.has_more_frames()
-    }
-
     pub fn file_length(&self) -> Option<u64> {
         self.codestream_parser.file_length
     }
@@ -227,7 +223,7 @@ impl JxlDecoderInner {
     }
 }
 
-impl Default for JxlDecoderInner {
+impl Default for JxlDecoder {
     fn default() -> Self {
         Self::new(JxlDecoderOptions::default())
     }
@@ -235,13 +231,13 @@ impl Default for JxlDecoderInner {
 
 #[cfg(test)]
 mod tests {
-    use super::JxlDecoderInner;
+    use super::JxlDecoder;
     use crate::api::{JxlAuxBoxType, JxlDecoderOptions, JxlDecoderStatus};
 
     #[test]
     fn basic_info_not_visible_before_embedded_profile() {
         let data = std::fs::read("resources/test/conformance_test_images/cmyk_layers.jxl").unwrap();
-        let mut decoder = JxlDecoderInner::default();
+        let mut decoder = JxlDecoder::default();
 
         for chunk in data.chunks(64) {
             let mut input = chunk;
@@ -264,7 +260,7 @@ mod tests {
     fn incomplete_ooo_jxlp() {
         let data = include_bytes!("../../../tests/testdata/incomplete_ooo_jxlp.jxl");
 
-        let mut decoder = JxlDecoderInner::default();
+        let mut decoder = JxlDecoder::default();
         let mut input = data.as_slice();
         let result = decoder.process(&mut input, None, None);
         assert!(
@@ -306,7 +302,7 @@ mod tests {
                 scan_frames_only: true,
                 ..Default::default()
             };
-            let mut decoder = JxlDecoderInner::new(options);
+            let mut decoder = JxlDecoder::new(options);
 
             while decoder.process(&mut buf, None, None).unwrap() != JxlDecoderStatus::Complete {
                 assert!(decoder.file_length().is_none());
@@ -332,7 +328,7 @@ mod tests {
             scan_frames_only: true,
             ..Default::default()
         };
-        let mut decoder = JxlDecoderInner::new(options);
+        let mut decoder = JxlDecoder::new(options);
 
         let mut buf = &data[..];
         while decoder.process(&mut buf, None, None).unwrap() != JxlDecoderStatus::Complete {}

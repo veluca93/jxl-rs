@@ -6,8 +6,8 @@
 use std::path::Path;
 
 use crate::api::{
-    JxlColorType, JxlDataFormat, JxlDecoderInner as JxlDecoder, JxlDecoderOptions,
-    JxlDecoderStatus, JxlPixelFormat, JxlTransferFunction,
+    JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlDecoderStatus, JxlPixelFormat,
+    JxlTransferFunction,
 };
 use crate::error::Error;
 use crate::image::Image;
