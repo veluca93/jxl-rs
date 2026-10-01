@@ -9,7 +9,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{IoSliceMut, Read};
 
 use crate::api::inner::process::SmallBuffer;
-use crate::api::{JxlBitstreamInput, JxlSignatureType, ProfileLevel, check_signature_internal};
+use crate::api::{
+    CONTAINER_SIGNATURE, JxlBitstreamInput, JxlSignature, ProfileLevel, check_signature,
+};
 use crate::error::{Error, Result};
 #[cfg(feature = "brotli")]
 use crate::util::NewWithCapacity;
@@ -429,24 +431,22 @@ impl BoxParser {
             match self.state {
                 ParseState::Codestream(Some(0)) => self.state = ParseState::BoxNeeded(8),
                 ParseState::Complete | ParseState::Codestream(_) => return Ok(()),
-                ParseState::SignatureNeeded => {
-                    let codestream_signature_len = JxlSignatureType::Codestream.signature().len();
-                    self.read_until_at_least(input, codestream_signature_len)?;
-                    match check_signature_internal(&self.local_buffer)? {
-                        None => return Err(Error::InvalidSignature),
-                        Some(JxlSignatureType::Codestream) => {
-                            self.state = ParseState::Codestream(None);
-                            self.latest_codestream_box = CodestreamBoxType::Jxlc;
-                            self.add_checkpoint();
-                            return Ok(());
-                        }
-                        Some(JxlSignatureType::Container) => {
-                            let l = JxlSignatureType::Container.signature().len();
-                            self.local_buffer.consume(l);
-                            self.state = ParseState::BoxNeeded(8);
-                        }
+                ParseState::SignatureNeeded => match check_signature(&self.local_buffer) {
+                    JxlSignature::Invalid => return Err(Error::InvalidSignature),
+                    JxlSignature::NeedsMoreInput { size_hint } => {
+                        self.read_until_at_least(input, self.local_buffer.len() + size_hint)?;
                     }
-                }
+                    JxlSignature::Codestream => {
+                        self.state = ParseState::Codestream(None);
+                        self.latest_codestream_box = CodestreamBoxType::Jxlc;
+                        self.add_checkpoint();
+                        return Ok(());
+                    }
+                    JxlSignature::Container => {
+                        self.local_buffer.consume(CONTAINER_SIGNATURE.len());
+                        self.state = ParseState::BoxNeeded(8);
+                    }
+                },
                 ParseState::Skip(count) => {
                     if count == Some(0) {
                         self.state = ParseState::BoxNeeded(8);
