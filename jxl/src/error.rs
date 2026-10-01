@@ -267,14 +267,12 @@ pub enum Error {
     IccTableSizeExceeded(usize),
     #[error("I/O error: {0}")]
     IOError(#[from] std::io::Error),
-    #[error("Wrong buffer count: {0} buffers given, {1} buffers expected")]
-    WrongBufferCount(usize, usize),
+    #[error("API usage error: {0}")]
+    APIUsageError(&'static str),
     #[error("Image is not grayscale, but grayscale output was requested")]
     NotGrayscale,
     #[error("Image is not CMYK, but CMYK output was requested")]
     NotCmyk,
-    #[error("The pixel format can only be changed before the first frame header is decoded")]
-    PixelFormatChangedAfterFirstFrame,
     #[error("Invalid output buffer byte size {0}x{1} for {2}x{3} image with type {4:?} {5:?}")]
     InvalidOutputBufferSize(usize, usize, usize, usize, JxlColorType, JxlDataFormat),
     #[error("Attempting to save channels with different downsample amounts: {0:?} and {1:?}")]

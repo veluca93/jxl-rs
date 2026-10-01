@@ -6,13 +6,13 @@
 use std::io::IoSliceMut;
 use std::ops::{Deref, Range};
 
-use crate::api::inner::box_parser::CodestreamInput;
+use super::box_parser::CodestreamInput;
 use crate::api::{
-    JxlBitstreamInput, JxlDecoderInner, JxlOutputBuffer, JxlParallelRunner, JxlParallelRunnerFun,
-    ProcessingResult,
+    JxlBitstreamInput, JxlDecoderInner, JxlDecoderStatus, JxlOutputBuffer, JxlParallelRunner,
+    JxlParallelRunnerFun,
 };
 use crate::bit_reader::BitReader;
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 /// A small buffer, that guarantees to never use more than twice the maximum
 /// amount of bytes that were simultaneously present in it.
@@ -148,32 +148,31 @@ impl JxlDecoderInner {
     /// file/frame header, or finished decoding a frame).
     /// If called when decoding a frame with `None` for buffers, the frame will still be read,
     /// but pixel data will not be produced.
+    ///
+    /// Note: the data in `buffers` should have alignment requirements that are compatible with the
+    /// requested pixel format. This means that, if we are asking for 2-byte or 4-byte output (i.e.
+    /// u16/f16 and f32 respectively), each row in the provided buffers must be aligned to 2 or 4
+    /// bytes respectively. If that is not the case, the library may panic.
     #[inline(never)]
     pub fn process(
         &mut self,
         input: &mut dyn JxlBitstreamInput,
         buffers: Option<&mut [JxlOutputBuffer]>,
-        parallel_runner: Option<&mut dyn JxlParallelRunner>,
-    ) -> Result<ProcessingResult<(), ()>> {
-        ProcessingResult::new(self.codestream_parser.process(
-            &mut CodestreamInput::new(&mut self.box_parser, input),
+        parallel_runner: Option<&mut (dyn JxlParallelRunner + '_)>,
+    ) -> Result<JxlDecoderStatus> {
+        let mut codestream_input = CodestreamInput::new(&mut self.box_parser, input);
+        match self.codestream_parser.process(
+            &mut codestream_input,
             &self.options,
             buffers,
             parallel_runner.unwrap_or(&mut SequentialRunner),
-        ))
-    }
-
-    #[inline(never)]
-    pub fn process_trailing_data(
-        &mut self,
-        input: &mut dyn JxlBitstreamInput,
-    ) -> Result<ProcessingResult<(), ()>> {
-        assert!(
-            !self.codestream_parser.has_more_frames(),
-            "API usage error: cannot consume trailing data while codestream is incomplete",
-        );
-        let mut input = CodestreamInput::new(&mut self.box_parser, input);
-        ProcessingResult::new(input.consume_trailing_data())
+        ) {
+            Ok(status) => Ok(status),
+            Err(Error::OutOfBounds(size_hint)) => {
+                Ok(JxlDecoderStatus::NeedsMoreInput { size_hint })
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Draws all the pixels we have data for. Returns `true` if any new pixels
@@ -183,13 +182,15 @@ impl JxlDecoderInner {
     pub fn flush_pixels(
         &mut self,
         buffers: &mut [JxlOutputBuffer],
-        parallel_runner: Option<&mut dyn JxlParallelRunner>,
+        parallel_runner: Option<&mut (dyn JxlParallelRunner + '_)>,
     ) -> Result<bool> {
-        let Some(profile) = self.codestream_parser.output_color_profile.as_ref() else {
-            return Ok(false);
-        };
-        let Some(pixel_format) = self.codestream_parser.pixel_format.as_ref() else {
-            return Ok(false);
+        let (Some(profile), Some(pixel_format)) = (
+            self.codestream_parser.output_color_profile.as_ref(),
+            self.codestream_parser.pixel_format.as_ref(),
+        ) else {
+            return Err(Error::APIUsageError(
+                "cannot flush pixels before basic info is available",
+            ));
         };
         match self.codestream_parser.frame_info.do_flush(
             buffers,

@@ -7,8 +7,8 @@ use std::path::Path;
 
 use crate::api::process::SequentialRunner;
 use crate::api::{
-    JxlDecoder, JxlDecoderInner, JxlDecoderOptions, JxlParallelRunner, JxlPixelFormat,
-    ProcessingResult, TestOptions, VisibleFrameInfo, states,
+    JxlDecoder, JxlDecoderInner, JxlDecoderOptions, JxlDecoderStatus, JxlParallelRunner,
+    JxlPixelFormat, ProcessingResult, TestOptions, VisibleFrameInfo, states,
 };
 use crate::error::{Error, Result};
 use crate::headers::FileHeader;
@@ -502,19 +502,17 @@ pub fn has_decoded_pixels(frames: &[Vec<Image<f32>>]) -> bool {
     })
 }
 
-pub fn read_headers_and_toc(data: &[u8]) -> Result<(FileHeader, FrameHeader, Toc)> {
-    let mut decoder = JxlDecoderInner::new(JxlDecoderOptions::default());
-    let mut input = data;
+pub fn read_headers_and_toc(mut input: &[u8]) -> Result<(FileHeader, FrameHeader, Toc)> {
+    let mut decoder = JxlDecoderInner::default();
 
-    match decoder.process(&mut input, None, None)? {
-        ProcessingResult::Complete { .. } => {}
-        ProcessingResult::NeedsMoreInput { .. } => panic!("Unexpected end of input"),
-    }
-
-    match decoder.process(&mut input, None, None)? {
-        ProcessingResult::Complete { .. } => {}
-        ProcessingResult::NeedsMoreInput { .. } => panic!("Unexpected end of input"),
-    }
+    assert_eq!(
+        decoder.process(&mut input, None, None)?,
+        JxlDecoderStatus::BasicInfo
+    );
+    assert_eq!(
+        decoder.process(&mut input, None, None)?,
+        JxlDecoderStatus::FrameHeader
+    );
 
     let fh = decoder.file_header().unwrap().clone();
     let fr = decoder.raw_frame_header().unwrap().clone();

@@ -55,6 +55,7 @@ pub struct FrameInfo {
     frame_header: Option<FrameHeader>,
     toc_parser: Option<IncrementalTocReader>,
     frame: Option<Box<Frame>>,
+    pub(super) process_mode: ProcessMode,
     // Keeps track of whether pixels have been modified.
     pixels_dirty: bool,
 
@@ -80,6 +81,7 @@ impl FrameInfo {
             frame_header: None,
             toc_parser: None,
             frame: None,
+            process_mode: ProcessMode::Process,
             sections: VecDeque::new(),
             section_size: 0,
             ready_section_data: 0,
@@ -100,6 +102,7 @@ impl FrameInfo {
 
         if clear_frame {
             self.frame = None;
+            self.pixels_dirty = false;
         }
 
         // Clear sections
@@ -199,6 +202,7 @@ impl FrameInfo {
     ) -> Result<()> {
         self.section_size = toc.entries.iter().map(|x| *x as u64).sum();
         self.ready_section_data = 0;
+        self.process_mode = process_mode;
 
         self.lf_global_section = None;
         self.lf_sections.clear();
@@ -476,13 +480,22 @@ impl FrameInfo {
 
         let frame = self.frame.as_mut().unwrap();
         let frame_header = frame.header();
+        // Note: `output_buffers` is `None` both when skipping a visible frame and when
+        // decoding a non-visible frame (e.g. an internal layer saved as a reference frame).
+        // For non-visible `RegularFrame`s, `decode_and_render_hf_groups` still returns
+        // `true` when rendering into internal reference buffers, and incremental decoding
+        // tests (e.g. `multiple_layers_noise_spline`) rely on `pixels_dirty` being set in
+        // that case. Do not replace this with `output_buffers.is_some()` unless that is
+        // also updated.
+        let skipping_visible_frame =
+            self.process_mode == ProcessMode::SkipOutput && frame_header.is_visible();
         if frame_header.num_groups() == 1 && frame_header.passes.num_passes == 1 {
             // Single-group special case.
             let Some(buf) = self.lf_global_section.take() else {
                 return Ok(data_for_next_section);
             };
             assert!(self.sections.is_empty());
-            self.pixels_dirty |= Self::process_single_section(
+            let dirty = Self::process_single_section(
                 frame,
                 &buf.data,
                 true,
@@ -492,6 +505,9 @@ impl FrameInfo {
                 false,
                 parallel_runner,
             )?;
+            if !skipping_visible_frame {
+                self.pixels_dirty |= dirty;
+            }
             return Ok(None);
         }
 
@@ -593,7 +609,7 @@ impl FrameInfo {
             self.candidate_hf_sections.clear();
         }
 
-        self.pixels_dirty |= frame.decode_and_render_hf_groups(
+        let dirty = frame.decode_and_render_hf_groups(
             output_buffers,
             pixel_format,
             group_readers,
@@ -601,6 +617,9 @@ impl FrameInfo {
             output_profile,
             parallel_runner,
         )?;
+        if !skipping_visible_frame {
+            self.pixels_dirty |= dirty;
+        }
 
         for g in processed_groups.into_iter() {
             for i in 0..self.section_state.completed_passes[g] {
@@ -618,11 +637,14 @@ impl FrameInfo {
         pixel_format: &JxlPixelFormat,
         parallel_runner: &mut dyn JxlParallelRunner,
     ) -> Result<()> {
+        validate_output_buffers(output_buffers, pixel_format)?;
         let Some(frame) = self.frame.as_mut() else {
             return Ok(());
         };
-        validate_output_buffers(output_buffers, Some(pixel_format))?;
         let frame_header = frame.header();
+        if self.process_mode == ProcessMode::SkipOutput && frame_header.is_visible() {
+            return Ok(());
+        }
 
         let has_partial_lf = self
             .sections
@@ -674,8 +696,6 @@ impl FrameInfo {
 
 impl CodestreamParser {
     pub fn get_and_clear_pixels_dirty(&mut self) -> bool {
-        let r = self.frame_info.pixels_dirty;
-        self.frame_info.pixels_dirty = false;
-        r
+        std::mem::take(&mut self.frame_info.pixels_dirty)
     }
 }

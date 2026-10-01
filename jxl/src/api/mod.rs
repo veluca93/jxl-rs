@@ -42,6 +42,7 @@ pub enum ProcessingResult<T, U> {
 }
 
 impl<T> ProcessingResult<T, ()> {
+    #[allow(dead_code)]
     fn new(
         result: Result<T, crate::error::Error>,
     ) -> Result<ProcessingResult<T, ()>, crate::error::Error> {

@@ -6,13 +6,14 @@
 use std::path::Path;
 
 use crate::api::{
-    JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderInner, JxlDecoderOptions, JxlPixelFormat,
-    JxlTransferFunction, ProcessingResult, states,
+    JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderInner, JxlDecoderOptions, JxlDecoderStatus,
+    JxlPixelFormat, JxlTransferFunction, ProcessingResult, states,
 };
 use crate::error::Error;
 use crate::image::{Image, JxlOutputBuffer, Rect};
 use crate::tests::decode::{
-    DecodeParams, compare_frames, decode, decode_internal, scan_frames_with_decoder,
+    DecodeParams, as_output_buffers, compare_frames, decode, decode_internal,
+    scan_frames_with_decoder,
 };
 
 // OOO jxlp boxes require any frame to start in a box that has all the logically-before
@@ -851,14 +852,14 @@ fn assert_start_new_frame_matches_sequential(data: &[u8]) {
         let initial_offset =
             u.int_in_range(scanned_frames[0].file_offset..=data.len() as u64)? as usize;
 
-        let options = JxlDecoderOptions::default();
-        let mut decoder = JxlDecoderInner::new(options);
+        let mut decoder = JxlDecoderInner::default();
         let mut input = &data[..initial_offset];
 
-        while let ProcessingResult::Complete { .. } =
-            decoder.process(&mut input, None, None).unwrap()
-        {
-            if input.is_empty() {
+        while let Ok(status) = decoder.process(&mut input, None, None) {
+            if matches!(
+                status,
+                JxlDecoderStatus::NeedsMoreInput { .. } | JxlDecoderStatus::Complete
+            ) {
                 break;
             }
         }
@@ -871,63 +872,29 @@ fn assert_start_new_frame_matches_sequential(data: &[u8]) {
 
             let expected = &sequential_frames[target_visible_index];
 
-            decoder.start_new_frame(seek_target);
+            decoder.start_new_frame(seek_target).unwrap();
             let mut input = &data[seek_target.decode_start_file_offset as usize..];
 
-            let result = decoder.process(&mut input, None, None);
-            assert!(
-                matches!(result, Ok(ProcessingResult::Complete { .. })),
-                "decoder.process: {result:?}"
+            assert_eq!(
+                decoder.process(&mut input, None, None).unwrap(),
+                JxlDecoderStatus::FrameHeader
             );
 
-            let basic_info = decoder.basic_info().unwrap().clone();
-            let (width, height) = basic_info.size;
-
-            let default_format = decoder.current_pixel_format().unwrap().clone();
-            let requested_format = JxlPixelFormat {
-                color_type: default_format.color_type,
-                color_data_format: Some(JxlDataFormat::f32()),
-                extra_channel_format: default_format
-                    .extra_channel_format
-                    .iter()
-                    .map(|_| Some(JxlDataFormat::f32()))
-                    .collect(),
-            };
-            decoder.set_pixel_format(requested_format.clone()).unwrap();
-
-            let channels = requested_format.color_type.samples_per_pixel();
-            let num_ec = requested_format.extra_channel_format.len();
-
-            let mut color_buffer = Image::<f32>::new((width * channels, height)).unwrap();
-            let mut ec_buffers: Vec<Image<f32>> = (0..num_ec)
-                .map(|_| Image::<f32>::new((width, height)).unwrap())
+            let mut seek_decoded: Vec<_> = expected
+                .iter()
+                .map(|img| Image::<f32>::new_with_value(img.size(), f32::NAN).unwrap())
                 .collect();
-            let mut buffers: Vec<JxlOutputBuffer> = vec![JxlOutputBuffer::from_image_rect_mut(
-                color_buffer
-                    .get_rect_mut(Rect {
-                        origin: (0, 0),
-                        size: (width * channels, height),
-                    })
-                    .into_raw(),
-            )];
-            for ec in ec_buffers.iter_mut() {
-                buffers.push(JxlOutputBuffer::from_image_rect_mut(
-                    ec.get_rect_mut(Rect {
-                        origin: (0, 0),
-                        size: (width, height),
-                    })
-                    .into_raw(),
-                ));
-            }
+            assert_eq!(
+                decoder
+                    .process(
+                        &mut input,
+                        Some(&mut as_output_buffers(&mut seek_decoded)),
+                        None,
+                    )
+                    .unwrap(),
+                JxlDecoderStatus::FrameComplete
+            );
 
-            assert!(matches!(
-                decoder.process(&mut input, Some(&mut buffers), None),
-                Ok(ProcessingResult::Complete { .. })
-            ));
-
-            let mut seek_decoded = Vec::with_capacity(1 + num_ec);
-            seek_decoded.push(color_buffer);
-            seek_decoded.extend(ec_buffers);
             compare_frames(
                 Path::new("start_new_frame_seek"),
                 target_visible_index,
@@ -935,17 +902,13 @@ fn assert_start_new_frame_matches_sequential(data: &[u8]) {
                 &seek_decoded,
             );
 
-            let available_bytes = input.len();
-            let extra_bytes = u.int_in_range(0..=available_bytes as u64)? as usize;
-            if extra_bytes == 0 {
-                continue;
-            }
+            let extra_bytes = u.int_in_range(0..=input.len() as u64)? as usize;
             let mut extra_input = &input[..extra_bytes];
-
-            while let ProcessingResult::Complete { .. } =
-                decoder.process(&mut extra_input, None, None).unwrap()
-            {
-                if extra_input.is_empty() {
+            while let Ok(status) = decoder.process(&mut extra_input, None, None) {
+                if matches!(
+                    status,
+                    JxlDecoderStatus::NeedsMoreInput { .. } | JxlDecoderStatus::Complete
+                ) {
                     break;
                 }
             }
@@ -1130,10 +1093,10 @@ fn test_fuzzer_xyb_icc_no_panic() {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x11, 0x25, 0x00,
     ];
 
-    let mut decoder = JxlDecoderInner::new(Default::default());
+    let mut decoder = JxlDecoderInner::default();
     let mut input = data;
 
-    if let Ok(ProcessingResult::Complete { .. }) = decoder.process(&mut input, None, None)
+    if let Ok(JxlDecoderStatus::BasicInfo) = decoder.process(&mut input, None, None)
         && let Some(profile) = decoder.output_color_profile()
     {
         let _ = profile.try_as_icc();
@@ -1157,9 +1120,10 @@ fn test_scan_frames_only_empty_followup_no_panic_502853162() {
     let mut decoder = JxlDecoderInner::new(opts);
 
     let mut input = data;
-    while decoder.has_more_frames() && !input.is_empty() {
-        let _ = decoder.process(&mut input, None, None).unwrap();
-    }
+    while !matches!(
+        decoder.process(&mut input, None, None).unwrap(),
+        JxlDecoderStatus::Complete | JxlDecoderStatus::NeedsMoreInput { .. }
+    ) {}
 }
 
 /// Small regression test for issue #728: squeeze transform boundary bug.

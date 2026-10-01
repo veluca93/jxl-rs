@@ -3,16 +3,16 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use crate::api::inner::box_parser::CodestreamInput;
-use crate::api::inner::codestream_parser::frame_info::FrameInfo;
-use crate::api::inner::codestream_parser::frame_scan_info::FrameScanInfo;
-use crate::api::inner::codestream_parser::image_info::ImageInfo;
-use crate::api::inner::process::SmallBuffer;
+use super::box_parser::CodestreamInput;
+use super::process::SmallBuffer;
 use crate::api::{
-    JxlColorProfile, JxlDecoderOptions, JxlOutputBuffer, JxlParallelRunner, JxlPixelFormat,
-    ProfileLevel,
+    JxlColorProfile, JxlDecoderOptions, JxlDecoderStatus, JxlFrameHeader, JxlOutputBuffer,
+    JxlParallelRunner, JxlPixelFormat, ProfileLevel,
 };
 use crate::error::{Error, Result};
+use frame_info::FrameInfo;
+use frame_scan_info::FrameScanInfo;
+use image_info::ImageInfo;
 
 mod frame_info;
 mod frame_scan_info;
@@ -39,16 +39,10 @@ impl ProcessMode {
 enum ParserState {
     FileHeader,
     ColorEncoding,
-    FrameHeader {
-        is_preview: bool,
-    },
-    Toc {
-        is_preview: bool,
-    },
-    Sections {
-        is_preview: bool,
-        process_mode: ProcessMode,
-    },
+    FrameHeader { is_preview: bool },
+    Toc { is_preview: bool },
+    Sections { is_preview: bool },
+    ConsumingTrailing,
     Finished,
 }
 
@@ -74,16 +68,16 @@ fn check_size_limit(
 
 fn validate_output_buffers(
     output_buffers: &[JxlOutputBuffer],
-    pixel_format: Option<&JxlPixelFormat>,
+    pixel_format: &JxlPixelFormat,
 ) -> Result<()> {
-    let px = pixel_format
-        .expect("API usage error: cannot pass output buffers before having color information");
-    let expected_len = std::iter::once(&px.color_data_format)
-        .chain(px.extra_channel_format.iter())
+    let expected_len = std::iter::once(&pixel_format.color_data_format)
+        .chain(pixel_format.extra_channel_format.iter())
         .filter(|x| x.is_some())
         .count();
     if output_buffers.len() != expected_len {
-        return Err(Error::WrongBufferCount(output_buffers.len(), expected_len));
+        return Err(Error::APIUsageError(
+            "output buffer count does not match pixel format",
+        ));
     }
     Ok(())
 }
@@ -139,10 +133,15 @@ impl CodestreamParser {
         self.visible_frames_to_skip = visible_frames_to_skip;
         self.state = ParserState::FrameHeader { is_preview: false };
         self.header_needed_bytes = None;
+        self.file_length = None;
     }
 
-    pub(super) fn has_more_frames(&self) -> bool {
-        self.state != ParserState::Finished
+    pub(super) fn can_change_pixel_format(&self) -> bool {
+        matches!(
+            self.state,
+            ParserState::FrameHeader { is_preview } if is_preview == self.image_info.has_preview()
+        ) && self.scanned_frames().is_empty()
+            && self.frame_info.current_frame_header().is_none()
     }
 
     fn refill_and_parse<T>(
@@ -199,9 +198,13 @@ impl CodestreamParser {
         decode_options: &JxlDecoderOptions,
         output_buffers: Option<&mut [JxlOutputBuffer]>,
         parallel_runner: &mut dyn JxlParallelRunner,
-    ) -> Result<()> {
+    ) -> Result<JxlDecoderStatus> {
         let result = self.process_inner(input, decode_options, output_buffers, parallel_runner);
         if let Err(Error::OutOfBounds(_)) = result
+            && !matches!(
+                self.state,
+                ParserState::ConsumingTrailing | ParserState::Finished
+            )
             && input.box_parser().is_codestream_complete()
         {
             Err(Error::UnexpectedCodestreamBoxEnd)
@@ -216,11 +219,18 @@ impl CodestreamParser {
         decode_options: &JxlDecoderOptions,
         mut output_buffers: Option<&mut [JxlOutputBuffer]>,
         parallel_runner: &mut dyn JxlParallelRunner,
-    ) -> Result<()> {
+    ) -> Result<JxlDecoderStatus> {
         if let Some(output_buffers) = &output_buffers {
-            validate_output_buffers(output_buffers, self.pixel_format.as_ref())?;
+            if matches!(
+                self.state,
+                ParserState::FileHeader | ParserState::ColorEncoding | ParserState::Finished
+            ) {
+                return Err(Error::APIUsageError(
+                    "cannot pass output buffers before BasicInfo or after Complete",
+                ));
+            }
+            validate_output_buffers(output_buffers, self.pixel_format.as_ref().unwrap())?;
         }
-
         loop {
             match self.state {
                 ParserState::FileHeader => {
@@ -241,7 +251,7 @@ impl CodestreamParser {
                     self.state = ParserState::FrameHeader {
                         is_preview: self.image_info.has_preview(),
                     };
-                    return Ok(());
+                    return Ok(JxlDecoderStatus::BasicInfo);
                 }
 
                 ParserState::FrameHeader { is_preview } => {
@@ -291,10 +301,7 @@ impl CodestreamParser {
                         process_mode = ProcessMode::Skip(true);
                     }
 
-                    self.state = ParserState::Sections {
-                        is_preview,
-                        process_mode,
-                    };
+                    self.state = ParserState::Sections { is_preview };
 
                     // Record frame for seeking purposes
                     if !is_preview {
@@ -321,14 +328,12 @@ impl CodestreamParser {
                     }
 
                     if process_mode.notify_user() {
-                        return Ok(());
+                        return Ok(JxlDecoderStatus::FrameHeader);
                     }
                 }
 
-                ParserState::Sections {
-                    is_preview,
-                    process_mode,
-                } => {
+                ParserState::Sections { is_preview } => {
+                    let process_mode = self.frame_info.process_mode;
                     if matches!(process_mode, ProcessMode::Skip(..)) {
                         self.frame_info
                             .skip_sections(input, &mut self.local_buffer)?;
@@ -336,8 +341,13 @@ impl CodestreamParser {
                         self.frame_info
                             .fill_sections(input, &mut self.local_buffer)?;
 
+                        let mut buffers = if process_mode == ProcessMode::Process {
+                            output_buffers.as_deref_mut()
+                        } else {
+                            None
+                        };
                         match self.frame_info.process_sections(
-                            &mut output_buffers,
+                            &mut buffers,
                             self.output_color_profile.as_ref().unwrap(),
                             self.pixel_format.as_ref().unwrap(),
                             parallel_runner,
@@ -356,27 +366,58 @@ impl CodestreamParser {
                     } else if is_preview {
                         self.state = ParserState::FrameHeader { is_preview: false };
                     } else {
-                        self.state = ParserState::Finished;
-                        self.file_length = Some(
-                            input
-                                .box_parser()
-                                .total_bytes_consumed(self.local_buffer.consumed()),
-                        );
+                        self.state = ParserState::ConsumingTrailing;
                     }
 
                     if process_mode.notify_user() {
-                        return Ok(());
+                        self.get_and_clear_pixels_dirty();
+                        return Ok(JxlDecoderStatus::FrameComplete);
                     }
                 }
 
+                ParserState::ConsumingTrailing => {
+                    input.consume_trailing_data()?;
+                    self.file_length =
+                        Some(input.box_parser().file_length(self.local_buffer.consumed()));
+                    self.state = ParserState::Finished;
+                    return Ok(JxlDecoderStatus::Complete);
+                }
+
                 ParserState::Finished => {
-                    panic!("API usage error: called process() on completed file")
+                    return Ok(JxlDecoderStatus::Complete);
                 }
             };
         }
     }
 
-    pub fn has_frame(&self) -> bool {
-        matches!(self.state, ParserState::Sections { .. })
+    pub fn frame_header(&self) -> Option<JxlFrameHeader> {
+        if !matches!(self.state, ParserState::Sections { .. })
+            || !self.frame_info.process_mode.notify_user()
+        {
+            return None;
+        }
+        let frame_header = self.frame_info.current_frame_header()?;
+        // The render pipeline always adds ExtendToImageDimensionsStage which extends
+        // frames to the full image size. So the output size is always the image size,
+        // not the frame's upsampled size.
+        let size = self.image_info.basic_info().size;
+        Some(JxlFrameHeader {
+            name: frame_header.name.clone(),
+            duration: self
+                .image_info
+                .file_header()
+                .image_metadata
+                .animation
+                .as_ref()
+                .map(|anim| frame_header.duration(anim)),
+            size,
+        })
+    }
+
+    pub(super) fn has_more_frames(&self) -> bool {
+        !matches!(
+            self.state,
+            ParserState::ConsumingTrailing | ParserState::Finished
+        )
     }
 }
