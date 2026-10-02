@@ -13,7 +13,7 @@ use crate::tests::decode::{
 pub fn run(path: &Path, expected_checkpoints: &[(usize, [f32; 4])]) {
     let file = std::fs::read(path).unwrap();
     // One-shot decode
-    let (_, one_shot_frames) = decode(&file).unwrap();
+    let one_shot_frames = decode(&file).unwrap();
     if one_shot_frames.is_empty() {
         return;
     }
@@ -36,7 +36,7 @@ pub fn run(path: &Path, expected_checkpoints: &[(usize, [f32; 4])]) {
     };
 
     // Incremental decode with progressive callback
-    let (_, frames) = decode_internal(
+    let frames = decode_internal(
         &file,
         DecodeParams {
             chunk_size: 123,

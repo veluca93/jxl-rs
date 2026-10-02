@@ -62,8 +62,8 @@ macro_rules! declare_test_file_common {
                 let simple_frames = crate::tests::decode::decode_internal(&file, crate::tests::decode::DecodeParams {
                     use_simple_pipeline: true,
                     ..Default::default()
-                }).unwrap().1;
-                let frames = crate::tests::decode::decode(&file).unwrap().1;
+                }).unwrap();
+                let frames = crate::tests::decode::decode(&file).unwrap();
                 assert_eq!(frames.len(), simple_frames.len());
                 for (fc, (f, sf)) in frames.into_iter().zip(simple_frames).enumerate() {
                     crate::tests::decode::compare_frames(&path, fc, &f, &sf);

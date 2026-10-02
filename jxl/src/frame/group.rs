@@ -810,7 +810,7 @@ mod test {
 
     #[test]
     fn subsampled_chroma() -> Result<()> {
-        let (_, mut frames) = decode(include_bytes!("../../resources/test/multiple_lf_420.jxl"))?;
+        let mut frames = decode(include_bytes!("../../resources/test/multiple_lf_420.jxl"))?;
         let frame = frames.pop().unwrap();
         let [image]: [_; 1] = frame.try_into().unwrap();
 
