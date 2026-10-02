@@ -3,18 +3,21 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use crate::api::ProcessingResult;
-use crate::error::{Error, Result};
-
 /// The magic bytes for a bare JPEG XL codestream.
 const CODESTREAM_SIGNATURE: [u8; 2] = [0xff, 0x0a];
 /// The magic bytes for a file using the JPEG XL container format.
 const CONTAINER_SIGNATURE: [u8; 12] = [0, 0, 0, 0xc, b'J', b'X', b'L', b' ', 0xd, 0xa, 0x87, 0xa];
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum JxlSignatureType {
     Codestream,
     Container,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum SignatureCheckResult {
+    Complete(Option<JxlSignatureType>),
+    NeedMoreInput { size_hint: usize },
 }
 
 impl JxlSignatureType {
@@ -26,7 +29,15 @@ impl JxlSignatureType {
     }
 }
 
-pub(crate) fn check_signature_internal(file_prefix: &[u8]) -> Result<Option<JxlSignatureType>> {
+/// Checks if the given buffer starts with a valid JPEG XL signature.
+///
+/// # Returns
+///
+/// A [`SignatureCheckResult`] which is:
+/// - `Complete(Some(_))` if a full container or codestream signature is found.
+/// - `Complete(None)` if the prefix is definitively not a JXL signature.
+/// - `NeedMoreInput` if the prefix matches a signature but is too short.
+pub fn check_signature(file_prefix: &[u8]) -> SignatureCheckResult {
     let prefix_len = file_prefix.len();
 
     for st in [JxlSignatureType::Codestream, JxlSignatureType::Container] {
@@ -37,32 +48,24 @@ pub(crate) fn check_signature_internal(file_prefix: &[u8]) -> Result<Option<JxlS
         if file_prefix[..len_to_check] == st.signature()[..len_to_check] {
             // The prefix is a valid start. Now, is it complete?
             return if prefix_len >= len {
-                Ok(Some(st))
+                SignatureCheckResult::Complete(Some(st))
             } else {
-                Err(Error::OutOfBounds(len - prefix_len))
+                SignatureCheckResult::NeedMoreInput {
+                    size_hint: len - prefix_len,
+                }
             };
         }
     }
     // The prefix doesn't match the start of any known signature.
-    Ok(None)
-}
-
-/// Checks if the given buffer starts with a valid JPEG XL signature.
-///
-/// # Returns
-///
-/// A `ProcessingResult` which is:
-/// - `Complete(Some(_))` if a full container or codestream signature is found.
-/// - `Complete(None)` if the prefix is definitively not a JXL signature.
-/// - `NeedsMoreInput` if the prefix matches a signature but is too short.
-pub fn check_signature(file_prefix: &[u8]) -> ProcessingResult<Option<JxlSignatureType>, ()> {
-    ProcessingResult::new(check_signature_internal(file_prefix)).unwrap()
+    SignatureCheckResult::Complete(None)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CODESTREAM_SIGNATURE, CONTAINER_SIGNATURE, JxlSignatureType, check_signature};
-    use crate::api::ProcessingResult;
+    use super::{
+        CODESTREAM_SIGNATURE, CONTAINER_SIGNATURE, JxlSignatureType, SignatureCheckResult,
+        check_signature,
+    };
 
     macro_rules! signature_test {
         ($test_name:ident, $bytes:expr, Complete(Some($expected_type:expr))) => {
@@ -70,7 +73,7 @@ mod tests {
             fn $test_name() {
                 let result = check_signature($bytes);
                 match result {
-                    ProcessingResult::Complete { result } => {
+                    SignatureCheckResult::Complete(result) => {
                         assert_eq!(result, Some($expected_type));
                     }
                     _ => panic!("Expected Complete(Some(_)), but got {:?}", result),
@@ -82,7 +85,7 @@ mod tests {
             fn $test_name() {
                 let result = check_signature($bytes);
                 match result {
-                    ProcessingResult::Complete { result } => {
+                    SignatureCheckResult::Complete(result) => {
                         assert_eq!(result, None);
                     }
                     _ => panic!("Expected Complete(None), but got {:?}", result),
@@ -94,10 +97,10 @@ mod tests {
             fn $test_name() {
                 let result = check_signature($bytes);
                 match result {
-                    ProcessingResult::NeedsMoreInput { size_hint, .. } => {
+                    SignatureCheckResult::NeedMoreInput { size_hint } => {
                         assert_eq!(size_hint, $expected_hint);
                     }
-                    _ => panic!("Expected NeedsMoreInput, but got {:?}", result),
+                    _ => panic!("Expected NeedMoreInput, but got {:?}", result),
                 }
             }
         };
