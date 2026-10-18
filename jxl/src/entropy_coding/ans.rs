@@ -23,7 +23,7 @@ struct AnsHistogramInfo {
 // log_alphabet_size <= 8 and log_bucket_size <= 7, so u8 is sufficient for symbols and cutoffs.
 #[derive(Debug, Copy, Clone, Default)]
 #[repr(C)]
-struct Bucket {
+pub(crate) struct Bucket {
     alias_symbol: u8,
     alias_cutoff: u8,
     dist: u16,
@@ -413,6 +413,112 @@ impl AnsCodes {
     }
 
     #[inline(always)]
+    pub(crate) fn log_bucket_size(&self) -> u8 {
+        self.log_bucket_size as u8
+    }
+
+    #[inline(always)]
+    pub(crate) fn cluster_buckets_ptr(&self, ctx: usize) -> *const Bucket {
+        self.buckets[(ctx << self.log_alpha_size)..].as_ptr()
+    }
+
+    /// # Safety
+    /// `cluster_buckets` must point to a slice of at least `1 << self.log_alpha_size` `Bucket`s.
+    #[allow(unsafe_code)]
+    #[inline(always)]
+    pub(crate) unsafe fn read_from_buckets(
+        &self,
+        br: &mut BitReader,
+        state: &mut u32,
+        cluster_buckets: *const Bucket,
+    ) -> u32 {
+        let idx = *state & 0xfff;
+        let i = (idx >> self.log_bucket_size) as usize;
+        let pos = idx & self.bucket_mask;
+
+        // SAFETY: idx < 4096 and log_bucket_size + log_alpha_size == 12, so i < (1 << log_alpha_size).
+        let bucket = unsafe { *cluster_buckets.add(i) };
+        let alias_symbol = bucket.alias_symbol as u32;
+        let alias_cutoff = bucket.alias_cutoff as u32;
+        let dist = bucket.dist as u32;
+
+        let map_to_alias = (pos >= alias_cutoff) as u32;
+        let offset = (bucket.alias_offset as u32) * map_to_alias;
+        let dist_xor = (bucket.alias_dist_xor as u32) * map_to_alias;
+
+        let dist = dist ^ dist_xor;
+        let symbol = (alias_symbol * map_to_alias) | (i as u32 * (1 - map_to_alias));
+        let offset = offset + pos;
+
+        let next_state = (*state >> LOG_SUM_PROBS) * dist + offset;
+        let select_appended = (next_state < (1 << 16)) as u32;
+        let appended_state = (next_state << 16) | (br.peek(16) as u32);
+        *state = (appended_state * select_appended) | (next_state * (1 - select_appended));
+        br.consume_optimistic((16 * select_appended) as usize);
+        symbol
+    }
+
+    /// # Safety
+    /// `cluster_buckets` must point to a slice of at least `1 << (12 - log_bucket_size)` `Bucket`s,
+    /// and `br` must have at least 16 bits in `bit_buf`.
+    #[cfg(target_arch = "x86_64")]
+    #[allow(unsafe_code)]
+    #[inline(always)]
+    pub(crate) unsafe fn read_from_buckets_refilled_fast(
+        br: &mut BitReader,
+        state: &mut u32,
+        log_bucket_size: u8,
+        cluster_buckets: *const Bucket,
+    ) -> u32 {
+        let mut next_state = *state;
+        let mut sym = cluster_buckets as usize;
+        // SAFETY: `cluster_buckets` has at least `1 << (12 - log_bucket_size)` elements,
+        // and `t2 = (st & 0xfff) >> log_bucket_size` is in bounds.
+        unsafe {
+            std::arch::asm!(
+                "mov {t1:e}, {st:e}",
+                "and {t1:e}, 0xfff",
+                "mov {t2:e}, {t1:e}",
+                "shr {t2:e}, cl",
+                "shl {t2:e}, cl",
+                "xor {t1:e}, {t2:e}",
+                "shr {t2:e}, cl",
+                "mov rcx, qword ptr [{sym} + {t2:r}*8]",
+                "movzx {sym:e}, cl",
+                "shr rcx, 8",
+                "cmp {t1:l}, cl",
+                "cmovb {sym:e}, {t2:e}",
+                "mov {t2:e}, 0",
+                "cmovae {t2:r}, rcx",
+                "shr {t2:r}, 24",
+                "shl ecx, 8",
+                "xor ecx, {t2:e}",
+                "shr ecx, 16",
+                "movzx {t2:e}, {t2:x}",
+                "add {t1:e}, {t2:e}",
+                "shr {st:e}, 12",
+                "imul {st:e}, ecx",
+                "add {st:e}, {t1:e}",
+                st = inout(reg) next_state,
+                inout("rcx") log_bucket_size as usize => _,
+                sym = inout(reg) sym,
+                t1 = out(reg) _,
+                t2 = out(reg) _,
+                options(nostack, readonly),
+            );
+        }
+        let select_appended = (next_state < (1 << 16)) as usize;
+        let appended_state = (next_state << 16) | (br.peek_optimistic(16) as u32);
+        *state = if next_state < (1 << 16) {
+            appended_state
+        } else {
+            next_state
+        };
+        br.consume_optimistic(16 * select_appended);
+        sym as u32
+    }
+
+    #[inline(always)]
     pub fn read(&self, br: &mut BitReader, state: &mut u32, ctx: usize) -> u32 {
         let idx = *state & 0xfff;
         let i = (idx >> self.log_bucket_size) as usize;
@@ -454,6 +560,11 @@ impl AnsReader {
     pub fn init(br: &mut BitReader) -> Result<Self> {
         let initial_state = br.read(32)? as u32;
         Ok(Self(initial_state))
+    }
+
+    #[inline(always)]
+    pub(crate) fn state_mut_ptr(&mut self) -> *mut u32 {
+        &mut self.0
     }
 
     #[inline(always)]

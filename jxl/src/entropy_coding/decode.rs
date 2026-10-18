@@ -303,6 +303,11 @@ impl SymbolReader {
     }
 
     #[inline(always)]
+    pub(crate) fn ans_state_mut_ptr(&mut self) -> *mut u32 {
+        self.ans_reader.state_mut_ptr()
+    }
+
+    #[inline(always)]
     pub fn read_token_huffman_no_lz77(
         &mut self,
         hc: &HuffmanCodes,

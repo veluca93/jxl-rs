@@ -84,6 +84,19 @@ impl HybridUint {
     }
 
     #[inline(always)]
+    pub(crate) fn read_config_420_refilled(symbol: u32, br: &mut BitReader) -> u32 {
+        if symbol < 16 {
+            return symbol;
+        }
+
+        let nbits = ((symbol >> 2) - 2) & 31;
+        let bits = br.read_already_refilled(nbits as usize) as u32;
+        let hi = (symbol & 3) | 4;
+
+        (hi << nbits) | bits
+    }
+
+    #[inline(always)]
     pub fn read(&self, symbol: u32, br: &mut BitReader) -> u32 {
         if symbol < self.split_token {
             return symbol;
@@ -97,6 +110,22 @@ impl HybridUint {
         let low = symbol & ((1 << self.lsb_in_token) - 1);
         let symbol_nolow = symbol >> self.lsb_in_token;
         let bits = br.read_optimistic(nbits as usize) as u32;
+        let hi = (symbol_nolow & ((1 << self.msb_in_token) - 1)) | (1 << self.msb_in_token);
+        (((hi << nbits) | bits) << self.lsb_in_token) | low
+    }
+
+    #[inline(always)]
+    pub(crate) fn read_refilled(&self, symbol: u32, br: &mut BitReader) -> u32 {
+        if symbol < self.split_token {
+            return symbol;
+        }
+        let bits_in_token = self.lsb_in_token + self.msb_in_token;
+        let nbits = (self.split_exponent - bits_in_token
+            + ((symbol - self.split_token) >> bits_in_token))
+            & 31;
+        let low = symbol & ((1 << self.lsb_in_token) - 1);
+        let symbol_nolow = symbol >> self.lsb_in_token;
+        let bits = br.read_already_refilled(nbits as usize) as u32;
         let hi = (symbol_nolow & ((1 << self.msb_in_token) - 1)) | (1 << self.msb_in_token);
         (((hi << nbits) | bits) << self.lsb_in_token) | low
     }

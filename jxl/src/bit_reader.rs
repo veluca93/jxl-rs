@@ -75,6 +75,39 @@ impl<'a> BitReader<'a> {
         self.bits_in_buf -= num;
     }
 
+    #[allow(unsafe_code)]
+    #[inline(always)]
+    pub(crate) fn refill_to_48_fast(&mut self) -> bool {
+        if self.bits_in_buf >= 48 {
+            return true;
+        }
+        if self.data.len() >= 8 {
+            let bits = LittleEndian::read_u64(self.data);
+            self.bit_buf |= bits << self.bits_in_buf;
+            let read_bytes = (63 - self.bits_in_buf) >> 3;
+            self.bits_in_buf |= 56;
+            // SAFETY: self.data.len() >= 8 and read_bytes <= 7.
+            self.data = unsafe { self.data.get_unchecked(read_bytes..) };
+            debug_assert!(56 <= self.bits_in_buf && self.bits_in_buf < 64);
+            true
+        } else {
+            false
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn peek_optimistic(&self, num: usize) -> u64 {
+        debug_assert!(self.bits_in_buf >= num);
+        self.bit_buf & ((1u64 << num) - 1)
+    }
+
+    #[inline(always)]
+    pub(crate) fn read_already_refilled(&mut self, num: usize) -> u64 {
+        let ret = self.peek_optimistic(num);
+        self.consume_optimistic(num);
+        ret
+    }
+
     /// Reads `num` bits from the buffer.
     /// ```ignore
     /// let mut br = BitReader::new(&[0, 1]);

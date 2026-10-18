@@ -347,10 +347,10 @@ impl<'a> WeightedPredictorState<'a> {
         let err2 = err_n[2].wrapping_add(err_ne[2]).wrapping_add(err_nw[2]);
         let err3 = err_n[3].wrapping_add(err_ne[3]).wrapping_add(err_nw[3]);
 
-        let shift0 = (err0 as u64 + 1).ilog2().saturating_sub(5);
-        let shift1 = (err1 as u64 + 1).ilog2().saturating_sub(5);
-        let shift2 = (err2 as u64 + 1).ilog2().saturating_sub(5);
-        let shift3 = (err3 as u64 + 1).ilog2().saturating_sub(5);
+        let shift0 = floor_log2_nonzero((err0 as u64 + 1) | 32) - 5;
+        let shift1 = floor_log2_nonzero((err1 as u64 + 1) | 32) - 5;
+        let shift2 = floor_log2_nonzero((err2 as u64 + 1) | 32) - 5;
+        let shift3 = floor_log2_nonzero((err3 as u64 + 1) | 32) - 5;
 
         debug_assert!(err0 >> shift0 < 64);
         // SAFETY: x >> ((x+1).ilog2().saturating_sub(5)) < 64 for any x (see `error_weight_bounds`).
@@ -399,13 +399,18 @@ impl<'a> WeightedPredictorState<'a> {
         let te_ne = unsafe { *self.error.get_unchecked(prev_row + 1 + pos_ne) as i64 };
 
         let mut p = te_w;
-        if te_n.abs() > p.abs() {
+        let mut max_abs = te_w.abs();
+        let abs_n = te_n.abs();
+        if abs_n > max_abs {
             p = te_n;
+            max_abs = abs_n;
         }
-        if te_nw.abs() > p.abs() {
+        let abs_nw = te_nw.abs();
+        if abs_nw > max_abs {
             p = te_nw;
+            max_abs = abs_nw;
         }
-        if te_ne.abs() > p.abs() {
+        if te_ne.abs() > max_abs {
             p = te_ne;
         }
 

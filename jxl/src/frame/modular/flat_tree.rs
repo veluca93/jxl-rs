@@ -31,8 +31,8 @@ pub(super) enum FlatTreeNode {
     },
 }
 
+#[allow(unsafe_code, clippy::too_many_arguments)]
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
 pub(super) fn predict_flat(
     flat_tree: &[FlatTreeNode],
     prediction_data: PredictionData,
@@ -62,10 +62,27 @@ pub(super) fn predict_flat(
             } => {
                 // This bound check is elided by virtue of `property_buffer` having 256 elements.
                 let props = properties.map(|x| property_buffer[x as usize]);
-                let p0 = props[0] <= splitvals[0];
-                let p1 = props[1] <= splitvals[1];
-                let p2 = props[2] <= splitvals[2];
-                pos = child_id as usize + if p0 { 2 | p2 as usize } else { p1 as usize };
+                let p1 = (props[1] <= splitvals[1]) as usize;
+                let p2 = 2 | ((props[2] <= splitvals[2]) as usize);
+                let offset: usize;
+                #[cfg(target_arch = "x86_64")]
+                // SAFETY: Pure register comparison and conditional move.
+                unsafe {
+                    std::arch::asm!(
+                        "cmp {v0:e}, {s0:e}",
+                        "cmovle {out}, {p2}",
+                        v0 = in(reg) props[0],
+                        s0 = in(reg) splitvals[0],
+                        out = inout(reg) p1 => offset,
+                        p2 = in(reg) p2,
+                        options(pure, nomem, nostack),
+                    );
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                {
+                    offset = if props[0] <= splitvals[0] { p2 } else { p1 };
+                }
+                pos = child_id as usize + offset;
             }
             FlatTreeNode::Leaf {
                 predictor,

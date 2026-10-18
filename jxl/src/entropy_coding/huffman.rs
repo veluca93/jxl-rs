@@ -19,7 +19,7 @@ const DEFAULT_CODE_LENGTH: u8 = 8;
 const CODE_LENGTH_REPEAT_CODE: u8 = 16;
 
 #[derive(Clone, Copy)]
-struct TableEntry {
+pub(crate) struct TableEntry {
     bits: u8,
     value: u16,
 }
@@ -440,6 +440,63 @@ impl Table {
             }
         };
         Ok(Table { entries })
+    }
+
+    #[inline(always)]
+    pub(crate) fn entries_ptr(&self) -> *const TableEntry {
+        self.entries.as_ptr()
+    }
+
+    /// # Safety
+    /// `entries` must point to a valid `Table::entries` buffer, and `br` must have at least
+    /// `HUFFMAN_MAX_BITS` (15) bits in `bit_buf`.
+    #[allow(unsafe_code)]
+    #[inline(always)]
+    pub(crate) unsafe fn read_from_entries_refilled(
+        entries: *const TableEntry,
+        br: &mut BitReader,
+    ) -> u32 {
+        let mut pos = br.peek_optimistic(TABLE_BITS) as usize;
+        // SAFETY: `pos < 256` and root table has at least 256 entries.
+        let first = unsafe { *entries.add(pos) };
+        let mut n_bits = first.bits as usize;
+        if n_bits > TABLE_BITS {
+            br.consume_optimistic(TABLE_BITS);
+            n_bits -= TABLE_BITS;
+            pos += first.value as usize;
+            pos += br.peek_optimistic(n_bits) as usize;
+            // SAFETY: 2nd-level offset `pos` is guaranteed in-bounds by `Table::build`.
+            let second = unsafe { *entries.add(pos) };
+            br.consume_optimistic(second.bits as usize);
+            second.value as u32
+        } else {
+            br.consume_optimistic(n_bits);
+            first.value as u32
+        }
+    }
+
+    /// # Safety
+    /// `entries` must point to a valid `Table::entries` buffer.
+    #[allow(unsafe_code)]
+    #[inline(always)]
+    pub(crate) unsafe fn read_from_entries(entries: *const TableEntry, br: &mut BitReader) -> u32 {
+        let mut pos = br.peek(TABLE_BITS) as usize;
+        // SAFETY: `pos < 256` and root table has at least 256 entries.
+        let first = unsafe { *entries.add(pos) };
+        let mut n_bits = first.bits as usize;
+        if n_bits > TABLE_BITS {
+            br.consume_optimistic(TABLE_BITS);
+            n_bits -= TABLE_BITS;
+            pos += first.value as usize;
+            pos += br.peek(n_bits) as usize;
+            // SAFETY: 2nd-level offset `pos` is guaranteed in-bounds by `Table::build`.
+            let second = unsafe { *entries.add(pos) };
+            br.consume_optimistic(second.bits as usize);
+            second.value as u32
+        } else {
+            br.consume_optimistic(n_bits);
+            first.value as u32
+        }
     }
 
     #[inline(always)]

@@ -162,7 +162,26 @@ pub fn fast_powf_simd<D: SimdDescriptor>(d: D, base: D::F32Vec, exp: D::F32Vec) 
 
 #[inline(always)]
 pub fn floor_log2_nonzero(x: u64) -> u32 {
-    (u64::BITS as usize - 1) as u32 ^ x.leading_zeros()
+    debug_assert_ne!(x, 0);
+    #[cfg(target_arch = "x86_64")]
+    #[allow(unsafe_code)]
+    {
+        let ret: u64;
+        // SAFETY: `x | 1` is always non-zero and has the same MSB index as any non-zero `x`.
+        unsafe {
+            std::arch::asm!(
+                "bsr {ret}, {x}",
+                ret = out(reg) ret,
+                x = in(reg) x | 1,
+                options(pure, nomem, nostack),
+            );
+        }
+        ret as u32
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        (u64::BITS as usize - 1) as u32 ^ x.leading_zeros()
+    }
 }
 
 const JINC_WINDOWED_SQ_P: [f32; 6] = [

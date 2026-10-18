@@ -16,7 +16,9 @@ use crate::frame::modular::flat_tree::{FlatTreeNode, predict_flat};
 use crate::frame::modular::predict::{
     PredictionData, WeightedPredictorScratch, WeightedPredictorState, clamped_gradient,
 };
-use crate::frame::modular::tree::{PredictionResult, TreeNode};
+use crate::frame::modular::tree::{
+    NUM_NONREF_PROPERTIES, PROPERTIES_PER_PREVCHAN, PredictionResult, TreeNode,
+};
 use crate::frame::modular::{ModularChannel, ModularStorage, Predictor, Tree, TreeScratch};
 use crate::headers::modular::GroupHeader;
 use crate::image::ImageRectMut;
@@ -445,6 +447,7 @@ pub(super) fn run_on_specialized_tree<F: FnOnce(&mut dyn ModularChannelDecoder) 
     channel: usize,
     stream: usize,
     xsize: usize,
+    ysize: usize,
     header: &GroupHeader,
     storage: ModularStorage,
     lut_scratch: &mut [u8; LUT_TABLE_SIZE],
@@ -457,6 +460,9 @@ pub(super) fn run_on_specialized_tree<F: FnOnce(&mut dyn ModularChannelDecoder) 
         pruned_tree_queue: queue,
         flat_tree,
         flat_tree_bfs_queue,
+        fast_tree_nodes,
+        fast_tree_mdd_scratch,
+        fast_tree_mdd_leaves,
         lut_stack,
         property_buffer,
         wp_scratch,
@@ -480,6 +486,8 @@ pub(super) fn run_on_specialized_tree<F: FnOnce(&mut dyn ModularChannelDecoder) 
     let mut is_single_symbol = !tree.histograms.lz77_params().enabled;
     let mut single_symbol = None;
 
+    let max_valid_prop = NUM_NONREF_PROPERTIES + channel * PROPERTIES_PER_PREVCHAN;
+
     // Obtain a pruned tree without nodes that are not relevant in the current channel and stream.
     // Proceed in BFS order, so that we know that the children of a node will be adjacent.
     // Also re-maps context IDs to cluster IDs.
@@ -491,10 +499,17 @@ pub(super) fn run_on_specialized_tree<F: FnOnce(&mut dyn ModularChannelDecoder) 
                 val,
                 left,
                 right,
-            } if property < 2 => {
-                // If the node splits on static properties, re-enqueue its correct child immediately.
-                let vv = if property == 0 { channel } else { stream };
-                queue.push_front(if vv as i32 > val { left } else { right });
+            } if property < 2 || property as usize >= max_valid_prop => {
+                // If the node splits on static properties (or non-existent previous channels,
+                // whose reference properties are identically 0), re-enqueue its correct child immediately.
+                let vv = if property == 0 {
+                    channel as i32
+                } else if property == 1 {
+                    stream as i32
+                } else {
+                    0
+                };
+                queue.push_front(if vv > val { left } else { right });
                 continue;
             }
             TreeNode::Split {
@@ -626,6 +641,30 @@ pub(super) fn run_on_specialized_tree<F: FnOnce(&mut dyn ModularChannelDecoder) 
     }
 
     let single_symbol = single_symbol.map(unpack_signed);
+
+    let mut run_opt = Some(run);
+    if single_symbol.is_none()
+        && super::fast_tree::run_fast_tree(
+            pruned_tree,
+            &tree.histograms,
+            header,
+            channel,
+            xsize,
+            ysize,
+            storage,
+            uses_wp,
+            max_property_count,
+            fast_tree_nodes,
+            fast_tree_mdd_scratch,
+            fast_tree_mdd_leaves,
+            wp_scratch,
+            references,
+            &mut run_opt,
+        )?
+    {
+        return Ok(());
+    }
+    let run = run_opt.unwrap();
 
     let (references, property_buffer) = init_properties_and_references(
         references,
