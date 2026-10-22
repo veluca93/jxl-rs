@@ -4,6 +4,7 @@
 // license that can be found in the LICENSE file.
 
 use super::DataTypeTag;
+use crate::util::ShiftRightCeil;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Rect {
@@ -38,7 +39,10 @@ impl Rect {
     pub fn downsample(&self, downsample: (u8, u8)) -> Rect {
         Rect {
             origin: (self.origin.0 >> downsample.0, self.origin.1 >> downsample.1),
-            size: (self.size.0 >> downsample.0, self.size.1 >> downsample.1),
+            size: (
+                self.size.0.shrc(downsample.0),
+                self.size.1.shrc(downsample.1),
+            ),
         }
     }
 
@@ -62,5 +66,32 @@ impl Rect {
             && other.end().0 > self.origin.0
             && self.end().1 > other.origin.1
             && other.end().1 > self.origin.1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rect_downsample_partitions_unaligned_size() {
+        for ds in 0..=3u8 {
+            let align = 1usize << ds;
+            for width in 1..=65usize {
+                let mut prev_end = 0;
+                for x in (0..width).step_by(align * 3) {
+                    let w = (align * 3).min(width - x);
+                    let r = Rect {
+                        origin: (x, 0),
+                        size: (w, width),
+                    }
+                    .downsample((ds, ds));
+                    assert_eq!(r.origin.0, prev_end);
+                    prev_end = r.end().0;
+                    assert_eq!(r.size.1, width.shrc(ds));
+                }
+                assert_eq!(prev_end, width.shrc(ds));
+            }
+        }
     }
 }

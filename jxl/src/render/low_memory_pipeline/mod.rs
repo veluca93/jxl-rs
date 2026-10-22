@@ -268,37 +268,43 @@ impl RenderPipeline for LowMemoryRenderPipeline {
                 .max(border_pixels[c].1 << shared.channel_info[0][c].downsample.1);
         }
         for s in 0..shared.stages.len() {
+            let shift = shared.stages[s].shift();
             border_size.0 = border_size
                 .0
-                .max(border_pixels_per_stage[s].0 << downsampling_for_stage[s].0);
+                .max(border_pixels_per_stage[s].0.shrc(shift.0) << downsampling_for_stage[s].0);
             border_size.1 = border_size
                 .1
-                .max(border_pixels_per_stage[s].1 << downsampling_for_stage[s].1);
+                .max(border_pixels_per_stage[s].1.shrc(shift.1) << downsampling_for_stage[s].1);
         }
 
         let mut row_buffer_configs = vec![];
         let mut initial_configs = vec![];
         for chan in 0..nc {
             let dsx = shared.channel_info[0][chan].downsample.0;
+            let next_y_border = next_border_and_cur_downsample[0][chan].0 as usize;
+            let max_ahead = border_pixels[chan].1;
             initial_configs.push(RowBufferConfig {
                 data_type: shared.channel_info[0][chan].ty,
-                next_y_border: next_border_and_cur_downsample[0][chan].0 as usize,
+                next_y_border: next_y_border.max((max_ahead + next_y_border).div_ceil(2)),
                 y_shift: 0,
                 x_shift: 0,
-                row_len: (shared.chunk_size + 2 * border_size.0) >> dsx,
+                row_len: (shared.chunk_size + 2 * border_size.0).shrc(dsx),
             });
         }
         row_buffer_configs.push(initial_configs);
 
         for (i, stage) in shared.stages.iter().enumerate() {
             let mut stage_configs = vec![];
+            let y_shift = stage.shift().1 as usize;
+            let max_ahead = border_pixels_per_stage[i].1.shrc(stage.shift().1) << y_shift;
             for &(next_y_border, (dsx, _)) in next_border_and_cur_downsample[i + 1].iter() {
+                let next_y_border = next_y_border as usize;
                 stage_configs.push(RowBufferConfig {
                     data_type: stage.output_type().unwrap(),
-                    next_y_border: next_y_border as usize,
-                    y_shift: stage.shift().1 as usize,
+                    next_y_border: next_y_border.max((max_ahead + next_y_border).div_ceil(2)),
+                    y_shift,
                     x_shift: stage.shift().0 as usize,
-                    row_len: (shared.chunk_size + 2 * border_size.0) >> dsx,
+                    row_len: (shared.chunk_size + 2 * border_size.0).shrc(dsx),
                 });
             }
             row_buffer_configs.push(stage_configs);
@@ -407,7 +413,7 @@ impl RenderPipeline for LowMemoryRenderPipeline {
                 Stage::Save(s) => {
                     let (dx, dy) = self.downsampling_for_stage[i];
                     s.check_buffer_size(
-                        (size.0 >> dx, size.1 >> dy),
+                        (size.0.shrc(dx), size.1.shrc(dy)),
                         buffers[s.output_buffer_index].as_ref(),
                     )?
                 }

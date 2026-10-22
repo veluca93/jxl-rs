@@ -117,7 +117,7 @@ impl<'a> BufferFiller<'a> {
         }
 
         let x0 = x0 >> dx;
-        let xsize = xsize >> dx;
+        let xsize = xsize.shrc(dx);
         let group_ysize = 1 << (rp.shared.log_group_size - dy as usize);
         let group_xsize = 1 << (rp.shared.log_group_size - dx as usize);
 
@@ -370,7 +370,8 @@ impl LowMemoryRenderPipeline {
                 let (dx, dy) = self.downsampling_for_stage[i];
                 // The logic below uses *virtual* y coordinates, so we need to convert the border
                 // amount appropriately.
-                let scaled_y_border = self.stage_output_border_pixels[i].1 << dy;
+                let scaled_y_border =
+                    self.stage_output_border_pixels[i].1.shrc(stage.shift().1) << dy;
                 // I knew the reason behind this formula at some point, but now I don't.
                 let stage_vy = vy as isize - num_extra_rows as isize + scaled_y_border as isize;
                 if stage_vy % (1 << dy) != 0 {
@@ -431,10 +432,10 @@ impl LowMemoryRenderPipeline {
                             &input_data,
                             data.save_scratch.as_mut().unwrap(),
                             &mut *buffers,
-                            (xsize >> dx, num_rows >> dy),
+                            (xsize.shrc(dx), num_rows.shrc(dy)),
                             y,
                             (x0 >> dx, y0 >> dy),
-                            current_size,
+                            (current_size.0.shrc(dx), current_size.1.shrc(dy)),
                             current_origin,
                         )?;
                     }

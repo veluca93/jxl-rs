@@ -207,7 +207,16 @@ impl<'a> BufferSplitter<'a> {
                     // Buffer would be empty anyway.
                     return None;
                 }
-                let channel_rect = bi.orientation.display_rect(channel_rect, full_image_size);
+                let target_size = if bi.after_extend {
+                    full_image_size
+                } else {
+                    frame_size
+                };
+                let ds_target_size = (
+                    target_size.0.shrc(bi.downsample.0),
+                    target_size.1.shrc(bi.downsample.1),
+                );
+                let channel_rect = bi.orientation.display_rect(channel_rect, ds_target_size);
                 let channel_rect = channel_rect.to_byte_rect_sz(bi.byte_size);
                 Some(buf.borrow_rect(channel_rect))
             })
@@ -318,10 +327,19 @@ mod tests {
             let num_threads = u.int_in_range(2..=8)?;
             let num_channels = u.int_in_range(1..=4)?;
 
-            let downsample_x: u8 = u.int_in_range(0..=2)?;
-            let downsample_y: u8 = u.int_in_range(0..=2)?;
+            let downsample_x: u8 = u.int_in_range(0..=3)?;
+            let downsample_y: u8 = u.int_in_range(0..=3)?;
             let byte_size: usize = *u.choose(&[1, 2, 4])?;
-            let orientation = Orientation::Identity;
+            let orientation = *u.choose(&[
+                Orientation::Identity,
+                Orientation::FlipHorizontal,
+                Orientation::Rotate180,
+                Orientation::FlipVertical,
+                Orientation::Transpose,
+                Orientation::Rotate90Cw,
+                Orientation::AntiTranspose,
+                Orientation::Rotate90Ccw,
+            ])?;
 
             let info: Vec<Option<SaveStageBufferInfo>> = (0..num_channels)
                 .map(|ch| {
@@ -338,8 +356,10 @@ mod tests {
                 })
                 .collect();
 
+            let ds_size = (width.shrc(downsample_x), height.shrc(downsample_y));
+            let (out_w, out_h) = orientation.map_size(ds_size);
             let mut raws: Vec<Vec<u8>> = (0..num_channels)
-                .map(|_| vec![0u8; width * height * byte_size])
+                .map(|_| vec![0u8; out_w * out_h * byte_size])
                 .collect();
             let mut tiles = Vec::new();
 
@@ -351,7 +371,7 @@ mod tests {
                         if i == num_channels - 1 && num_channels > 1 {
                             None
                         } else {
-                            Some(JxlOutputBuffer::new(raw, height, width * byte_size))
+                            Some(JxlOutputBuffer::new(raw, out_h, out_w * byte_size))
                         }
                     })
                     .collect();
@@ -374,7 +394,7 @@ mod tests {
                             size: (w, h),
                         };
                         tiles.push((rect, tile_id));
-                        tile_id = tile_id.wrapping_add(1);
+                        tile_id = if tile_id == u8::MAX { 1 } else { tile_id + 1 };
                     }
                 }
 
@@ -412,6 +432,15 @@ mod tests {
                 });
 
                 assert_eq!(splitter.into_changed_regions().len(), tiles.len());
+            }
+
+            for (ch, raw) in raws.iter().enumerate() {
+                if ch % 2 == 0 && !(ch == num_channels - 1 && num_channels > 1) {
+                    assert!(
+                        raw.iter().all(|&b| b != 0),
+                        "unwritten byte in channel {ch} for {width}x{height} ds=({downsample_x},{downsample_y}) {orientation:?}"
+                    );
+                }
             }
 
             Ok(())
