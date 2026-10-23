@@ -22,7 +22,6 @@ mod ycbcr;
 pub use blending::*;
 pub use chroma_upsample::*;
 pub use convert::*;
-#[allow(unused_imports)]
 pub use downsample::*;
 pub use epf::*;
 pub use extend::*;

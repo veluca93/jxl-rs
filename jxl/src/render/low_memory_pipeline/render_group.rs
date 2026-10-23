@@ -9,7 +9,7 @@ use super::LowMemoryRenderPipeline;
 use super::row_buffers::RowBuffer;
 use crate::error::Result;
 use crate::image::{DataTypeTag, OwnedRawImage, Rect};
-use crate::render::buffer_splitter::OutputChannelRef;
+use crate::render::buffer_splitter::{OutputChannelRef, extend_canvas_rect};
 use crate::render::internal::{ChannelInfo, Stage};
 use crate::render::low_memory_pipeline::LowMemoryRenderPipelinePerThread;
 use crate::render::low_memory_pipeline::helpers::get_distinct_indices;
@@ -284,6 +284,167 @@ impl<'a> BufferFiller<'a> {
 }
 
 impl LowMemoryRenderPipeline {
+    #[allow(clippy::too_many_arguments)]
+    fn run_stage_on_row(
+        &self,
+        i: usize,
+        stage: &Stage<RowBuffer>,
+        data: &mut LowMemoryRenderPipelinePerThread,
+        buffers: &mut [Option<OutputChannelRef>],
+        previous_call_was_previous_row: &mut [bool],
+        cur_rect: Rect,
+        save_clip_rect: Rect,
+        space_size: (usize, usize),
+        post_extend_zero_copy: Option<((usize, usize), (isize, isize))>,
+        y: usize,
+        start_of_row: bool,
+        end_of_row: bool,
+    ) -> Result<()> {
+        let (in_dx, in_dy) = (
+            self.stage_input_downsample[i].0 as usize,
+            self.stage_input_downsample[i].1 as usize,
+        );
+        let (out_dx, out_dy) = (
+            self.stage_output_downsample[i].0 as usize,
+            self.stage_output_downsample[i].1 as usize,
+        );
+        let out_extra_x = self.stage_output_border_pixels[i].0;
+        let shifted_xsize = cur_rect.size.0.shrc(in_dx);
+        let shifted_ysize = space_size.1.shrc(in_dy);
+
+        match stage {
+            Stage::InPlace(s) => {
+                let mut row_bufs =
+                    get_distinct_indices(&mut data.row_buffers, &self.sorted_buffer_indices[i]);
+                let prev = std::mem::replace(&mut previous_call_was_previous_row[i], true);
+                s.run_stage_on(
+                    ExtraInfo {
+                        xsize: shifted_xsize,
+                        current_row: y,
+                        group_x0: cur_rect.origin.0 >> in_dx,
+                        out_extra_x,
+                        start_of_row,
+                        end_of_row,
+                        image_height: shifted_ysize,
+                        previous_call_was_previous_row: prev,
+                    },
+                    &mut row_bufs,
+                    data.local_states[i].as_deref_mut(),
+                );
+            }
+            Stage::Downsample(d) => {
+                let (inb, outb) = data.row_buffers.split_at_mut(i + 1);
+                let (si, ci) = self.stage_input_buffer_index[i][0];
+                let in_buf = &inb[si][ci];
+                let x0_off = RowBuffer::x0_offset::<f32>();
+                let in_y0 = y << d.shift();
+                let in_y1 = (in_y0 + (1usize << d.shift())).min(shifted_ysize);
+                let mut input_rows: [&[f32]; 8] = [&[]; 8];
+                for (r, slot) in (in_y0..in_y1).zip(input_rows.iter_mut()) {
+                    *slot = &in_buf.get_row::<f32>(r)[x0_off..x0_off + shifted_xsize];
+                }
+                let out_xsize = shifted_xsize.shrc(d.shift());
+                let out_row = &mut outb[0][0].get_row_mut::<f32>(y)[x0_off..x0_off + out_xsize];
+                d.process_row_chunk(shifted_xsize, &input_rows[..in_y1 - in_y0], out_row);
+            }
+            Stage::Save(s) => {
+                let input_data: ChannelVec<_> = self.stage_input_buffer_index[i]
+                    .iter()
+                    .map(|(si, ci)| &data.row_buffers[*si][*ci])
+                    .collect();
+                let (full_size, frame_origin) =
+                    if let Some((ext_size, ext_origin)) = post_extend_zero_copy {
+                        (
+                            (ext_size.0.shrc(out_dx), ext_size.1.shrc(out_dy)),
+                            ext_origin,
+                        )
+                    } else {
+                        let saved_rect = save_clip_rect
+                            .downsample((out_dx as u8, out_dy as u8))
+                            .clip((space_size.0.shrc(out_dx), space_size.1.shrc(out_dy)));
+                        if saved_rect.size.0 == 0 || saved_rect.size.1 == 0 {
+                            return Ok(());
+                        }
+                        (
+                            saved_rect.size,
+                            (
+                                -(saved_rect.origin.0 as isize),
+                                -(saved_rect.origin.1 as isize),
+                            ),
+                        )
+                    };
+                s.save_lowmem(
+                    &input_data,
+                    data.save_scratch.as_mut().unwrap(),
+                    &mut *buffers,
+                    (cur_rect.size.0.shrc(out_dx), cur_rect.size.1.shrc(out_dy)),
+                    y,
+                    (cur_rect.origin.0 >> out_dx, cur_rect.origin.1 >> out_dy),
+                    full_size,
+                    frame_origin,
+                )?;
+            }
+            Stage::Extend(_) => unreachable!(),
+            Stage::InOut(s) => {
+                let borderx = s.border().0 as usize;
+                let bordery = s.border().1 as isize;
+                let prev = std::mem::replace(&mut previous_call_was_previous_row[i], true);
+                let iy_range = if prev {
+                    bordery..=bordery
+                } else {
+                    -bordery..=bordery
+                };
+                if start_of_row && borderx != 0 {
+                    for (si, ci) in self.stage_input_buffer_index[i].iter() {
+                        for iy in iy_range.clone() {
+                            let py = mirror(y as isize + iy, shifted_ysize);
+                            apply_x_padding(
+                                s.input_type(),
+                                data.row_buffers[*si][*ci].get_row_mut::<u8>(py),
+                                -(borderx as isize)..0,
+                                0..shifted_xsize as isize,
+                            );
+                        }
+                    }
+                }
+                if end_of_row && borderx != 0 {
+                    for (si, ci) in self.stage_input_buffer_index[i].iter() {
+                        for iy in iy_range.clone() {
+                            let py = mirror(y as isize + iy, shifted_ysize);
+                            apply_x_padding(
+                                s.input_type(),
+                                data.row_buffers[*si][*ci].get_row_mut::<u8>(py),
+                                shifted_xsize as isize..(shifted_xsize + borderx) as isize,
+                                -(borderx as isize)..shifted_xsize as isize,
+                            );
+                        }
+                    }
+                }
+                let (inb, outb) = data.row_buffers.split_at_mut(i + 1);
+                let input_data: ChannelVec<_> = self.stage_input_buffer_index[i]
+                    .iter()
+                    .map(|(si, ci)| &inb[*si][*ci])
+                    .collect();
+                s.run_stage_on(
+                    ExtraInfo {
+                        xsize: shifted_xsize,
+                        current_row: y,
+                        group_x0: cur_rect.origin.0 >> in_dx,
+                        out_extra_x,
+                        start_of_row,
+                        end_of_row,
+                        image_height: shifted_ysize,
+                        previous_call_was_previous_row: prev,
+                    },
+                    &input_data,
+                    &mut outb[0][..],
+                    data.local_states[i].as_deref_mut(),
+                );
+            }
+        }
+        Ok(())
+    }
+
     // Renders *parts* of group's worth of data.
     // In particular, renders the sub-rectangle given in `image_area`, where (1, 1) refers to
     // the center of the group, and 0 and 2 include data from the neighbouring group (if any).
@@ -295,217 +456,226 @@ impl LowMemoryRenderPipeline {
         image_area: Rect,
         buffers: &mut [Option<OutputChannelRef>],
     ) -> Result<()> {
-        let start_of_row = image_area.origin.0 == 0;
-        let end_of_row = image_area.end().0 == self.shared.input_size.0;
+        let has_post_extend_ds = self.post_extend_downsample != (0, 0);
+        let (pdx, pdy) = self.pre_extend_downsample;
+        let pre_area = if has_post_extend_ds && (pdx, pdy) != (0, 0) {
+            let px0 = (image_area.origin.0 >> pdx) << pdx;
+            let px1 = (image_area.end().0.shrc(pdx) << pdx).min(self.shared.input_size.0);
+            let py0 = (image_area.origin.1 >> pdy) << pdy;
+            let py1 = (image_area.end().1.shrc(pdy) << pdy).min(self.shared.input_size.1);
+            Rect {
+                origin: (px0, py0),
+                size: (px1 - px0, py1 - py0),
+            }
+        } else {
+            image_area
+        };
+
+        let start_of_row = pre_area.origin.0 == 0;
+        let end_of_row = pre_area.end().0 == self.shared.input_size.0;
 
         let Rect {
             origin: (x0, y0),
-            size: (xsize, num_rows),
-        } = image_area;
+            size: (xsize, _),
+        } = pre_area;
 
         let num_channels = self.shared.num_channels();
         let num_extra_rows = self.border_size.1;
 
-        // This follows the same implementation strategy as the C++ code in libjxl.
-        // We pretend that every stage has a vertical shift of 0, i.e. it is as tall
-        // as the final image.
-        // We call each such row a "virtual" row, because it may or may not correspond
-        // to an actual row of the current processing stage; actual processing happens
-        // when vy % (1<<vshift) == 0.
-
-        // Rects are not guaranteed to start at a vertical position that is aligned
-        // to the rows of subsampled channels/stages. Since border rows are computed
-        // with floor semantics (see the parity adjustments in the loop below), the
-        // first border row of a subsampled channel can start up to (1 << dy) - 1
-        // virtual rows before y0 - scaled_y_border; extend the virtual row range
-        // upwards so that it is still produced.
         let max_dy = (0..num_channels)
             .map(|c| self.shared.channel_info[0][c].downsample.1 as usize)
             .chain(self.downsampling_for_stage.iter().map(|d| d.1))
             .max()
             .unwrap_or(0);
-        let vy0 = y0.saturating_sub(num_extra_rows + (1 << max_dy) - 1);
-        let vy1 = image_area.end().1 + num_extra_rows;
+        let pre_fv_start = y0.saturating_sub(num_extra_rows + (1 << max_dy) - 1) as isize
+            - num_extra_rows as isize;
+        let pre_fv_end = pre_area.end().1 as isize;
+
+        let extend_info = if has_post_extend_ds {
+            let e_idx = self.shared.extend_stage_index.unwrap();
+            let Stage::Extend(e) = &self.shared.stages[e_idx] else {
+                unreachable!();
+            };
+            Some((
+                e_idx,
+                e,
+                extend_canvas_rect(
+                    image_area,
+                    self.shared.input_size,
+                    e.image_size,
+                    e.frame_origin,
+                    self.post_extend_downsample,
+                ),
+            ))
+        } else {
+            None
+        };
+
+        let (fv_start, fv_end) = if let Some((_, e, (canvas_rect, _, _))) = extend_info
+            && canvas_rect.size.0 > 0
+            && canvas_rect.size.1 > 0
+        {
+            (
+                pre_fv_start.min(canvas_rect.origin.1 as isize - e.frame_origin.1),
+                pre_fv_end.max(canvas_rect.end().1 as isize - e.frame_origin.1),
+            )
+        } else {
+            (pre_fv_start, pre_fv_end)
+        };
 
         let fillers: ChannelVec<_> = (0..num_channels)
-            .map(|c| BufferFiller::new(self, c, (x0, xsize), (gx, gy), y0..image_area.end().1))
+            .map(|c| BufferFiller::new(self, c, (x0, xsize), (gx, gy), y0..pre_area.end().1))
             .collect();
 
         let mut previous_call_was_previous_row: SmallVec<bool, 32> =
             std::iter::repeat_n(false, self.shared.stages.len()).collect();
 
-        for vy in vy0..vy1 {
-            let mut current_origin = (0, 0);
-            let mut current_size = self.shared.input_size;
-
+        for fv in fv_start..fv_end {
             // Step 1: read input channels.
-            for c in 0..num_channels {
-                let Some(filler) = &fillers[c] else {
-                    continue;
-                };
-                // Same logic as below, but adapted to the input stage.
-                let (_, dy) = self.shared.channel_info[0][c].downsample;
-                let scaled_y_border = self.input_border_pixels[c].1 << dy;
-                let stage_vy = vy as isize - num_extra_rows as isize + scaled_y_border as isize;
-                if stage_vy % (1 << dy) != 0 {
-                    continue;
-                }
-                let y = stage_vy >> dy;
-                // The first needed row is computed with *floor* semantics (matching the
-                // x direction and BufferFiller::new): if y0 - scaled_y_border is not
-                // aligned to the channel's vertical subsampling, the subsampled row
-                // containing it must still be filled, as downstream stages will read it.
-                if y < (y0 as isize - scaled_y_border as isize) >> dy {
-                    continue;
-                }
-                // Do not produce rows in out-of-bounds areas.
-                if y < 0 || y >= self.shared.input_size.1.shrc(dy) as isize {
-                    continue;
-                }
-                let y = y as usize;
-                filler.fill(data, y);
-            }
-            // Step 2: go through stages one by one.
-            for (i, stage) in self.shared.stages.iter().enumerate() {
-                let (dx, dy) = self.downsampling_for_stage[i];
-                // The logic below uses *virtual* y coordinates, so we need to convert the border
-                // amount appropriately.
-                let scaled_y_border =
-                    self.stage_output_border_pixels[i].1.shrc(stage.shift().1) << dy;
-                // I knew the reason behind this formula at some point, but now I don't.
-                let stage_vy = vy as isize - num_extra_rows as isize + scaled_y_border as isize;
-                if stage_vy % (1 << dy) != 0 {
-                    continue;
-                }
-                let y = stage_vy >> dy;
-                if matches!(stage, Stage::Save(_)) {
-                    // Save stages write to shared output buffers, so they must only
-                    // process rows owned by this rect; keep ceil semantics for them.
-                    if stage_vy - (y0 as isize) < -(scaled_y_border as isize) {
+            if fv >= pre_fv_start && fv < pre_fv_end {
+                for c in 0..num_channels {
+                    let Some(filler) = &fillers[c] else {
+                        continue;
+                    };
+                    let (_, dy) = self.shared.channel_info[0][c].downsample;
+                    let scaled_y_border = self.input_border_pixels[c].1 << dy;
+                    let stage_vy = fv + scaled_y_border as isize;
+                    if stage_vy % (1 << dy) != 0 {
                         continue;
                     }
-                } else if y < (y0 as isize - scaled_y_border as isize) >> dy {
-                    // As for input channels, border rows of vertically subsampled
-                    // stages are computed with floor semantics.
+                    let y = stage_vy >> dy;
+                    if y < (y0 as isize - scaled_y_border as isize) >> dy {
+                        continue;
+                    }
+                    if y < 0 || y >= self.shared.input_size.1.shrc(dy) as isize {
+                        continue;
+                    }
+                    filler.fill(data, y as usize);
+                }
+            }
+
+            let mut cur_fv = fv;
+            let mut cur_rect = pre_area;
+            let mut save_clip_rect = image_area;
+            let mut space_size = self.shared.input_size;
+            let mut post_extend_zero_copy = None;
+            let mut cur_start_of_row = start_of_row;
+            let mut cur_end_of_row = end_of_row;
+
+            // Step 2: go through stages one by one.
+            for (i, stage) in self.shared.stages.iter().enumerate() {
+                if let Some((e_idx, _, _)) = extend_info
+                    && i < e_idx
+                    && !(fv >= pre_fv_start && fv < pre_fv_end)
+                {
                     continue;
                 }
-                let shifted_ysize = self.shared.input_size.1.shrc(dy);
-                // Do not produce rows in out-of-bounds areas.
-                if y < 0 || y >= shifted_ysize as isize {
-                    continue;
-                }
-                let y = y as usize;
 
-                let out_extra_x = self.stage_output_border_pixels[i].0;
-                let shifted_xsize = xsize.shrc(dx);
-
-                match stage {
-                    Stage::InPlace(s) => {
-                        let mut buffers = get_distinct_indices(
-                            &mut data.row_buffers,
-                            &self.sorted_buffer_indices[i],
-                        );
-                        let prev = std::mem::replace(&mut previous_call_was_previous_row[i], true);
-                        s.run_stage_on(
-                            ExtraInfo {
-                                xsize: shifted_xsize,
-                                current_row: y,
-                                group_x0: x0 >> dx,
-                                out_extra_x,
-                                start_of_row,
-                                end_of_row,
-                                image_height: shifted_ysize,
-                                previous_call_was_previous_row: prev,
-                            },
-                            &mut buffers,
-                            data.local_states[i].as_deref_mut(),
-                        );
+                if let Stage::Extend(e) = stage {
+                    if !has_post_extend_ds {
+                        post_extend_zero_copy = Some((e.image_size, e.frame_origin));
+                        continue;
                     }
-                    Stage::Save(s) => {
-                        // Find buffers for channels that will be saved.
-                        // Channel ordering is handled in stage_input_buffer_index construction.
-                        let input_data: ChannelVec<_> = self.stage_input_buffer_index[i]
-                            .iter()
-                            .map(|(si, ci)| &data.row_buffers[*si][*ci])
-                            .collect();
-                        s.save_lowmem(
-                            &input_data,
-                            data.save_scratch.as_mut().unwrap(),
-                            &mut *buffers,
-                            (xsize.shrc(dx), num_rows.shrc(dy)),
-                            y,
-                            (x0 >> dx, y0 >> dy),
-                            (current_size.0.shrc(dx), current_size.1.shrc(dy)),
-                            current_origin,
-                        )?;
+                    let (_, _, (canvas_rect, (raw_cx0, raw_cx1), (raw_cy0, raw_cy1))) =
+                        extend_info.unwrap();
+                    if canvas_rect.size.0 == 0 || canvas_rect.size.1 == 0 {
+                        break;
                     }
-                    Stage::Extend(s) => {
-                        current_size = s.image_size;
-                        current_origin = s.frame_origin;
+                    let cy_signed = fv + e.frame_origin.1;
+                    if cy_signed < canvas_rect.origin.1 as isize
+                        || cy_signed >= canvas_rect.end().1 as isize
+                    {
+                        break;
                     }
-                    Stage::InOut(s) => {
-                        let borderx = s.border().0 as usize;
-                        let bordery = s.border().1 as isize;
-                        let prev = std::mem::replace(&mut previous_call_was_previous_row[i], true);
-                        let iy_range = if prev {
-                            bordery..=bordery
+                    let cy = cy_signed as usize;
+                    let cx0 = canvas_rect.origin.0;
+                    let cx1 = canvas_rect.end().0;
+                    let x0_off = RowBuffer::x0_offset::<f32>();
+                    let (pre_bufs, ext_and_after) = data.row_buffers.split_at_mut(i + 1);
+                    for c in 0..num_channels {
+                        if !self.shared.channel_is_used[c] {
+                            continue;
+                        }
+                        let dst = &mut ext_and_after[0][c].get_row_mut::<f32>(cy)[x0_off..];
+                        if cy < raw_cy0 || cy >= raw_cy1 {
+                            e.process_row_chunk((cx0, cy), cx1 - cx0, c, dst);
                         } else {
-                            -bordery..=bordery
-                        };
-                        // Apply x padding.
-                        if start_of_row && borderx != 0 {
-                            for (si, ci) in self.stage_input_buffer_index[i].iter() {
-                                for iy in iy_range.clone() {
-                                    let y = mirror(y as isize + iy, shifted_ysize);
-                                    apply_x_padding(
-                                        s.input_type(),
-                                        data.row_buffers[*si][*ci].get_row_mut::<u8>(y),
-                                        -(borderx as isize)..0,
-                                        // Either xsize is the actual size of the image, or it is
-                                        // much larger than borderx, so this works out either way.
-                                        0..shifted_xsize as isize,
-                                    );
-                                }
+                            if cx0 < raw_cx0 {
+                                e.process_row_chunk((cx0, cy), raw_cx0 - cx0, c, dst);
+                            }
+                            let (pre_si, pre_ci) = self.stage_input_buffer_index[i][c];
+                            let fx_start = (raw_cx0 as isize - e.frame_origin.0) as usize;
+                            let src_off = x0_off + (fx_start - pre_area.origin.0);
+                            let copy_len = raw_cx1 - raw_cx0;
+                            let src = &pre_bufs[pre_si][pre_ci].get_row::<f32>(fv as usize)
+                                [src_off..src_off + copy_len];
+                            dst[raw_cx0 - cx0..raw_cx1 - cx0].copy_from_slice(src);
+                            if raw_cx1 < cx1 {
+                                e.process_row_chunk(
+                                    (raw_cx1, cy),
+                                    cx1 - raw_cx1,
+                                    c,
+                                    &mut dst[raw_cx1 - cx0..],
+                                );
                             }
                         }
-                        if end_of_row && borderx != 0 {
-                            for (si, ci) in self.stage_input_buffer_index[i].iter() {
-                                for iy in iy_range.clone() {
-                                    let y = mirror(y as isize + iy, shifted_ysize);
-                                    apply_x_padding(
-                                        s.input_type(),
-                                        data.row_buffers[*si][*ci].get_row_mut::<u8>(y),
-                                        shifted_xsize as isize..(shifted_xsize + borderx) as isize,
-                                        // borderx..0 is either data from the neighbouring group or
-                                        // data that was filled in by the iteration above.
-                                        -(borderx as isize)..shifted_xsize as isize,
-                                    );
-                                }
-                            }
-                        }
-                        let (inb, outb) = data.row_buffers.split_at_mut(i + 1);
-                        // Prepare pointers to input and output buffers.
-                        let input_data: ChannelVec<_> = self.stage_input_buffer_index[i]
-                            .iter()
-                            .map(|(si, ci)| &inb[*si][*ci])
-                            .collect();
-                        s.run_stage_on(
-                            ExtraInfo {
-                                xsize: shifted_xsize,
-                                current_row: y,
-                                group_x0: x0 >> dx,
-                                out_extra_x,
-                                start_of_row,
-                                end_of_row,
-                                image_height: shifted_ysize,
-                                previous_call_was_previous_row: prev,
-                            },
-                            &input_data,
-                            &mut outb[0][..],
-                            data.local_states[i].as_deref_mut(),
-                        );
                     }
+                    cur_fv = cy as isize;
+                    cur_rect = canvas_rect;
+                    save_clip_rect = canvas_rect;
+                    space_size = e.image_size;
+                    cur_start_of_row = cx0 == 0;
+                    cur_end_of_row = cx1 == e.image_size.0;
+                    continue;
                 }
+
+                let y = if self.stage_after_downsample[i] {
+                    if cur_fv < cur_rect.origin.1 as isize || cur_fv >= cur_rect.end().1 as isize {
+                        continue;
+                    }
+                    let fv_u = cur_fv as usize;
+                    let out_dy = self.stage_output_downsample[i].1;
+                    if ((fv_u + 1) & ((1usize << out_dy) - 1)) != 0 && fv_u + 1 != space_size.1 {
+                        continue;
+                    }
+                    fv_u >> out_dy
+                } else {
+                    let (_, dy) = self.downsampling_for_stage[i];
+                    let scaled_y_border =
+                        self.stage_output_border_pixels[i].1.shrc(stage.shift().1) << dy;
+                    let stage_vy = cur_fv + scaled_y_border as isize;
+                    if stage_vy % (1 << dy) != 0 {
+                        continue;
+                    }
+                    let y = stage_vy >> dy;
+                    if matches!(stage, Stage::Save(_)) {
+                        if stage_vy - (cur_rect.origin.1 as isize) < -(scaled_y_border as isize) {
+                            continue;
+                        }
+                    } else if y < (cur_rect.origin.1 as isize - scaled_y_border as isize) >> dy {
+                        continue;
+                    }
+                    let shifted_ysize = space_size.1.shrc(dy);
+                    if y < 0 || y >= shifted_ysize as isize {
+                        continue;
+                    }
+                    y as usize
+                };
+
+                self.run_stage_on_row(
+                    i,
+                    stage,
+                    data,
+                    buffers,
+                    &mut previous_call_was_previous_row,
+                    cur_rect,
+                    save_clip_rect,
+                    space_size,
+                    post_extend_zero_copy,
+                    y,
+                    cur_start_of_row,
+                    cur_end_of_row,
+                )?;
             }
         }
         Ok(())
@@ -525,95 +695,58 @@ impl LowMemoryRenderPipeline {
         let y0 = yrange.start;
         let xsize = xrange.clone().count();
         let ysize = yrange.clone().count();
+        let strip_rect = Rect {
+            origin: (x0, y0),
+            size: (xsize, ysize),
+        };
+        let extend_idx = self.shared.extend_stage_index.unwrap();
+        let Stage::Extend(extend) = &self.shared.stages[extend_idx] else {
+            unreachable!("extend stage is not an extend stage");
+        };
+        let canvas_size = extend.image_size;
+        let start_of_row = x0 == 0;
+        let end_of_row = xrange.end == canvas_size.0;
         let mut previous_call_was_previous_row: SmallVec<bool, 32> =
             std::iter::repeat_n(false, self.shared.stages.len()).collect();
 
-        // Significantly simplified version of render_group.
         for y in yrange.clone() {
-            let extend = self.shared.extend_stage_index.unwrap();
-            // Step 1: get padding from extend stage.
             for c in 0..num_channels {
-                let (si, ci) = self.stage_input_buffer_index[extend][c];
-                let buffer = &mut data.row_buffers[si][ci];
-                let Stage::Extend(extend) = &self.shared.stages[extend] else {
-                    unreachable!("extend stage is not an extend stage");
+                if !self.shared.channel_is_used[c] {
+                    continue;
+                }
+                let (si, ci) = if self.post_extend_downsample != (0, 0) {
+                    (extend_idx + 1, c)
+                } else {
+                    self.stage_input_buffer_index[extend_idx][c]
                 };
-                let row = &mut buffer.get_row_mut(y)[RowBuffer::x0_offset::<f32>()..];
+                let row =
+                    &mut data.row_buffers[si][ci].get_row_mut(y)[RowBuffer::x0_offset::<f32>()..];
                 extend.process_row_chunk((x0, y), xsize, c, row);
             }
-            // Step 2: go through remaining stages one by one.
-            for (i, stage) in self.shared.stages.iter().enumerate().skip(extend + 1) {
-                assert_eq!(self.downsampling_for_stage[i], (0, 0));
-
-                match stage {
-                    Stage::InPlace(s) => {
-                        let mut buffers = get_distinct_indices(
-                            &mut data.row_buffers,
-                            &self.sorted_buffer_indices[i],
-                        );
-                        let prev = std::mem::replace(&mut previous_call_was_previous_row[i], true);
-                        s.run_stage_on(
-                            ExtraInfo {
-                                xsize,
-                                current_row: y,
-                                group_x0: x0,
-                                out_extra_x: 0,
-                                start_of_row: false,
-                                end_of_row: false,
-                                image_height: self.shared.input_size.1,
-                                previous_call_was_previous_row: prev,
-                            },
-                            &mut buffers,
-                            data.local_states[i].as_deref_mut(),
-                        );
+            for (i, stage) in self.shared.stages.iter().enumerate().skip(extend_idx + 1) {
+                let stage_y = if self.stage_after_downsample[i] {
+                    let out_dy = self.stage_output_downsample[i].1;
+                    if ((y + 1) & ((1usize << out_dy) - 1)) != 0 && y + 1 != canvas_size.1 {
+                        continue;
                     }
-                    Stage::Save(s) => {
-                        // Find buffers for channels that will be saved.
-                        // Channel ordering is handled in stage_input_buffer_index construction.
-                        let input_data: ChannelVec<_> = self.stage_input_buffer_index[i]
-                            .iter()
-                            .map(|(si, ci)| &data.row_buffers[*si][*ci])
-                            .collect();
-                        s.save_lowmem(
-                            &input_data,
-                            data.save_scratch.as_mut().unwrap(),
-                            &mut *buffers,
-                            (xsize, ysize),
-                            y,
-                            (x0, y0),
-                            (xrange.end, yrange.end), // this is not true, but works out correctly.
-                            (0, 0),
-                        )?;
-                    }
-                    Stage::Extend(_) => {
-                        unreachable!("duplicate extend stage");
-                    }
-                    Stage::InOut(s) => {
-                        assert_eq!(s.border(), (0, 0));
-                        let (inb, outb) = data.row_buffers.split_at_mut(i + 1);
-                        // Prepare pointers to input and output buffers.
-                        let input_data: ChannelVec<_> = self.stage_input_buffer_index[i]
-                            .iter()
-                            .map(|(si, ci)| &inb[*si][*ci])
-                            .collect();
-                        let prev = std::mem::replace(&mut previous_call_was_previous_row[i], true);
-                        s.run_stage_on(
-                            ExtraInfo {
-                                xsize,
-                                current_row: y,
-                                group_x0: x0,
-                                out_extra_x: 0,
-                                start_of_row: false,
-                                end_of_row: false,
-                                image_height: self.shared.input_size.1,
-                                previous_call_was_previous_row: prev,
-                            },
-                            &input_data,
-                            &mut outb[0][..],
-                            data.local_states[i].as_deref_mut(),
-                        );
-                    }
-                }
+                    y >> out_dy
+                } else {
+                    y
+                };
+                self.run_stage_on_row(
+                    i,
+                    stage,
+                    data,
+                    buffers,
+                    &mut previous_call_was_previous_row,
+                    strip_rect,
+                    strip_rect,
+                    canvas_size,
+                    None,
+                    stage_y,
+                    start_of_row,
+                    end_of_row,
+                )?;
             }
         }
         Ok(())

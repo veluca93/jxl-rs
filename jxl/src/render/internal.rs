@@ -8,7 +8,7 @@ use std::fmt::Display;
 use std::sync::Arc;
 
 use super::save::SaveStage;
-use super::stages::ExtendToImageDimensionsStage;
+use super::stages::{DownsampleStage, ExtendToImageDimensionsStage};
 use super::{RenderPipelineInOutStage, RenderPipelineInPlaceStage};
 use crate::error::Result;
 use crate::image::{BufferRecycler, DataTypeTag, ImageDataType};
@@ -19,6 +19,7 @@ use crate::util::sync::atomic::AtomicBool;
 pub enum Stage<Buffer> {
     InPlace(Box<dyn RunInPlaceStage<Buffer>>),
     InOut(Box<dyn RunInOutStage<Buffer>>),
+    Downsample(DownsampleStage),
     Save(SaveStage),
     Extend(ExtendToImageDimensionsStage),
 }
@@ -35,6 +36,13 @@ impl<Buffer: 'static> Stage<Buffer> {
     pub(super) fn shift(&self) -> (u8, u8) {
         match self {
             Stage::InOut(s) => s.shift(),
+            _ => (0, 0),
+        }
+    }
+
+    pub(super) fn downsample_shift(&self) -> (u8, u8) {
+        match self {
+            Stage::Downsample(d) => (d.shift(), d.shift()),
             _ => (0, 0),
         }
     }
@@ -59,12 +67,13 @@ impl<Buffer: 'static> Stage<Buffer> {
             Stage::Extend(_) => true,
             Stage::InPlace(s) => s.uses_channel(c),
             Stage::InOut(s) => s.uses_channel(c),
+            Stage::Downsample(d) => d.uses_channel(c),
             Stage::Save(s) => s.uses_channel(c),
         }
     }
     pub(super) fn input_type(&self, c: usize) -> DataTypeTag {
         match self {
-            Stage::Extend(_) => DataTypeTag::F32,
+            Stage::Extend(_) | Stage::Downsample(_) => DataTypeTag::F32,
             Stage::InPlace(s) => s.ty(),
             Stage::InOut(s) => s.input_type(),
             Stage::Save(s) => s.input_type(c),
@@ -73,6 +82,7 @@ impl<Buffer: 'static> Stage<Buffer> {
     pub(super) fn output_type(&self) -> Option<DataTypeTag> {
         match self {
             Stage::InOut(s) => Some(s.output_type()),
+            Stage::Downsample(_) => Some(DataTypeTag::F32),
             _ => None,
         }
     }
@@ -83,6 +93,7 @@ impl<Buffer> Display for Stage<Buffer> {
         match self {
             Stage::InOut(s) => write!(f, "{}", s),
             Stage::InPlace(s) => write!(f, "{}", s),
+            Stage::Downsample(d) => write!(f, "{}", d),
             Stage::Save(s) => write!(f, "{}", s),
             Stage::Extend(e) => write!(f, "{}", e),
         }

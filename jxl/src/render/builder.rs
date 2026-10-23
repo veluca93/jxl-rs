@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use super::internal::{RenderPipelineShared, Stage};
-use super::stages::ExtendToImageDimensionsStage;
+use super::stages::{DownsampleStage, ExtendToImageDimensionsStage};
 use super::{RenderPipeline, RenderPipelineInOutStage, RenderPipelineInPlaceStage};
 use crate::api::{JxlColorType, JxlDataFormat};
 use crate::error::{Error, Result};
@@ -158,6 +158,11 @@ impl<Pipeline: RenderPipeline> RenderPipelineBuilder<Pipeline> {
         self.add_stage_internal(Stage::Extend(extend))
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn add_downsample_stage(self, stage: DownsampleStage) -> Self {
+        self.add_stage_internal(Stage::Downsample(stage))
+    }
+
     pub fn add_inplace_stage<S: RenderPipelineInPlaceStage>(self, stage: S) -> Self {
         self.add_stage_internal(Stage::InPlace(Pipeline::box_inplace_stage(stage)))
     }
@@ -190,7 +195,7 @@ impl<Pipeline: RenderPipeline> RenderPipelineBuilder<Pipeline> {
             // trigger downstream failures.
             // TODO(veluca): we should probably compute channel information *before*
             // we do the pruning.
-            if stage.shift() != (0, 0) {
+            if stage.shift() != (0, 0) || stage.downsample_shift() != (0, 0) {
                 stage_is_used[i] = true;
             }
             if stage_is_used[i] {
@@ -209,9 +214,30 @@ impl<Pipeline: RenderPipeline> RenderPipelineBuilder<Pipeline> {
             .filter_map(|(s, used)| used.then_some(s))
             .collect();
 
+        // Compute initial input downsampling from all upsampling (`shift`) stages.
+        let mut initial_downsamples = vec![(0u8, 0u8); num_channels];
+        for stage in &self.shared.stages {
+            let shift = stage.shift();
+            if shift == (0, 0) {
+                continue;
+            }
+            for (c, ds) in initial_downsamples.iter_mut().enumerate() {
+                if stage.uses_channel(c) {
+                    ds.0 = ds.0.checked_add(shift.0).ok_or(Error::ArithmeticOverflow)?;
+                    ds.1 = ds.1.checked_add(shift.1).ok_or(Error::ArithmeticOverflow)?;
+                }
+            }
+        }
+        for (c, &ds) in initial_downsamples.iter().enumerate() {
+            self.shared.channel_info[0][c].downsample = ds;
+        }
+
+        let mut seen_downsample = vec![false; num_channels];
+
         for (i, stage) in self.shared.stages.iter().enumerate() {
             let output_type = stage.output_type();
             let shift = stage.shift();
+            let dshift = stage.downsample_shift();
             let border = stage.border();
             let is_extend = matches!(stage, Stage::Extend(_));
 
@@ -222,12 +248,10 @@ impl<Pipeline: RenderPipeline> RenderPipelineBuilder<Pipeline> {
                 "adding stage '{stage}'",
             );
             let mut after_info = vec![];
+            let mut stage_downsample = None;
             for (c, info) in current_info.iter().enumerate() {
                 if !stage.uses_channel(c) {
-                    after_info.push(ChannelInfo {
-                        ty: info.ty,
-                        downsample: (0, 0),
-                    });
+                    after_info.push(info.clone());
                 } else {
                     let input_type = stage.input_type(c);
                     if info.ty != input_type {
@@ -238,9 +262,47 @@ impl<Pipeline: RenderPipeline> RenderPipelineBuilder<Pipeline> {
                             info.ty,
                         ));
                     }
+                    if is_extend && seen_downsample[c] {
+                        return Err(Error::PipelineExtendRequiresFullResolution(
+                            c,
+                            info.downsample,
+                        ));
+                    }
+                    if seen_downsample[c] && (shift != (0, 0) || border != (0, 0)) {
+                        return Err(Error::PipelineInvalidStageAfterDownsample(
+                            stage.to_string(),
+                        ));
+                    }
+                    if matches!(stage, Stage::Save(_)) {
+                        if let Some(prev_ds) = stage_downsample {
+                            if prev_ds != info.downsample {
+                                return Err(Error::SaveDifferentDownsample(
+                                    prev_ds,
+                                    info.downsample,
+                                ));
+                            }
+                        } else {
+                            stage_downsample = Some(info.downsample);
+                        }
+                    }
+                    if dshift != (0, 0) {
+                        seen_downsample[c] = true;
+                    }
+                    let next_ds = (
+                        info.downsample
+                            .0
+                            .checked_sub(shift.0)
+                            .and_then(|v| v.checked_add(dshift.0))
+                            .ok_or(Error::ArithmeticOverflow)?,
+                        info.downsample
+                            .1
+                            .checked_sub(shift.1)
+                            .and_then(|v| v.checked_add(dshift.1))
+                            .ok_or(Error::ArithmeticOverflow)?,
+                    );
                     after_info.push(ChannelInfo {
                         ty: output_type.unwrap_or(input_type),
-                        downsample: shift,
+                        downsample: next_ds,
                     });
                 }
             }
@@ -260,47 +322,9 @@ impl<Pipeline: RenderPipeline> RenderPipelineBuilder<Pipeline> {
             self.shared.channel_info.push(after_info);
         }
 
-        let channel_info = &mut self.shared.channel_info;
-        let mut cur_downsamples = vec![(0u8, 0u8); num_channels];
-        for (s, stage) in self.shared.stages.iter().enumerate().rev() {
-            let next_info = &mut channel_info[s + 1];
-            let mut save_downsample = None;
-            for chan in 0..num_channels {
-                let next_chan = &mut next_info[chan];
-                let uses_channel = stage.uses_channel(chan);
-
-                // Arithmetic overflows here should be very uncommon, so custom error variants
-                // are probably unwarranted.
-                let cur_downsample = &mut cur_downsamples[chan];
-                if matches!(stage, Stage::Save(_)) && uses_channel {
-                    if save_downsample.is_none() {
-                        save_downsample = Some(*cur_downsample);
-                    }
-                    if save_downsample != Some(*cur_downsample) {
-                        return Err(Error::SaveDifferentDownsample(
-                            save_downsample.unwrap(),
-                            *cur_downsample,
-                        ));
-                    }
-                }
-                let next_downsample = &mut next_chan.downsample;
-                let next_total_downsample = *cur_downsample;
-                cur_downsample.0 = cur_downsample
-                    .0
-                    .checked_add(next_downsample.0)
-                    .ok_or(Error::ArithmeticOverflow)?;
-                cur_downsample.1 = cur_downsample
-                    .1
-                    .checked_add(next_downsample.1)
-                    .ok_or(Error::ArithmeticOverflow)?;
-                *next_downsample = next_total_downsample;
-            }
-        }
-        for (chan, cur_downsample) in cur_downsamples.iter().enumerate() {
-            channel_info[0][chan].downsample = *cur_downsample;
-        }
         #[cfg(feature = "tracing")]
         {
+            let channel_info = &self.shared.channel_info;
             for (s, (current_info, stage)) in channel_info
                 .iter()
                 .zip(self.shared.stages.iter())

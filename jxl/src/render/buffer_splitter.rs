@@ -118,6 +118,69 @@ pub struct SaveStageBufferInfo {
     pub orientation: Orientation,
     pub byte_size: usize,
     pub after_extend: bool,
+    pub post_extend_downsample: (u8, u8),
+}
+
+/// Computes the canvas rectangle owned by `rect` (given in frame coordinates) after an `Extend`
+/// stage followed by optional downsampling `ds`, along with the unexpanded visible-frame canvas
+/// intervals `(raw_cx0, raw_cx1)` and `(raw_cy0, raw_cy1)`.
+pub(crate) fn extend_canvas_rect(
+    rect: Rect,
+    frame_size: (usize, usize),
+    full_image_size: (usize, usize),
+    frame_origin: (isize, isize),
+    ds: (u8, u8),
+) -> (Rect, (usize, usize), (usize, usize)) {
+    let rect = rect.clip(frame_size);
+    let (cw, ch) = full_image_size;
+    let vx0 = frame_origin.0.clamp(0, cw as isize) as usize;
+    let vx1 = (frame_origin.0 + frame_size.0 as isize).clamp(0, cw as isize) as usize;
+    let vy0 = frame_origin.1.clamp(0, ch as isize) as usize;
+    let vy1 = (frame_origin.1 + frame_size.1 as isize).clamp(0, ch as isize) as usize;
+    if rect.size.0 == 0 || rect.size.1 == 0 || vx0 >= vx1 || vy0 >= vy1 {
+        return (
+            Rect {
+                origin: (0, 0),
+                size: (0, 0),
+            },
+            (0, 0),
+            (0, 0),
+        );
+    }
+    let rx0 = rect.origin.0 as isize + frame_origin.0;
+    let rx1 = rect.end().0 as isize + frame_origin.0;
+    let ry0 = rect.origin.1 as isize + frame_origin.1;
+    let ry1 = rect.end().1 as isize + frame_origin.1;
+    let raw_cx0 = rx0.clamp(vx0 as isize, vx1 as isize) as usize;
+    let raw_cx1 = rx1.clamp(vx0 as isize, vx1 as isize) as usize;
+    let raw_cy0 = ry0.clamp(vy0 as isize, vy1 as isize) as usize;
+    let raw_cy1 = ry1.clamp(vy0 as isize, vy1 as isize) as usize;
+    if raw_cx0 >= raw_cx1 || raw_cy0 >= raw_cy1 {
+        return (
+            Rect {
+                origin: (0, 0),
+                size: (0, 0),
+            },
+            (0, 0),
+            (0, 0),
+        );
+    }
+    let avx0 = (vx0 >> ds.0) << ds.0;
+    let avx1 = (vx1.shrc(ds.0) << ds.0).min(cw);
+    let avy0 = (vy0 >> ds.1) << ds.1;
+    let avy1 = (vy1.shrc(ds.1) << ds.1).min(ch);
+    let cx0 = if raw_cx0 == vx0 { avx0 } else { raw_cx0 };
+    let cx1 = if raw_cx1 == vx1 { avx1 } else { raw_cx1 };
+    let cy0 = if raw_cy0 == vy0 { avy0 } else { raw_cy0 };
+    let cy1 = if raw_cy1 == vy1 { avy1 } else { raw_cy1 };
+    (
+        Rect {
+            origin: (cx0, cy0),
+            size: (cx1 - cx0, cy1 - cy0),
+        },
+        (raw_cx0, raw_cx1),
+        (raw_cy0, raw_cy1),
+    )
 }
 
 /// Data structure responsible for handing out access to portions of the output buffers.
@@ -174,33 +237,20 @@ impl<'a> BufferSplitter<'a> {
                 }
                 let mut channel_rect = rect.downsample(bi.downsample);
                 if !outside_current_frame {
-                    let frame_size = (
+                    let ds_frame_size = (
                         frame_size.0.shrc(bi.downsample.0),
                         frame_size.1.shrc(bi.downsample.1),
                     );
-                    channel_rect = channel_rect.clip(frame_size);
+                    channel_rect = channel_rect.clip(ds_frame_size);
                     if bi.after_extend {
-                        // clip this rect to its visible area in the full image (in full image coordinates).
-                        let origin = (
-                            rect.origin.0 as isize + frame_origin.0,
-                            rect.origin.1 as isize + frame_origin.1,
+                        let (canvas_rect, _, _) = extend_canvas_rect(
+                            rect,
+                            frame_size,
+                            full_image_size,
+                            frame_origin,
+                            bi.post_extend_downsample,
                         );
-                        let end = (
-                            origin.0 + rect.size.0 as isize,
-                            origin.1 + rect.size.1 as isize,
-                        );
-                        let origin = (origin.0.max(0) as usize, origin.1.max(0) as usize);
-                        let end = (
-                            end.0.min(full_image_size.0 as isize).max(0) as usize,
-                            end.1.min(full_image_size.1 as isize).max(0) as usize,
-                        );
-                        channel_rect = Rect {
-                            origin,
-                            size: (
-                                end.0.saturating_sub(origin.0),
-                                end.1.saturating_sub(origin.1),
-                            ),
-                        };
+                        channel_rect = canvas_rect.downsample(bi.downsample);
                     }
                 }
                 if channel_rect.size.0 == 0 || channel_rect.size.1 == 0 {
@@ -291,6 +341,7 @@ mod tests {
             orientation: Orientation::Identity,
             byte_size: 1,
             after_extend: false,
+            post_extend_downsample: (0, 0),
         })];
 
         let _local1 = splitter.get_local_buffers(
@@ -349,6 +400,7 @@ mod tests {
                             orientation,
                             byte_size,
                             after_extend: false,
+                            post_extend_downsample: (0, 0),
                         })
                     } else {
                         None

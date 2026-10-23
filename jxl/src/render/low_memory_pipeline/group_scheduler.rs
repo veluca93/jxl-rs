@@ -70,54 +70,83 @@ fn foreach_ready_rect(
     Ok(())
 }
 
+fn snap_down(val: usize, origin_offset: isize, align: usize) -> usize {
+    if align <= 1 {
+        return val;
+    }
+    let rem = (val as isize + origin_offset).rem_euclid(align as isize) as usize;
+    val.saturating_sub(rem)
+}
+
+fn snap_up(val: usize, limit: usize, origin_offset: isize, align: usize) -> usize {
+    if align <= 1 || val >= limit {
+        return val.min(limit);
+    }
+    let rem = (val as isize + origin_offset).rem_euclid(align as isize) as usize;
+    if rem == 0 {
+        val
+    } else {
+        (val + align - rem).min(limit)
+    }
+}
+
 fn boundary_points(
-    origin: usize,
-    end: usize,
-    is_first: bool,
-    is_last: bool,
-    border: usize,
+    (origin, end): (usize, usize),
+    (is_first, is_last): (bool, bool),
+    min_border: usize,
     input_size: usize,
+    origin_offset: isize,
+    align: usize,
 ) -> [usize; 4] {
-    let p0 = if is_first {
-        origin
-    } else {
-        origin.saturating_sub(border)
+    let band = |b: usize| -> (usize, usize) {
+        if min_border == 0 && (b as isize + origin_offset).rem_euclid(align as isize) == 0 {
+            (b, b)
+        } else {
+            let b_min = min_border.max(1);
+            (
+                snap_down(b.saturating_sub(b_min), origin_offset, align),
+                snap_up(b + b_min, input_size, origin_offset, align),
+            )
+        }
     };
-    let p1 = (origin + border).min(end);
-    let p2 = end.saturating_sub(border).max(p1);
-    let p3 = if is_last {
-        end
+    let (p0, p1) = if is_first {
+        (origin, origin)
     } else {
-        (end + border).min(input_size)
+        band(origin)
     };
+    let (p2, p3) = if is_last { (end, end) } else { band(end) };
+    debug_assert!(p0 <= p1 && p1 <= p2 && p2 <= p3);
     [p0, p1, p2, p3]
 }
 
+#[allow(clippy::too_many_arguments)]
 fn ready_image_area(
     group_rect: Rect,
     group_position: (usize, usize),
     group_count: (usize, usize),
     input_size: (usize, usize),
-    border_size: (usize, usize),
+    min_border_size: (usize, usize),
+    origin_offset: (isize, isize),
+    align: (usize, usize),
     xrange: Range<u8>,
     yrange: Range<u8>,
 ) -> Option<Rect> {
     let (gx, gy) = group_position;
     let xs = boundary_points(
-        group_rect.origin.0,
-        group_rect.end().0,
-        gx == 0,
-        gx + 1 == group_count.0,
-        border_size.0,
+        (group_rect.origin.0, group_rect.end().0),
+        (gx == 0, gx + 1 == group_count.0),
+        min_border_size.0,
         input_size.0,
+        origin_offset.0,
+        align.0,
     );
     let ys = boundary_points(
-        group_rect.origin.1,
-        group_rect.end().1,
-        gy == 0,
-        gy + 1 == group_count.1,
-        border_size.1,
+        (group_rect.origin.1, group_rect.end().1),
+        (gy == 0, gy + 1 == group_count.1),
+        min_border_size.1,
         input_size.1,
+        origin_offset.1,
+        align.1,
     );
 
     let x0 = xs[xrange.start as usize];
@@ -218,13 +247,35 @@ impl LowMemoryRenderPipeline {
         let mut data = self.per_thread_data.get();
         data.ensure_populated(self)?;
 
+        let (align_origin, align) = if self.post_extend_downsample != (0, 0) {
+            (
+                origin,
+                (
+                    1usize << self.post_extend_downsample.0,
+                    1usize << self.post_extend_downsample.1,
+                ),
+            )
+        } else if self.out_downsample != (0, 0) {
+            (
+                (0, 0),
+                (
+                    1usize << self.out_downsample.0,
+                    1usize << self.out_downsample.1,
+                ),
+            )
+        } else {
+            ((0, 0), (1, 1))
+        };
+
         foreach_ready_rect(ready_mask, |xrange, yrange| {
             let Some(image_area) = ready_image_area(
                 group_rect,
                 (gx, gy),
                 self.shared.group_count,
                 self.shared.input_size,
-                self.border_size,
+                self.min_border_size,
+                align_origin,
+                align,
                 xrange,
                 yrange,
             ) else {
@@ -314,6 +365,8 @@ mod tests {
             (2, 2),
             (520, 520),
             (18, 18),
+            (0, 0),
+            (1, 1),
             0..1,
             0..1,
         );
@@ -339,6 +392,8 @@ mod tests {
             (3, 2),
             (513, 321),
             (3, 3),
+            (0, 0),
+            (1, 1),
             1..3,
             0..2,
         );

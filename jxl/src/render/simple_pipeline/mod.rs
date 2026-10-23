@@ -52,7 +52,10 @@ impl SimpleRenderPipeline {
         for (i, stage) in self.shared.stages.iter().enumerate() {
             debug!("running stage {i}: {stage}");
             let mut output_buffers = clone_images(&current_buffers)?;
-            if stage.shift() != (0, 0) || stage.new_size(current_size) != current_size {
+            if stage.shift() != (0, 0)
+                || stage.downsample_shift() != (0, 0)
+                || stage.new_size(current_size) != current_size
+            {
                 // Replace buffers of different sizes.
                 current_size = stage.new_size(current_size);
                 for (c, info) in self.shared.channel_info[i + 1].iter().enumerate() {
@@ -106,6 +109,13 @@ impl SimpleRenderPipeline {
                         self.shared.chunk_size,
                         &mut output_buf,
                         state.as_deref_mut(),
+                    );
+                }
+                Stage::Downsample(d) => {
+                    d.run_simple(
+                        self.shared.chunk_size,
+                        &current_buffers[d.channel()],
+                        &mut output_buffers[d.channel()],
                     );
                 }
                 Stage::Extend(e) => {

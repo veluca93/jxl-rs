@@ -8,7 +8,7 @@ use std::sync::Arc;
 use rand::SeedableRng;
 
 use super::internal::Stage;
-use super::stages::ExtendToImageDimensionsStage;
+use super::stages::{DownsampleStage, ExtendToImageDimensionsStage};
 use super::{
     RenderPipeline, RenderPipelineBuilder, RenderPipelineInOutStage, RenderPipelineInPlaceStage,
 };
@@ -32,6 +32,14 @@ impl RenderPipelineTestableStage<()> for ExtendToImageDimensionsStage {
     type OutputT = f32;
     fn into_stage(self) -> Stage<Image<f64>> {
         Stage::Extend(self)
+    }
+}
+
+impl RenderPipelineTestableStage<()> for DownsampleStage {
+    type InputT = f32;
+    type OutputT = f32;
+    fn into_stage(self) -> Stage<Image<f64>> {
+        Stage::Downsample(self)
     }
 }
 
@@ -90,6 +98,7 @@ fn make_and_run_simple_pipeline_impl<InputT: ImageDataType, OutputT: ImageDataTy
     chunk_size: usize,
 ) -> Result<Vec<Image<OutputT>>> {
     let shift = stage.shift();
+    let dshift = stage.downsample_shift();
     let final_size = stage.new_size(image_size);
     const LOG_GROUP_SIZE: usize = 8;
     let all_channels = (0..input_images.len()).collect::<Vec<_>>();
@@ -136,7 +145,14 @@ fn make_and_run_simple_pipeline_impl<InputT: ImageDataType, OutputT: ImageDataTy
     let num_groups = image_size.0.shrc(LOG_GROUP_SIZE) * image_size.1.shrc(LOG_GROUP_SIZE);
 
     let mut outputs = (0..input_images.len())
-        .map(|_| Image::<OutputT>::new(final_size))
+        .map(|c| {
+            let size = if uses_channel[c] {
+                (final_size.0.shrc(dshift.0), final_size.1.shrc(dshift.1))
+            } else {
+                final_size
+            };
+            Image::<OutputT>::new(size)
+        })
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut buf_ptrs: Vec<_> = outputs

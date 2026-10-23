@@ -30,29 +30,32 @@ impl ExtendToImageDimensionsStage {
         }
         assert_eq!(output_size, self.image_size);
         let origin = self.frame_origin;
-        assert!(origin.0 <= output_size.0 as isize);
-        assert!(origin.1 <= output_size.1 as isize);
-        assert!(origin.0 + input_size.0 as isize >= 0);
-        assert!(origin.1 + input_size.1 as isize >= 0);
         debug!("input_size = {input_size:?} output_size = {output_size:?} origin = {origin:?}");
-        // Compute the input rectangle
-        let x0 = origin.0.max(0) as usize;
-        let y0 = origin.1.max(0) as usize;
-        let x1 = (origin.0 + input_size.0 as isize).min(output_size.0 as isize) as usize;
-        let y1 = (origin.1 + input_size.1 as isize).min(output_size.1 as isize) as usize;
+        // Compute the visible input rectangle in canvas coordinates.
+        let x0 = origin.0.clamp(0, output_size.0 as isize) as usize;
+        let y0 = origin.1.clamp(0, output_size.1 as isize) as usize;
+        let x1 = (origin.0 + input_size.0 as isize).clamp(0, output_size.0 as isize) as usize;
+        let y1 = (origin.1 + input_size.1 as isize).clamp(0, output_size.1 as isize) as usize;
+        let (x0, x1, y0, y1) = if x0 < x1 && y0 < y1 {
+            (x0, x1, y0, y1)
+        } else {
+            (0, 0, 0, 0)
+        };
         debug!("x0 = {x0} x1 = {x1} y0 = {y0} y1 = {y1}");
-        let in_x0 = (x0 as isize - origin.0) as usize;
-        let in_x1 = (x1 as isize - origin.0) as usize;
-        let in_y0 = (y0 as isize - origin.1) as usize;
-        let in_y1 = (y1 as isize - origin.1) as usize;
-        debug!("in_x0 = {in_x0} in_x1 = {in_x1} in_y0 = {in_y0} in_y1 = {in_y1}");
-        // First, copy the data in the middle.
-        for c in 0..numc {
-            for in_y in in_y0..in_y1 {
-                debug!("copy row: {in_y}");
-                let in_row = input_buffers[c].row(in_y);
-                let y = (in_y as isize + origin.1) as usize;
-                output_buffers[c].row_mut(y)[x0..x1].copy_from_slice(&in_row[in_x0..in_x1]);
+        if x0 < x1 && y0 < y1 {
+            let in_x0 = (x0 as isize - origin.0) as usize;
+            let in_x1 = (x1 as isize - origin.0) as usize;
+            let in_y0 = (y0 as isize - origin.1) as usize;
+            let in_y1 = (y1 as isize - origin.1) as usize;
+            debug!("in_x0 = {in_x0} in_x1 = {in_x1} in_y0 = {in_y0} in_y1 = {in_y1}");
+            // First, copy the data in the middle.
+            for c in 0..numc {
+                for in_y in in_y0..in_y1 {
+                    debug!("copy row: {in_y}");
+                    let in_row = input_buffers[c].row(in_y);
+                    let y = (in_y as isize + origin.1) as usize;
+                    output_buffers[c].row_mut(y)[x0..x1].copy_from_slice(&in_row[in_x0..in_x1]);
+                }
             }
         }
         // Fill in rows above and below the original data.

@@ -137,6 +137,10 @@ pub enum Error {
     PipelineChannelTypeMismatch(String, usize, DataTypeTag, DataTypeTag),
     #[error("Invalid stage {0} after extend stage")]
     PipelineInvalidStageAfterExtend(String),
+    #[error("Invalid stage {0} after downsample stage")]
+    PipelineInvalidStageAfterDownsample(String),
+    #[error("Extend stage requires full-resolution channel {0}, found downsample {1:?}")]
+    PipelineExtendRequiresFullResolution(usize, (u8, u8)),
     #[error("Trying to copy rects of different size, src: {0}x{1} dst {2}x{3}")]
     CopyOfDifferentSize(usize, usize, usize, usize),
     #[error("LF quantization factor is too small: {0}")]

@@ -83,10 +83,10 @@ impl LowMemoryRenderPipelinePerThread {
             .map(|stage_cfgs| stage_cfgs.iter().map(RowBufferConfig::allocate).collect())
             .collect::<Result<_>>()?;
         self.save_scratch = Some([
-            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, p.shared.chunk_size)?,
-            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, p.shared.chunk_size)?,
-            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, p.shared.chunk_size)?,
-            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, p.shared.chunk_size)?,
+            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, p.max_row_len)?,
+            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, p.max_row_len)?,
+            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, p.max_row_len)?,
+            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, p.max_row_len)?,
         ]);
         self.local_states = p
             .shared
@@ -116,8 +116,17 @@ pub struct LowMemoryRenderPipeline {
     // The amount of pixels that we need to read (for every channel) in non-edge groups to run all
     // stages correctly.
     input_border_pixels: Vec<(usize, usize)>,
-    // Size of the border, in image (i.e. non-downsampled) pixels.
+    // Minimum border distance needed around internal group boundaries.
+    min_border_size: (usize, usize),
+    // Size of the border copied in `InputBuffers`, in image (i.e. non-downsampled) pixels.
     border_size: (usize, usize),
+    max_row_len: usize,
+    out_downsample: (u8, u8),
+    pre_extend_downsample: (u8, u8),
+    post_extend_downsample: (u8, u8),
+    stage_input_downsample: Vec<(u8, u8)>,
+    stage_output_downsample: Vec<(u8, u8)>,
+    stage_after_downsample: Vec<bool>,
     // For every stage, the downsampling level of *any* channel that the stage uses at that point.
     // Note that this must be equal across all the used channels.
     downsampling_for_stage: Vec<(usize, usize)>,
@@ -130,6 +139,50 @@ impl RenderPipeline for LowMemoryRenderPipeline {
 
     fn new_from_shared(shared: RenderPipelineShared<Self::Buffer>) -> Result<Self> {
         let nc = shared.num_channels();
+        let mut chan_has_downsampled = vec![false; nc];
+        let mut out_downsample = (0u8, 0u8);
+        let mut pre_extend_downsample = (0u8, 0u8);
+        let mut post_extend_downsample = (0u8, 0u8);
+        let mut stage_input_downsample = Vec::with_capacity(shared.stages.len());
+        let mut stage_output_downsample = Vec::with_capacity(shared.stages.len());
+        let mut stage_after_downsample = Vec::with_capacity(shared.stages.len());
+
+        if shared.extend_stage_index.is_some() {
+            for (c, ci) in shared.channel_info[0].iter().enumerate() {
+                if shared.channel_is_used[c] {
+                    pre_extend_downsample.0 = pre_extend_downsample.0.max(ci.downsample.0);
+                    pre_extend_downsample.1 = pre_extend_downsample.1.max(ci.downsample.1);
+                }
+            }
+        }
+
+        for (i, stage) in shared.stages.iter().enumerate() {
+            let first_used = (0..nc).find(|&c| stage.uses_channel(c));
+            let in_ds = first_used.map_or((0, 0), |c| shared.channel_info[i][c].downsample);
+            let out_ds = first_used.map_or((0, 0), |c| shared.channel_info[i + 1][c].downsample);
+            let after_ds = matches!(stage, Stage::Downsample(_))
+                || (0..nc).any(|c| stage.uses_channel(c) && chan_has_downsampled[c]);
+            if let Stage::Downsample(d) = stage {
+                chan_has_downsampled[d.channel()] = true;
+            }
+            if shared.extend_stage_index.is_some_and(|e| i < e) {
+                pre_extend_downsample.0 = pre_extend_downsample.0.max(in_ds.0);
+                pre_extend_downsample.1 = pre_extend_downsample.1.max(in_ds.1);
+            }
+            if after_ds {
+                if shared.extend_stage_index.is_some_and(|e| i > e) {
+                    post_extend_downsample.0 = post_extend_downsample.0.max(out_ds.0);
+                    post_extend_downsample.1 = post_extend_downsample.1.max(out_ds.1);
+                } else {
+                    out_downsample.0 = out_downsample.0.max(out_ds.0);
+                    out_downsample.1 = out_downsample.1.max(out_ds.1);
+                }
+            }
+            stage_input_downsample.push(in_ds);
+            stage_output_downsample.push(out_ds);
+            stage_after_downsample.push(after_ds);
+        }
+
         let mut previous_inout: Vec<_> = (0..nc).map(|x| (0usize, x)).collect();
         let mut stage_input_buffer_index = vec![];
         let mut next_border_and_cur_downsample = vec![vec![]];
@@ -144,17 +197,36 @@ impl RenderPipeline for LowMemoryRenderPipeline {
         for (i, stage) in shared.stages.iter().enumerate() {
             stage_input_buffer_index.push(previous_inout.clone());
             next_border_and_cur_downsample.push(vec![]);
-            if let Stage::InOut(p) = stage {
-                for (chan, (ps, pc)) in previous_inout.iter_mut().enumerate() {
-                    if !p.uses_channel(chan) {
-                        continue;
+            match stage {
+                Stage::InOut(p) => {
+                    for (chan, (ps, pc)) in previous_inout.iter_mut().enumerate() {
+                        if !p.uses_channel(chan) {
+                            continue;
+                        }
+                        next_border_and_cur_downsample[*ps][*pc].0 = p.border().1;
+                        *ps = i + 1;
+                        *pc = next_border_and_cur_downsample[i + 1].len();
+                        next_border_and_cur_downsample[i + 1]
+                            .push((0, shared.channel_info[i + 1][chan].downsample));
                     }
-                    next_border_and_cur_downsample[*ps][*pc].0 = p.border().1;
+                }
+                Stage::Downsample(d) => {
+                    let chan = d.channel();
+                    let (ps, pc) = &mut previous_inout[chan];
                     *ps = i + 1;
                     *pc = next_border_and_cur_downsample[i + 1].len();
                     next_border_and_cur_downsample[i + 1]
                         .push((0, shared.channel_info[i + 1][chan].downsample));
                 }
+                Stage::Extend(_) if post_extend_downsample != (0, 0) => {
+                    for (chan, (ps, pc)) in previous_inout.iter_mut().enumerate() {
+                        *ps = i + 1;
+                        *pc = next_border_and_cur_downsample[i + 1].len();
+                        next_border_and_cur_downsample[i + 1]
+                            .push((0, shared.channel_info[i + 1][chan].downsample));
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -172,11 +244,17 @@ impl RenderPipeline for LowMemoryRenderPipeline {
             };
             for (c, ci) in ci.iter().enumerate() {
                 if s.uses_channel(c) {
+                    let after_extend = shared.extend_stage_index.is_some_and(|e| i > e);
                     let info = SaveStageBufferInfo {
                         downsample: ci.downsample,
                         orientation: s.orientation,
                         byte_size: s.data_format.bytes_per_sample() * s.output_channels(),
-                        after_extend: shared.extend_stage_index.is_some_and(|e| i > e),
+                        after_extend,
+                        post_extend_downsample: if after_extend {
+                            post_extend_downsample
+                        } else {
+                            (0, 0)
+                        },
                     };
                     while save_buffer_info.len() <= s.output_buffer_index {
                         save_buffer_info.push(None);
@@ -258,24 +336,92 @@ impl RenderPipeline for LowMemoryRenderPipeline {
             })
             .collect();
 
-        let mut border_size = (0, 0);
+        let mut raw_border_size = (0, 0);
         for c in 0..nc {
-            border_size.0 = border_size
+            raw_border_size.0 = raw_border_size
                 .0
                 .max(border_pixels[c].0 << shared.channel_info[0][c].downsample.0);
-            border_size.1 = border_size
+            raw_border_size.1 = raw_border_size
                 .1
                 .max(border_pixels[c].1 << shared.channel_info[0][c].downsample.1);
         }
         for s in 0..shared.stages.len() {
             let shift = shared.stages[s].shift();
-            border_size.0 = border_size
+            raw_border_size.0 = raw_border_size
                 .0
                 .max(border_pixels_per_stage[s].0.shrc(shift.0) << downsampling_for_stage[s].0);
-            border_size.1 = border_size
+            raw_border_size.1 = raw_border_size
                 .1
                 .max(border_pixels_per_stage[s].1.shrc(shift.1) << downsampling_for_stage[s].1);
         }
+
+        let (align_origin, align) = if post_extend_downsample != (0, 0) {
+            let Stage::Extend(e) = &shared.stages[shared.extend_stage_index.unwrap()] else {
+                unreachable!();
+            };
+            (
+                e.frame_origin,
+                (
+                    1usize << post_extend_downsample.0,
+                    1usize << post_extend_downsample.1,
+                ),
+            )
+        } else if out_downsample != (0, 0) {
+            (
+                (0, 0),
+                (1usize << out_downsample.0, 1usize << out_downsample.1),
+            )
+        } else {
+            ((0, 0), (1, 1))
+        };
+
+        let min_border_size = raw_border_size;
+        let max_in_ds = shared.channel_info[0]
+            .iter()
+            .enumerate()
+            .filter(|&(c, _)| shared.channel_is_used[c])
+            .fold((0u8, 0u8), |acc, (_, ci)| {
+                (acc.0.max(ci.downsample.0), acc.1.max(ci.downsample.1))
+            });
+        let border_size = if align == (1, 1) && post_extend_downsample == (0, 0) {
+            raw_border_size
+        } else {
+            let gsz = 1usize << shared.log_group_size;
+            let calc = |raw_b: usize, al: usize, off: isize, pre_ds: u8, in_ds: u8| {
+                let need_snap = raw_b > 0
+                    || (al > 1 && (!gsz.is_multiple_of(al) || off.rem_euclid(al as isize) != 0));
+                let pre_pad = if post_extend_downsample != (0, 0) {
+                    (1usize << pre_ds) - 1
+                } else {
+                    0
+                };
+                if need_snap || pre_pad > 0 {
+                    (raw_b.max(usize::from(need_snap)) + al - 1 + pre_pad)
+                        .next_multiple_of(1usize << in_ds)
+                } else {
+                    0
+                }
+            };
+            (
+                calc(
+                    raw_border_size.0,
+                    align.0,
+                    align_origin.0,
+                    pre_extend_downsample.0,
+                    max_in_ds.0,
+                ),
+                calc(
+                    raw_border_size.1,
+                    align.1,
+                    align_origin.1,
+                    pre_extend_downsample.1,
+                    max_in_ds.1,
+                ),
+            )
+        };
+
+        let group_dim = (1usize << shared.log_group_size).max(shared.chunk_size);
+        let max_row_len = group_dim + 2 * border_size.0 + 2 * align.0;
 
         let mut row_buffer_configs = vec![];
         let mut initial_configs = vec![];
@@ -288,7 +434,7 @@ impl RenderPipeline for LowMemoryRenderPipeline {
                 next_y_border: next_y_border.max((max_ahead + next_y_border).div_ceil(2)),
                 y_shift: 0,
                 x_shift: 0,
-                row_len: (shared.chunk_size + 2 * border_size.0).shrc(dsx),
+                row_len: max_row_len.shrc(dsx),
             });
         }
         row_buffer_configs.push(initial_configs);
@@ -297,17 +443,27 @@ impl RenderPipeline for LowMemoryRenderPipeline {
             let mut stage_configs = vec![];
             let y_shift = stage.shift().1 as usize;
             let max_ahead = border_pixels_per_stage[i].1.shrc(stage.shift().1) << y_shift;
+            let out_ty = stage.output_type().unwrap_or(DataTypeTag::F32);
             for &(next_y_border, (dsx, _)) in next_border_and_cur_downsample[i + 1].iter() {
                 let next_y_border = next_y_border as usize;
                 stage_configs.push(RowBufferConfig {
-                    data_type: stage.output_type().unwrap(),
+                    data_type: out_ty,
                     next_y_border: next_y_border.max((max_ahead + next_y_border).div_ceil(2)),
                     y_shift,
                     x_shift: stage.shift().0 as usize,
-                    row_len: (shared.chunk_size + 2 * border_size.0).shrc(dsx),
+                    row_len: max_row_len.shrc(dsx),
                 });
             }
             row_buffer_configs.push(stage_configs);
+        }
+
+        // Ensure inputs to Downsample stages retain enough rows for a full vertical box.
+        for (s, stage) in shared.stages.iter().enumerate() {
+            if let Stage::Downsample(d) = stage {
+                let (o, i) = stage_input_buffer_index[s][0];
+                row_buffer_configs[o][i].y_shift =
+                    row_buffer_configs[o][i].y_shift.max(d.shift() as usize);
+            }
         }
 
         // Unify buffer configurations for each InOut stage across all its channels to a fixed point.
@@ -359,7 +515,15 @@ impl RenderPipeline for LowMemoryRenderPipeline {
             padding_was_rendered: false,
             save_buffer_info,
             stage_output_border_pixels: border_pixels_per_stage,
+            min_border_size,
             border_size,
+            max_row_len,
+            out_downsample,
+            pre_extend_downsample,
+            post_extend_downsample,
+            stage_input_downsample,
+            stage_output_downsample,
+            stage_after_downsample,
             input_border_pixels: border_pixels,
             shared,
             downsampling_for_stage,
@@ -434,52 +598,38 @@ impl RenderPipeline for LowMemoryRenderPipeline {
         let Stage::Extend(e) = &self.shared.stages[e] else {
             unreachable!("extend stage is not an extend stage");
         };
-        let frame_end = (
-            e.frame_origin.0 + self.shared.input_size.0 as isize,
-            e.frame_origin.1 + self.shared.input_size.1 as isize,
-        );
-        // Split the full image area in 4 strips: left and right of the frame, and above and below.
-        // We divide each part further in strips of width self.shared.chunk_size.
+        let (cw, ch) = e.image_size;
+        let ds = self.post_extend_downsample;
+        let step_x = self.shared.chunk_size.next_multiple_of(1usize << ds.0);
+        let vx0 = e.frame_origin.0.clamp(0, cw as isize) as usize;
+        let vx1 =
+            (e.frame_origin.0 + self.shared.input_size.0 as isize).clamp(0, cw as isize) as usize;
+        let vy0 = e.frame_origin.1.clamp(0, ch as isize) as usize;
+        let vy1 =
+            (e.frame_origin.1 + self.shared.input_size.1 as isize).clamp(0, ch as isize) as usize;
+
+        // Split the canvas area outside the aligned visible frame into up to 4 strips
+        // (above, below, left, right), further subdivided horizontally by `step_x`.
         let mut strips = vec![];
-        // Above (including left and right)
-        if e.frame_origin.1 > 0 {
-            let xend = e.image_size.0;
-            let yend = (e.frame_origin.1 as usize).min(e.image_size.1);
-            for x in (0..xend).step_by(self.shared.chunk_size) {
-                let xe = (x + self.shared.chunk_size).min(xend);
-                strips.push((x..xe, 0..yend));
+        let mut push_band = |xstart: usize, xend: usize, ystart: usize, yend: usize| {
+            if xstart >= xend || ystart >= yend {
+                return;
             }
-        }
-        // Below
-        if frame_end.1 < e.image_size.1 as isize {
-            let ystart = frame_end.1.max(0) as usize;
-            let yend = e.image_size.1;
-            let xend = e.image_size.0;
-            for x in (0..xend).step_by(self.shared.chunk_size) {
-                let xe = (x + self.shared.chunk_size).min(xend);
-                strips.push((x..xe, ystart..yend));
+            for x in (xstart..xend).step_by(step_x) {
+                strips.push((x..(x + step_x).min(xend), ystart..yend));
             }
-        }
-        // Left
-        if e.frame_origin.0 > 0 {
-            let ystart = e.frame_origin.1.max(0) as usize;
-            let yend = (frame_end.1 as usize).min(e.image_size.1);
-            let xend = (e.frame_origin.0 as usize).min(e.image_size.0);
-            for x in (0..xend).step_by(self.shared.chunk_size) {
-                let xe = (x + self.shared.chunk_size).min(xend);
-                strips.push((x..xe, ystart..yend));
-            }
-        }
-        // Right
-        if frame_end.0 < e.image_size.0 as isize {
-            let xstart = frame_end.0.max(0) as usize;
-            let xend = e.image_size.0;
-            let ystart = e.frame_origin.1.max(0) as usize;
-            let yend = (frame_end.1 as usize).min(e.image_size.1);
-            for x in (xstart..xend).step_by(self.shared.chunk_size) {
-                let xe = (x + self.shared.chunk_size).min(xend);
-                strips.push((x..xe, ystart..yend));
-            }
+        };
+        if vx0 >= vx1 || vy0 >= vy1 {
+            push_band(0, cw, 0, ch);
+        } else {
+            let avx0 = (vx0 >> ds.0) << ds.0;
+            let avx1 = (vx1.shrc(ds.0) << ds.0).min(cw);
+            let avy0 = (vy0 >> ds.1) << ds.1;
+            let avy1 = (vy1.shrc(ds.1) << ds.1).min(ch);
+            push_band(0, cw, 0, avy0);
+            push_band(0, cw, avy1, ch);
+            push_band(0, avx0, avy0, avy1);
+            push_band(avx1, cw, avy0, avy1);
         }
         let full_image_size = e.image_size;
 
