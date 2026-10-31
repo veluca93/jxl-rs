@@ -27,32 +27,39 @@ impl SaveStage {
         self.check_buffer_size(size, Some(buf))?;
 
         let output_channels = self.output_channels();
+        let bps = self.data_format.bytes_per_sample();
+        let pixel_bytes = output_channels * bps;
+        let mut px_buf = [0u8; 16];
 
-        for (c, (&chan, &ch_ty)) in self
-            .channels
-            .iter()
-            .zip(self.channel_types.iter())
-            .enumerate()
-        {
-            for y in 0..size.1 {
-                let src_row = data[chan].row(y);
+        // Pre-fill opaque alpha if needed (when RGBA requested but image has no alpha)
+        if self.fill_opaque_alpha {
+            let alpha_offset = self.channels.len() * bps;
+            let opaque_bytes = self.data_format.opaque_alpha_bytes();
+            px_buf[alpha_offset..alpha_offset + bps].copy_from_slice(&opaque_bytes);
+        }
 
-                for (x, &px) in src_row.iter().enumerate() {
-                    let (dx, dy) = self.orientation.display_pixel((x, y), size);
-                    let dx = dx * output_channels + c;
-                    let bps = self.data_format.bytes_per_sample();
+        for y in 0..size.1 {
+            for x in 0..size.0 {
+                let (dx, dy) = self.orientation.display_pixel((x, y), size);
 
-                    macro_rules! write_pixel {
-                        ($px: expr, $endianness: expr) => {
+                for (c, (&chan, &ch_ty)) in self
+                    .channels
+                    .iter()
+                    .zip(self.channel_types.iter())
+                    .enumerate()
+                {
+                    let px = data[chan].row(y)[x];
+
+                    macro_rules! write_sample {
+                        ($px: expr, $endianness: expr) => {{
                             let px = $px;
-                            let px_bytes = if $endianness == Endianness::LittleEndian {
+                            let sample_bytes = if $endianness == Endianness::LittleEndian {
                                 px.to_le_bytes()
                             } else {
                                 px.to_be_bytes()
                             };
-                            buf.row_mut(dy)[dx * bps..][..px_bytes.len()]
-                                .copy_from_slice(&px_bytes);
-                        };
+                            px_buf[c * bps..(c + 1) * bps].copy_from_slice(&sample_bytes);
+                        }};
                     }
 
                     match (ch_ty, self.data_format) {
@@ -60,7 +67,7 @@ impl SaveStage {
                             let max = ((1u32 << bit_depth) - 1) as f32;
                             let dither = DITHER_TABLE[(y + chan * 13) % 32][(x + chan * 23) % 32];
                             let v = ((px as f32) * max + dither).clamp(0.0, max).round() as u8;
-                            write_pixel!(v, Endianness::LittleEndian);
+                            write_sample!(v, Endianness::LittleEndian);
                         }
                         (
                             SaveChannelType::I16 { bit_depth: in_bd }
@@ -70,7 +77,7 @@ impl SaveStage {
                             let max = (1i32 << out_bd) - 1;
                             let scale = max / ((1i32 << in_bd) - 1);
                             let v = ((px as i32) * scale).clamp(0, max) as u8;
-                            write_pixel!(v, Endianness::LittleEndian);
+                            write_sample!(v, Endianness::LittleEndian);
                         }
                         (
                             SaveChannelType::F32,
@@ -81,39 +88,27 @@ impl SaveStage {
                         ) => {
                             let max = ((1u32 << bit_depth) - 1) as f32;
                             let v = ((px as f32).clamp(0.0, 1.0) * max).round() as u16;
-                            write_pixel!(v, endianness);
+                            write_sample!(v, endianness);
                         }
                         (SaveChannelType::F32, JxlDataFormat::F32 { endianness }) => {
-                            write_pixel!(px as f32, endianness);
+                            write_sample!(px as f32, endianness);
                         }
                         (SaveChannelType::F32, JxlDataFormat::F16 { endianness }) => {
-                            write_pixel!(f16::from_f64(px), endianness);
+                            write_sample!(f16::from_f64(px), endianness);
                         }
                         (
                             SaveChannelType::I16 { bit_depth: in_bd },
                             JxlDataFormat::F16 { endianness },
                         ) => {
                             let scale = 1.0 / ((1u64 << in_bd) - 1) as f32;
-                            write_pixel!(f16::from_f32((px as f32) * scale), endianness);
+                            write_sample!(f16::from_f32((px as f32) * scale), endianness);
                         }
                         _ => unreachable!(),
                     }
                 }
-            }
-        }
 
-        // Fill opaque alpha if needed (when RGBA requested but image has no alpha)
-        if self.fill_opaque_alpha {
-            let alpha_channel = self.channels.len(); // alpha is after the source channels
-            let opaque_bytes = self.data_format.opaque_alpha_bytes();
-            for y in 0..size.1 {
-                for x in 0..size.0 {
-                    let (dx, dy) = self.orientation.display_pixel((x, y), size);
-                    let dx = dx * output_channels + alpha_channel;
-                    let bps = self.data_format.bytes_per_sample();
-                    buf.row_mut(dy)[dx * bps..][..opaque_bytes.len()]
-                        .copy_from_slice(&opaque_bytes);
-                }
+                buf.row_mut(dy)[dx * pixel_bytes..][..pixel_bytes]
+                    .copy_from_slice(&px_buf[..pixel_bytes]);
             }
         }
 
