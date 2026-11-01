@@ -312,6 +312,7 @@ mod test {
         Ok(())
     }
 
+    #[target_feature(from_args)]
     fn xyb_process_scalar_equivalent<D: SimdDescriptor>(d: D) {
         let opsin = OpsinInverseMatrix::default(&Empty {});
         arbtest::arbtest(|u| {

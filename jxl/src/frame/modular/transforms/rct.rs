@@ -10,6 +10,7 @@ use crate::frame::modular::{ModularChannel, ModularStorage};
 use crate::image::ImageRectMut;
 use crate::util::tracing_wrappers::*;
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn rct_impl<D: SimdDescriptor, const OP: u32>(
     _: D,
@@ -46,10 +47,12 @@ fn rct_impl<D: SimdDescriptor, const OP: u32>(
 }
 
 #[inline(always)]
+#[target_feature(from_args)]
 fn avg_i16<D: SimdDescriptor>(d: D, a: D::I16Vec, b: D::I16Vec) -> D::I16Vec {
     shr!(a, 1) + shr!(b, 1) + (a & b & D::I16Vec::splat(d, 1))
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn rct_impl_i16<D: SimdDescriptor, const OP: u32>(
     d: D,
@@ -85,7 +88,7 @@ fn rct_impl_i16<D: SimdDescriptor, const OP: u32>(
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn rct_row_impl<D: SimdDescriptor, const OP: u32>(d: D, rgb: [&mut [i32]; 3]) -> [&mut [i32]; 3] {
     const { assert!(OP <= 6) };
 
@@ -110,7 +113,7 @@ fn rct_row_impl<D: SimdDescriptor, const OP: u32>(d: D, rgb: [&mut [i32]; 3]) ->
     ]
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn rct_row_impl_i16<D: SimdDescriptor, const OP: u32>(
     d: D,
     rgb: [&mut [i16]; 3],
@@ -138,7 +141,7 @@ fn rct_row_impl_i16<D: SimdDescriptor, const OP: u32>(
     ]
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn rct_loop_impl<D: SimdDescriptor, const OP: u32>(
     d: D,
     r: &mut ImageRectMut<'_, i32>,
@@ -165,7 +168,7 @@ fn rct_loop_impl<D: SimdDescriptor, const OP: u32>(
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn rct_loop_impl_i16<D: SimdDescriptor, const OP: u32>(
     d: D,
     r: &mut ImageRectMut<'_, i16>,

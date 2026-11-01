@@ -12,7 +12,6 @@ use test_log::test;
 
 use super::*;
 
-#[inline(always)]
 fn alpha(u: usize) -> f64 {
     if u == 0 {
         FRAC_1_SQRT_2
@@ -289,6 +288,8 @@ test_idct1d_eq_slow_n!(test_idct1d_256_eq_slow, 256, do_idct_256, 5e-5);
 
 macro_rules! test_idct2d_eq_slow {
     ($test_name:ident, $rows:expr, $cols:expr, $fast_idct:ident, $tol:expr) => {
+        #[target_feature(from_args)]
+#[inline(always)]
         fn $test_name<D: SimdDescriptor>(d: D) {
             const N: usize = $rows;
             const M: usize = $cols;
@@ -340,6 +341,8 @@ test_idct2d_eq_slow!(test_idct2d_256_256_eq_slow, 256, 256, idct2d_256_256, 5e-3
 
 macro_rules! test_reinterpreting_dct_eq_slow {
     ($test_name:ident, $fun: ident, $rows:expr, $cols:expr, $tol:expr) => {
+        #[target_feature(from_args)]
+#[inline(always)]
         fn $test_name<D: SimdDescriptor>(d: D) {
             const N: usize = $rows;
             const M: usize = $cols;

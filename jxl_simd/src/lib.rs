@@ -3,6 +3,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+#![feature(struct_target_features)]
+#![allow(incomplete_features)]
 #![allow(clippy::too_many_arguments)]
 
 use std::fmt::Debug;
@@ -66,17 +68,11 @@ pub trait SimdDescriptor: Sized + Copy + Debug + Send + Sync {
     fn new() -> Option<Self>;
 
     /// Returns a vector descriptor suitable for operations on vectors of length 256 (Self if the
-    /// current vector type is suitable). Note that it might still be beneficial to use `Self` for
-    /// .call(), as the compiler could make use of features from more advanced instruction sets.
+    /// current vector type is suitable).
     fn maybe_downgrade_256bit(self) -> Self::Descriptor256;
 
     /// Same as Self::maybe_downgrade_256bit, but for 128 bits.
     fn maybe_downgrade_128bit(self) -> Self::Descriptor128;
-
-    /// Calls the given closure within a target feature context.
-    /// This enables establishing an unbroken chain of inline functions from the feature-annotated
-    /// gateway up to the closure, allowing SIMD intrinsics to be used safely.
-    fn call<R>(self, f: impl FnOnce(Self) -> R) -> R;
 }
 
 pub trait F32SimdVec:
@@ -309,6 +305,8 @@ pub trait I32SimdVec:
 
     /// Stores two vectors interleaved: [a0, b0, a1, b1, a2, b2, ...].
     /// Requires `dest.len() >= 2 * Self::LEN` or it will panic.
+    #[target_feature(from_args)]
+    #[inline(always)]
     fn store_interleaved_2(a: Self, b: Self, dest: &mut [i32]) {
         let a_f32 = a.bitcast_to_f32();
         let b_f32 = b.bitcast_to_f32();
@@ -400,6 +398,7 @@ pub trait I16SimdVec:
 
     /// Stores two vectors interleaved: [a0, b0, a1, b1, a2, b2, ...].
     /// Requires `dest.len() >= 2 * Self::LEN` or it will panic.
+    #[target_feature(from_args)]
     #[inline(always)]
     fn store_interleaved_2(a: Self, b: Self, dest: &mut [i16]) {
         assert!(dest.len() >= 2 * Self::LEN);
@@ -416,6 +415,7 @@ pub trait I16SimdVec:
 
     /// Stores three vectors interleaved: [a0, b0, c0, a1, b1, c1, ...].
     /// Requires `dest.len() >= 3 * Self::LEN` or it will panic.
+    #[target_feature(from_args)]
     #[inline(always)]
     fn store_interleaved_3(a: Self, b: Self, c: Self, dest: &mut [i16]) {
         assert!(dest.len() >= 3 * Self::LEN);
@@ -433,6 +433,7 @@ pub trait I16SimdVec:
 
     /// Stores four vectors interleaved: [a0, b0, c0, d0, a1, b1, c1, d1, ...].
     /// Requires `dest.len() >= 4 * Self::LEN` or it will panic.
+    #[target_feature(from_args)]
     #[inline(always)]
     fn store_interleaved_4(a: Self, b: Self, c: Self, d: Self, dest: &mut [i16]) {
         assert!(dest.len() >= 4 * Self::LEN);
@@ -628,11 +629,13 @@ macro_rules! impl_f32_array_interface {
             ret
         }
 
+        #[target_feature(from_args)]
         #[inline(always)]
         fn load_array(d: Self::Descriptor, mem: &Self::UnderlyingArray) -> Self {
             Self::load(d, mem)
         }
 
+        #[target_feature(from_args)]
         #[inline(always)]
         fn store_array(&self, mem: &mut Self::UnderlyingArray) {
             self.store(mem);
@@ -660,11 +663,13 @@ macro_rules! impl_i16_array_interface {
             ret
         }
 
+        #[target_feature(from_args)]
         #[inline(always)]
         fn load_array(d: Self::Descriptor, mem: &Self::UnderlyingArray) -> Self {
             Self::load(d, mem)
         }
 
+        #[target_feature(from_args)]
         #[inline(always)]
         fn store_array(&self, mem: &mut Self::UnderlyingArray) {
             self.store(mem);
@@ -722,7 +727,9 @@ mod test {
 
     macro_rules! test_instruction {
         ($name:ident, |$a:ident: $a_dist:ident| $block:expr) => {
+            #[target_feature(from_args)]
             fn $name<D: SimdDescriptor>(d: D) {
+                #[target_feature(from_args)]
                 fn compute<D: SimdDescriptor>(d: D, a: &[f32]) -> Vec<f32> {
                     let closure = |$a: D::F32Vec| $block;
                     let mut res = vec![0f32; a.len()];
@@ -745,7 +752,9 @@ mod test {
             test_all_instruction_sets!($name);
         };
         ($name:ident, |$a:ident: $a_dist:ident, $b:ident: $b_dist:ident| $block:expr) => {
+            #[target_feature(from_args)]
             fn $name<D: SimdDescriptor>(d: D) {
+                #[target_feature(from_args)]
                 fn compute<D: SimdDescriptor>(d: D, a: &[f32], b: &[f32]) -> Vec<f32> {
                     let closure = |$a: D::F32Vec, $b: D::F32Vec| $block;
                     let mut res = vec![0f32; a.len()];
@@ -770,7 +779,9 @@ mod test {
             test_all_instruction_sets!($name);
         };
         ($name:ident, |$a:ident: $a_dist:ident, $b:ident: $b_dist:ident, $c:ident: $c_dist:ident| $block:expr) => {
+            #[target_feature(from_args)]
             fn $name<D: SimdDescriptor>(d: D) {
+                #[target_feature(from_args)]
                 fn compute<D: SimdDescriptor>(d: D, a: &[f32], b: &[f32], c: &[f32]) -> Vec<f32> {
                     let closure = |$a: D::F32Vec, $b: D::F32Vec, $c: D::F32Vec| $block;
                     let mut res = vec![0f32; a.len()];
@@ -837,6 +848,7 @@ mod test {
     });
 
     // Validate that neg_mul_add computes c - a * b correctly
+    #[target_feature(from_args)]
     fn test_neg_mul_add_correctness<D: SimdDescriptor>(d: D) {
         let a_vals = [
             2.0, 3.0, 4.0, 5.0, 1.5, 2.5, 3.5, 4.5, 2.5, 3.5, 4.5, 5.5, 1.0, 2.0, 3.0, 4.0,
@@ -878,38 +890,7 @@ mod test {
     test_instruction!(max, |a: Floats, b: Floats| { a.max(b) });
     test_instruction!(min, |a: Floats, b: Floats| { a.min(b) });
 
-    // Test that the call method works, compiles, and can capture arguments
-    fn test_call<D: SimdDescriptor>(d: D) {
-        // Test basic call functionality
-        let result = d.call(|_d| 42);
-        assert_eq!(result, 42);
-
-        // Test with capturing variables
-        let multiplier = 3.0f32;
-        let addend = 5.0f32;
-
-        // Test SIMD operations inside call with captures
-        let input = vec![1.0f32; D::F32Vec::LEN * 4];
-        let mut output = vec![0.0f32; D::F32Vec::LEN * 4];
-
-        d.call(|d| {
-            let mult_vec = D::F32Vec::splat(d, multiplier);
-            let add_vec = D::F32Vec::splat(d, addend);
-
-            for idx in (0..input.len()).step_by(D::F32Vec::LEN) {
-                let vec = D::F32Vec::load(d, &input[idx..]);
-                let result = vec * mult_vec + add_vec;
-                result.store(&mut output[idx..]);
-            }
-        });
-
-        // Verify results
-        for &val in &output {
-            assert_eq!(val, 1.0 * multiplier + addend);
-        }
-    }
-    test_all_instruction_sets!(test_call);
-
+    #[target_feature(from_args)]
     fn test_neg<D: SimdDescriptor>(d: D) {
         // Test negation operation with enough elements for any SIMD size
         let len = D::F32Vec::LEN * 2; // Ensure we have at least 2 full vectors
@@ -937,6 +918,7 @@ mod test {
     }
     test_all_instruction_sets!(test_neg);
 
+    #[target_feature(from_args)]
     fn test_transpose_square<D: SimdDescriptor>(d: D) {
         // Test square matrix transpose
         let len = D::F32Vec::LEN;
@@ -964,6 +946,7 @@ mod test {
     }
     test_all_instruction_sets!(test_transpose_square);
 
+    #[target_feature(from_args)]
     fn test_store_interleaved_2<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let a: Vec<f32> = (0..len).map(|i| i as f32).collect();
@@ -998,6 +981,7 @@ mod test {
     }
     test_all_instruction_sets!(test_store_interleaved_2);
 
+    #[target_feature(from_args)]
     fn test_store_interleaved_3<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let a: Vec<f32> = (0..len).map(|i| i as f32).collect();
@@ -1043,6 +1027,7 @@ mod test {
     }
     test_all_instruction_sets!(test_store_interleaved_3);
 
+    #[target_feature(from_args)]
     fn test_store_interleaved_4<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let a: Vec<f32> = (0..len).map(|i| i as f32).collect();
@@ -1099,6 +1084,7 @@ mod test {
     }
     test_all_instruction_sets!(test_store_interleaved_4);
 
+    #[target_feature(from_args)]
     fn test_store_interleaved_8<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let arr_a: Vec<f32> = (0..len).map(|i| i as f32).collect();
@@ -1142,6 +1128,7 @@ mod test {
     }
     test_all_instruction_sets!(test_store_interleaved_8);
 
+    #[target_feature(from_args)]
     fn test_load_deinterleaved_2<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         // Create interleaved input: [a0, b0, a1, b1, ...]
@@ -1175,6 +1162,7 @@ mod test {
     }
     test_all_instruction_sets!(test_load_deinterleaved_2);
 
+    #[target_feature(from_args)]
     fn test_load_deinterleaved_3<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         // Create interleaved input: [a0, b0, c0, a1, b1, c1, ...]
@@ -1217,6 +1205,7 @@ mod test {
     }
     test_all_instruction_sets!(test_load_deinterleaved_3);
 
+    #[target_feature(from_args)]
     fn test_load_deinterleaved_4<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         // Create interleaved input: [a0, b0, c0, d0, a1, b1, c1, d1, ...]
@@ -1269,6 +1258,7 @@ mod test {
     test_all_instruction_sets!(test_load_deinterleaved_4);
 
     // Roundtrip tests: verify store_interleaved + load_deinterleaved returns original data
+    #[target_feature(from_args)]
     fn test_interleave_roundtrip_2<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let a: Vec<f32> = (0..len).map(|i| (i * 7 + 3) as f32).collect();
@@ -1292,6 +1282,7 @@ mod test {
     }
     test_all_instruction_sets!(test_interleave_roundtrip_2);
 
+    #[target_feature(from_args)]
     fn test_interleave_roundtrip_3<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let a: Vec<f32> = (0..len).map(|i| (i * 7 + 3) as f32).collect();
@@ -1320,6 +1311,7 @@ mod test {
     }
     test_all_instruction_sets!(test_interleave_roundtrip_3);
 
+    #[target_feature(from_args)]
     fn test_interleave_roundtrip_4<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let a: Vec<f32> = (0..len).map(|i| (i * 7 + 3) as f32).collect();
@@ -1353,6 +1345,7 @@ mod test {
     }
     test_all_instruction_sets!(test_interleave_roundtrip_4);
 
+    #[target_feature(from_args)]
     fn test_prepare_table_bf16_8<D: SimdDescriptor>(d: D) {
         // Create an 8-entry lookup table with known values
         // Use integer values that are exactly representable in BF16
@@ -1394,6 +1387,7 @@ mod test {
 
     /// Test that I32 multiplication operates on all elements, not just alternating lanes.
     /// This catches the bug where _mm_mul_epi32 was used instead of _mm_mullo_epi32.
+    #[target_feature(from_args)]
     fn test_i32_mul_all_elements<D: SimdDescriptor>(d: D) {
         let len = D::I32Vec::LEN;
 
@@ -1424,6 +1418,7 @@ mod test {
     }
     test_all_instruction_sets!(test_i32_mul_all_elements);
 
+    #[target_feature(from_args)]
     fn test_store_u16<D: SimdDescriptor>(d: D) {
         let data = [
             0xbabau32 as i32,
@@ -1460,6 +1455,7 @@ mod test {
     }
     test_all_instruction_sets!(test_store_u16);
 
+    #[target_feature(from_args)]
     fn test_store_interleaved_2_u8<D: SimdDescriptor>(d: D) {
         let len = D::U8Vec::LEN;
         let a: Vec<u8> = (0..len).map(|i| i as u8).collect();
@@ -1477,6 +1473,7 @@ mod test {
     }
     test_all_instruction_sets!(test_store_interleaved_2_u8);
 
+    #[target_feature(from_args)]
     fn test_store_interleaved_3_u8<D: SimdDescriptor>(d: D) {
         let len = D::U8Vec::LEN;
         let a: Vec<u8> = (0..len).map(|i| i as u8).collect();
@@ -1497,6 +1494,7 @@ mod test {
     }
     test_all_instruction_sets!(test_store_interleaved_3_u8);
 
+    #[target_feature(from_args)]
     fn test_store_interleaved_4_u8<D: SimdDescriptor>(d: D) {
         let len = D::U8Vec::LEN;
         let a: Vec<u8> = (0..len).map(|i| i as u8).collect();
@@ -1520,6 +1518,7 @@ mod test {
     }
     test_all_instruction_sets!(test_store_interleaved_4_u8);
 
+    #[target_feature(from_args)]
     fn test_store_interleaved_2_u16<D: SimdDescriptor>(d: D) {
         let len = D::U16Vec::LEN;
         let a: Vec<u16> = (0..len).map(|i| i as u16).collect();
@@ -1537,6 +1536,7 @@ mod test {
     }
     test_all_instruction_sets!(test_store_interleaved_2_u16);
 
+    #[target_feature(from_args)]
     fn test_store_interleaved_3_u16<D: SimdDescriptor>(d: D) {
         let len = D::U16Vec::LEN;
         let a: Vec<u16> = (0..len).map(|i| i as u16).collect();
@@ -1557,6 +1557,7 @@ mod test {
     }
     test_all_instruction_sets!(test_store_interleaved_3_u16);
 
+    #[target_feature(from_args)]
     fn test_store_interleaved_4_u16<D: SimdDescriptor>(d: D) {
         let len = D::U16Vec::LEN;
         let a: Vec<u16> = (0..len).map(|i| i as u16).collect();
@@ -1580,6 +1581,7 @@ mod test {
     }
     test_all_instruction_sets!(test_store_interleaved_4_u16);
 
+    #[target_feature(from_args)]
     fn test_store_u8<D: SimdDescriptor>(d: D) {
         let data = [
             0xba_i32,
@@ -1616,6 +1618,7 @@ mod test {
     }
     test_all_instruction_sets!(test_store_u8);
 
+    #[target_feature(from_args)]
     fn test_f16_load_roundtrip<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let values: &[f32] = &[0.0, 1.0, -1.0, 0.5, 100.0, -42.5, 65504.0, 0.001];
@@ -1649,6 +1652,7 @@ mod test {
     }
     test_all_instruction_sets!(test_f16_load_roundtrip);
 
+    #[target_feature(from_args)]
     fn test_f16_load_special_values<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let cases: &[(u16, f32)] = &[
@@ -1687,6 +1691,7 @@ mod test {
     }
     test_all_instruction_sets!(test_f16_load_special_values);
 
+    #[target_feature(from_args)]
     fn test_f16_store_roundtrip<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let known: &[(f32, u16)] = &[(1.0, 0x3C00), (-2.0, 0xC000), (0.5, 0x3800), (0.0, 0x0000)];
@@ -1709,6 +1714,7 @@ mod test {
     }
     test_all_instruction_sets!(test_f16_store_roundtrip);
 
+    #[target_feature(from_args)]
     fn test_f16_store_special_values<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         // (f32 input, expected f16 bits)
@@ -1741,6 +1747,7 @@ mod test {
     }
     test_all_instruction_sets!(test_f16_store_special_values);
 
+    #[target_feature(from_args)]
     fn test_f16_underflow_to_zero<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let mut input = vec![0.0f32; len];
@@ -1780,6 +1787,7 @@ mod test {
         }
     }
 
+    #[target_feature(from_args)]
     fn test_f16_store_scalar_equivalent<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         arbtest::arbtest(|u| {
@@ -1797,6 +1805,7 @@ mod test {
     }
     test_all_instruction_sets!(test_f16_store_scalar_equivalent);
 
+    #[target_feature(from_args)]
     fn test_f16_load_scalar_equivalent<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         arbtest::arbtest(|u| {
@@ -1820,6 +1829,7 @@ mod test {
     }
     test_all_instruction_sets!(test_f16_load_scalar_equivalent);
 
+    #[target_feature(from_args)]
     fn test_i32_store_interleaved_2<D: SimdDescriptor>(d: D) {
         let len = D::I32Vec::LEN;
         let mut a_input = vec![0i32; len];
@@ -1839,6 +1849,7 @@ mod test {
     }
     test_all_instruction_sets!(test_i32_store_interleaved_2);
 
+    #[target_feature(from_args)]
     fn test_as_i32_scalar_equivalent<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         arbtest::arbtest(|u| {
@@ -1863,6 +1874,7 @@ mod test {
     }
     test_all_instruction_sets!(test_as_i32_scalar_equivalent);
 
+    #[target_feature(from_args)]
     fn test_i32_load_from_i16<D: SimdDescriptor>(d: D) {
         let len = D::I32Vec::LEN;
         arbtest::arbtest(|u| {
@@ -1884,6 +1896,7 @@ mod test {
     }
     test_all_instruction_sets!(test_i32_load_from_i16);
 
+    #[target_feature(from_args)]
     fn test_i32_load_from_u16<D: SimdDescriptor>(d: D) {
         let len = D::I32Vec::LEN;
         arbtest::arbtest(|u| {
@@ -1905,6 +1918,7 @@ mod test {
     }
     test_all_instruction_sets!(test_i32_load_from_u16);
 
+    #[target_feature(from_args)]
     fn test_u64_operations<D: SimdDescriptor>(d: D) {
         let len = D::U64Vec::LEN;
         arbtest::arbtest(|u| {
@@ -1971,6 +1985,7 @@ mod test {
     }
     test_all_instruction_sets!(test_u64_operations);
 
+    #[target_feature(from_args)]
     fn test_i16_operations<D: SimdDescriptor>(d: D) {
         let len = D::I16Vec::LEN;
         arbtest::arbtest(|u| {
@@ -2129,6 +2144,7 @@ mod test {
     }
     test_all_instruction_sets!(test_i16_operations);
 
+    #[target_feature(from_args)]
     fn test_i16_transpose_square<D: SimdDescriptor>(d: D) {
         let len = D::I16Vec::LEN;
         // Test with stride = 1
@@ -2178,6 +2194,7 @@ mod test {
     }
     test_all_instruction_sets!(test_i16_transpose_square);
 
+    #[target_feature(from_args)]
     fn test_i16_store_interleaved_2<D: SimdDescriptor>(d: D) {
         let len = D::I16Vec::LEN;
         let a: Vec<i16> = (0..len).map(|i| i as i16).collect();
@@ -2195,6 +2212,7 @@ mod test {
     }
     test_all_instruction_sets!(test_i16_store_interleaved_2);
 
+    #[target_feature(from_args)]
     fn test_i16_store_interleaved_3<D: SimdDescriptor>(d: D) {
         let len = D::I16Vec::LEN;
         let a: Vec<i16> = (0..len).map(|i| i as i16).collect();
@@ -2215,6 +2233,7 @@ mod test {
     }
     test_all_instruction_sets!(test_i16_store_interleaved_3);
 
+    #[target_feature(from_args)]
     fn test_i16_store_interleaved_4<D: SimdDescriptor>(d: D) {
         let len = D::I16Vec::LEN;
         let a: Vec<i16> = (0..len).map(|i| i as i16).collect();

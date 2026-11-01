@@ -16,6 +16,7 @@ pub fn eval_rational_poly<const P: usize, const Q: usize>(x: f32, p: [f32; P], q
     yp / yq
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 pub fn eval_rational_poly_simd<D: SimdDescriptor, const P: usize, const Q: usize>(
     d: D,

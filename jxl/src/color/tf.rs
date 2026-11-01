@@ -10,6 +10,7 @@ use crate::util::{eval_rational_poly, eval_rational_poly_simd};
 /// Converts the linear samples with the sRGB transfer curve (SIMD version).
 // Max error ~5e-7
 #[inline(always)]
+#[target_feature(from_args)]
 pub fn linear_to_srgb_simd<D: SimdDescriptor>(d: D, samples: &mut [f32]) {
     #[allow(clippy::excessive_precision)]
     const P: [f32; 5] = [
@@ -75,6 +76,7 @@ pub fn srgb_to_linear(samples: &mut [f32]) {
 }
 
 #[inline(always)]
+#[target_feature(from_args)]
 pub fn srgb_to_linear_simd<D: SimdDescriptor>(d: D, samples: &mut [f32]) {
     #[allow(clippy::excessive_precision)]
     const P: [f32; 5] = [
@@ -112,6 +114,7 @@ pub fn srgb_to_linear_simd<D: SimdDescriptor>(d: D, samples: &mut [f32]) {
 // Rational polynomial approximation of 1.099 * x^0.45 - 0.099 on sqrt(x).
 // Max error ~3e-7
 #[inline(always)]
+#[target_feature(from_args)]
 pub fn linear_to_bt709_simd<D: SimdDescriptor>(d: D, samples: &mut [f32]) {
     // Coefficients for rational polynomial P(y)/Q(y) where y = sqrt(x)
     // Approximates 1.099 * y^0.9 - 0.099 on [sqrt(0.018), 1]
@@ -162,6 +165,7 @@ pub fn bt709_to_linear(samples: &mut [f32]) {
 
 /// Converts samples in BT.709 transfer curve to linear (SIMD version).
 #[inline(always)]
+#[target_feature(from_args)]
 pub fn bt709_to_linear_simd<D: SimdDescriptor>(d: D, xsize: usize, samples: &mut [f32]) {
     let threshold = D::F32Vec::splat(d, 0.081);
     let inv_4_5 = D::F32Vec::splat(d, 1.0 / 4.5);
@@ -285,6 +289,7 @@ pub fn linear_to_pq(intensity_target: f32, samples: &mut [f32]) {
 
 /// Converts linear sample to PQ signal using PQ inverse EOTF (SIMD version).
 #[inline(always)]
+#[target_feature(from_args)]
 pub fn linear_to_pq_simd<D: SimdDescriptor>(
     d: D,
     intensity_target: f32,
@@ -331,6 +336,7 @@ pub fn pq_to_linear(intensity_target: f32, samples: &mut [f32]) {
 
 /// Converts PQ signal to linear sample using PQ EOTF (SIMD version).
 #[inline(always)]
+#[target_feature(from_args)]
 pub fn pq_to_linear_simd<D: SimdDescriptor>(
     d: D,
     intensity_target: f32,

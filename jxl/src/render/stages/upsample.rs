@@ -101,6 +101,7 @@ impl UpsampleState {
 }
 
 // Shared min/max computation - generic helper function called from within dispatched functions
+#[target_feature(from_args)]
 #[inline(always)]
 fn compute_minmax<D: jxl_simd::SimdDescriptor>(
     d: D,

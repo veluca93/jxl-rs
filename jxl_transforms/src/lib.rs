@@ -3,6 +3,9 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+#![feature(struct_target_features)]
+#![allow(incomplete_features)]
+
 mod idct2d;
 mod reinterpreting_dct2d;
 pub mod transform;

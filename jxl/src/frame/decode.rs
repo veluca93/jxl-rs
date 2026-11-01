@@ -152,7 +152,7 @@ fn upsample_lf_group(
     Ok(())
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn render_noise_subregion_channel_simd_impl<D: SimdDescriptor>(
     d: D,
     rng: &mut Xorshift128Plus,

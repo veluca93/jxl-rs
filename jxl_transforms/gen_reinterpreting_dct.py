@@ -69,7 +69,7 @@ def addsub_reverse(variables, op):
     ret = [0] * (n // 2)
     for i in range(n // 2):
         ret[i] = next()
-        print(
+    print(
             "let v%d = v%d %s v%d;" % (ret[i], variables[i], op, variables[n - i - 1])
         )
     return ret
@@ -85,7 +85,7 @@ def b(variables):
     )
     for i in range(1, n - 1):
         ret[i] = next()
-        print("let v%d = v%d + v%d;" % (ret[i], variables[i], variables[i + 1]))
+    print("let v%d = v%d + v%d;" % (ret[i], variables[i], variables[i + 1]))
     ret[n - 1] = variables[n - 1]
     return ret
 
@@ -94,9 +94,9 @@ def multiply(variables):
     n = len(variables)
     ret = [x for x in variables]
     for i in range(n):
-        print("let mul = D::F32Vec::splat(d, %.16f);" % wc_multiplier(i, 2 * n))
+    print("let mul = D::F32Vec::splat(d, %.16f);" % wc_multiplier(i, 2 * n))
         ret[i] = next()
-        print("let v%d = v%d * mul;" % (ret[i], variables[i]))
+    print("let v%d = v%d * mul;" % (ret[i], variables[i]))
     return ret
 
 
@@ -104,10 +104,10 @@ def call_reinterpreting_dct(variables):
     n = len(variables)
     print("(")
     for i in variables:
-        print("v%d," % i)
+    print("v%d," % i)
     print(") = reinterpreting_dct_%d(d," % n)
     for i in variables:
-        print("v%d," % i)
+    print("v%d," % i)
     print(");")
 
 
@@ -116,9 +116,9 @@ def dct(variables):
     ret = [0] * len(variables)
     if n == 2:
         ret[0] = next()
-        print("let v%d = v%d + v%d;" % (ret[0], variables[0], variables[1]))
+    print("let v%d = v%d + v%d;" % (ret[0], variables[0], variables[1]))
         ret[1] = next()
-        print("let v%d = v%d - v%d;" % (ret[1], variables[0], variables[1]))
+    print("let v%d = v%d - v%d;" % (ret[1], variables[0], variables[1]))
     else:
         first_half = addsub_reverse(variables, "+")
         first_half = dct(first_half)
@@ -134,6 +134,7 @@ def dct(variables):
 
 print("#[allow(clippy::too_many_arguments)]")
 print("#[allow(clippy::excessive_precision)]")
+print("#[target_feature(from_args)]")
 print("#[inline(always)]")
 print("pub(super) fn reinterpreting_dct_%d<D: SimdDescriptor>(d: D," % n)
 for v in variables:
@@ -156,6 +157,7 @@ print("}")
 
 
 print()
+print("#[target_feature(from_args)]")
 print("#[inline(always)]")
 print(
     "pub(super) fn do_reinterpreting_dct_%d<D: SimdDescriptor>(d: D, data: &mut [<D::F32Vec as F32SimdVec>::UnderlyingArray], stride: usize) {"
@@ -176,6 +178,7 @@ print("}")
 if n > 2:
     # DCT on one row of KxK blocks, where K is the vector length.
     print()
+    print("#[target_feature(from_args)]")
     print("#[inline(always)]")
     print(
         "pub(super) fn do_reinterpreting_dct_%d_rowblock<D: SimdDescriptor>(d: D, data: &mut [<D::F32Vec as F32SimdVec>::UnderlyingArray]) {"
@@ -187,7 +190,7 @@ if n > 2:
     print("let row_stride = %d / D::F32Vec::LEN;" % n)
 
     for i in range(n):
-        print(
+    print(
             "let mut v%d = D::F32Vec::load_array(d, &data[row_stride*(%d %% D::F32Vec::LEN) + (%d / D::F32Vec::LEN)]);"
             % (i, i, i)
         )
@@ -195,7 +198,7 @@ if n > 2:
     call_reinterpreting_dct(list(range(n)))
 
     for i in range(n):
-        print(
+    print(
             "v%d.store_array(&mut data[row_stride*(%d %% D::F32Vec::LEN) + (%d / D::F32Vec::LEN)]);"
             % (i, i, i)
         )
@@ -204,6 +207,7 @@ if n > 2:
 
     # n-DCT + partial transpose of a n x (n/2) matrix
     print()
+    print("#[target_feature(from_args)]")
     print("#[inline(always)]")
     print(
         "pub(super) fn do_reinterpreting_dct_%d_trh<D: SimdDescriptor>(d: D, data: &mut [<D::F32Vec as F32SimdVec>::UnderlyingArray]) {"
@@ -215,13 +219,13 @@ if n > 2:
     print("const { assert!(%dusize.is_multiple_of(D::F32Vec::LEN)) };" % (n // 2))
 
     for i in range(n):
-        print("let mut v%d = D::F32Vec::load_array(d, &data[row_stride*%d]);" % (i, i))
+    print("let mut v%d = D::F32Vec::load_array(d, &data[row_stride*%d]);" % (i, i))
 
     call_reinterpreting_dct(list(range(n)))
 
     indices = inverse_even_odd(list(range(n)))
 
     for i in range(n):
-        print("v%d.store_array(&mut data[row_stride*%d]);" % (indices[i], i))
+    print("v%d.store_array(&mut data[row_stride*%d]);" % (indices[i], i))
 
     print("}")

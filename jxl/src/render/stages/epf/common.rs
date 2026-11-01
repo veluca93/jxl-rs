@@ -40,6 +40,7 @@ pub(super) fn prepare_sad_mul_storage(x: usize, y: usize, sm: f32, bsm: f32) -> 
     sad_mul_storage
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 pub(super) fn get_sigma<D: SimdDescriptor>(d: D, x: usize, row_sigma: SigmaRow<'_>) -> D::F32Vec {
     match row_sigma {
@@ -48,6 +49,7 @@ pub(super) fn get_sigma<D: SimdDescriptor>(d: D, x: usize, row_sigma: SigmaRow<'
     }
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn get_sigma_from_row<D: SimdDescriptor>(d: D, x: usize, row_sigma: &[f32]) -> D::F32Vec {
     const { assert!(BLOCK_DIM == 8) }

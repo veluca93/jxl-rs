@@ -39,11 +39,6 @@ impl SimdDescriptor for ScalarDescriptor {
     fn new() -> Option<Self> {
         Some(Self)
     }
-
-    fn call<R>(self, f: impl FnOnce(Self) -> R) -> R {
-        // No special features needed for scalar implementation
-        f(self)
-    }
 }
 
 impl F32SimdVec for f32 {

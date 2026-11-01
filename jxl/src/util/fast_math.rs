@@ -60,6 +60,7 @@ pub fn fast_erff(x: f32) -> f32 {
     result.copysign(x)
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 pub fn fast_erff_simd<D: SimdDescriptor>(d: D, x: D::F32Vec) -> D::F32Vec {
     let absx = x.abs();
@@ -94,6 +95,7 @@ pub fn fast_pow2f(x: f32) -> f32 {
     num / den
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 pub fn fast_pow2f_simd<D: SimdDescriptor>(d: D, x: D::F32Vec) -> D::F32Vec {
     let x_floor = x.floor();
@@ -136,6 +138,7 @@ pub fn fast_log2f(x: f32) -> f32 {
     eval_rational_poly(x, LOG2F_P, LOG2F_Q) + exp_val
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 pub fn fast_log2f_simd<D: SimdDescriptor>(d: D, x: D::F32Vec) -> D::F32Vec {
     let x_bits = x.bitcast_to_i32();
@@ -154,6 +157,7 @@ pub fn fast_powf(base: f32, exp: f32) -> f32 {
     fast_pow2f(fast_log2f(base) * exp)
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 pub fn fast_powf_simd<D: SimdDescriptor>(d: D, base: D::F32Vec, exp: D::F32Vec) -> D::F32Vec {
     fast_pow2f_simd(d, fast_log2f_simd(d, base) * exp)
@@ -188,6 +192,7 @@ pub fn fast_jinc_windowed_sq(r2: f32) -> f32 {
     fast_jinc_windowed_sq_simd(ScalarDescriptor::new().unwrap(), r2)
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 pub fn fast_jinc_windowed_sq_simd<D: SimdDescriptor>(d: D, r2: D::F32Vec) -> D::F32Vec {
     let poly = eval_rational_poly_simd(d, r2, JINC_WINDOWED_SQ_P, JINC_WINDOWED_SQ_Q);
@@ -324,6 +329,7 @@ mod test {
         }
     }
 
+    #[target_feature(from_args)]
     fn fast_jinc_windowed_sq_simd_arb<D: SimdDescriptor>(d: D) {
         let lanes = D::F32Vec::LEN;
         let mut input = vec![0.0f32; lanes];

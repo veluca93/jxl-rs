@@ -32,7 +32,7 @@ impl std::fmt::Display for ConvolveNoiseStage {
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn convolve_noise_simd_impl<D: SimdDescriptor>(
     d: D,
     input: &[&[u16]],
@@ -165,7 +165,7 @@ impl RenderPipelineInOutStage for ConvolveNoiseStage {
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn add_noise_simd_impl<D: SimdDescriptor>(
     d: D,
     row_c: &mut [&mut [f32]],

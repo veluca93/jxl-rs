@@ -32,6 +32,7 @@ fn compute_jinc_subkernel(delta_x: f32, delta_y: f32) -> [f32; 25] {
     w
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn compute_row_kernel<D: SimdDescriptor>(
     d: D,
@@ -127,6 +128,7 @@ impl SmoothUpsampleScratch {
     }
 }
 
+#[target_feature(from_args)]
 fn make_float<D: SimdDescriptor>(d: D, inp: &[i32], out: &mut [f32]) {
     for (i, o) in inp
         .chunks_exact(D::I32Vec::LEN)
@@ -136,6 +138,7 @@ fn make_float<D: SimdDescriptor>(d: D, inp: &[i32], out: &mut [f32]) {
     }
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn store_interleaved_f32<D: SimdDescriptor, const FX: usize>(
     out: &[D::F32Vec; FX],
@@ -152,7 +155,7 @@ fn store_interleaved_f32<D: SimdDescriptor, const FX: usize>(
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn process_row<D: SimdDescriptor, const FX: usize>(
     d: D,
     weights: &[[f32; 25]],
@@ -182,7 +185,7 @@ fn process_row<D: SimdDescriptor, const FX: usize>(
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn process_row_large<D: SimdDescriptor>(
     d: D,
     kernel_storage: &[f32],
@@ -219,6 +222,7 @@ fn process_row_large<D: SimdDescriptor>(
     }
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn dither_round_and_store<D: SimdDescriptor>(
     d: D,
@@ -258,7 +262,7 @@ fn dither_round_and_store<D: SimdDescriptor>(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[inline(always)]
+#[target_feature(from_args)]
 fn smooth_upsample_simd_impl<D: SimdDescriptor>(
     d: D,
     input: &TiledChannelView<'_>,
@@ -485,6 +489,7 @@ mod tests {
         }
     }
 
+    #[target_feature(from_args)]
     fn test_compute_row_kernel_simd_equivalent<D: SimdDescriptor>(d: D) {
         let lanes = D::F32Vec::LEN;
         for fx in [8, 15, 16, 32, 64] {
@@ -521,6 +526,7 @@ mod tests {
 
     jxl_simd::test_all_instruction_sets!(test_compute_row_kernel_simd_equivalent);
 
+    #[target_feature(from_args)]
     fn test_process_row_large_constant<D: SimdDescriptor>(d: D) {
         let lanes = D::F32Vec::LEN;
         for fx in [16, 32, 64] {

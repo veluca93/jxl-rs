@@ -3,10 +3,10 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+use crate::*;
 use jxl_simd::{F32SimdVec, SimdDescriptor};
 
-use crate::*;
-
+#[target_feature(from_args)]
 #[inline(always)]
 fn idct2d_2_2_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     assert_eq!(data.len(), 4, "Data length mismatch");
@@ -30,6 +30,7 @@ fn idct2d_2_2_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     }
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn idct2d_4_4_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     assert_eq!(data.len(), 16, "Data length mismatch");
@@ -53,6 +54,7 @@ fn idct2d_4_4_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     }
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn idct2d_4_8_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     assert_eq!(data.len(), 32, "Data length mismatch");
@@ -75,6 +77,7 @@ fn idct2d_4_8_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     }
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn idct2d_8_4_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     assert_eq!(data.len(), 32, "Data length mismatch");
@@ -107,6 +110,7 @@ fn idct2d_8_4_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     }
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn idct2d_8_8_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     assert_eq!(data.len(), 64, "Data length mismatch");
@@ -130,7 +134,7 @@ fn idct2d_8_8_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn idct2d_8_16_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     assert_eq!(data.len(), 128, "Data length mismatch");
     const { assert!(8usize.is_multiple_of(D::F32Vec::LEN)) };
@@ -152,7 +156,7 @@ fn idct2d_8_16_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn idct2d_8_32_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     assert_eq!(data.len(), 256, "Data length mismatch");
     const { assert!(8usize.is_multiple_of(D::F32Vec::LEN)) };
@@ -174,7 +178,7 @@ fn idct2d_8_32_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn idct2d_16_8_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     assert_eq!(data.len(), 128, "Data length mismatch");
     const { assert!(16usize.is_multiple_of(D::F32Vec::LEN)) };
@@ -206,7 +210,7 @@ fn idct2d_16_8_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn idct2d_16_16_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     assert_eq!(data.len(), 256, "Data length mismatch");
     const { assert!(16usize.is_multiple_of(D::F32Vec::LEN)) };
@@ -229,7 +233,7 @@ fn idct2d_16_16_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn idct2d_16_32_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     assert_eq!(data.len(), 512, "Data length mismatch");
     const { assert!(16usize.is_multiple_of(D::F32Vec::LEN)) };
@@ -251,7 +255,7 @@ fn idct2d_16_32_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn idct2d_32_8_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     assert_eq!(data.len(), 256, "Data length mismatch");
     const { assert!(32usize.is_multiple_of(D::F32Vec::LEN)) };
@@ -283,7 +287,7 @@ fn idct2d_32_8_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn idct2d_32_16_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     assert_eq!(data.len(), 512, "Data length mismatch");
     const { assert!(32usize.is_multiple_of(D::F32Vec::LEN)) };
@@ -315,7 +319,7 @@ fn idct2d_32_16_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn idct2d_32_32_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     assert_eq!(data.len(), 1024, "Data length mismatch");
     const { assert!(32usize.is_multiple_of(D::F32Vec::LEN)) };
@@ -338,88 +342,88 @@ fn idct2d_32_32_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn idct2d_2_2<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     let d = jxl_simd::ScalarDescriptor::new().unwrap();
     idct2d_2_2_impl(d, data)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn idct2d_4_4<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     let d = d.maybe_downgrade_128bit();
     idct2d_4_4_impl(d, data)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn idct2d_4_8<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     let d = d.maybe_downgrade_128bit();
     idct2d_4_8_impl(d, data)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn idct2d_8_4<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     let d = d.maybe_downgrade_128bit();
     idct2d_8_4_impl(d, data)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn idct2d_8_8<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     let d = d.maybe_downgrade_256bit();
     idct2d_8_8_impl(d, data)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn idct2d_8_16<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     let d = d.maybe_downgrade_256bit();
     idct2d_8_16_impl(d, data)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn idct2d_8_32<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     let d = d.maybe_downgrade_256bit();
     idct2d_8_32_impl(d, data)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn idct2d_16_8<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     let d = d.maybe_downgrade_256bit();
     idct2d_16_8_impl(d, data)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn idct2d_16_16<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     idct2d_16_16_impl(d, data)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn idct2d_16_32<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     idct2d_16_32_impl(d, data)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn idct2d_32_8<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     let d = d.maybe_downgrade_256bit();
     idct2d_32_8_impl(d, data)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn idct2d_32_16<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     idct2d_32_16_impl(d, data)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn idct2d_32_32<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     idct2d_32_32_impl(d, data)

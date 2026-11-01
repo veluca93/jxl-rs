@@ -7,12 +7,12 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::erasing_op)]
 #![allow(clippy::identity_op)]
-use jxl_simd::{F32SimdVec, SimdDescriptor};
-
 use crate::*;
+use jxl_simd::{F32SimdVec, SimdDescriptor};
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::excessive_precision)]
+#[target_feature(from_args)]
 #[inline(always)]
 pub(super) fn idct_8<D: SimdDescriptor>(
     d: D,
@@ -77,6 +77,7 @@ pub(super) fn idct_8<D: SimdDescriptor>(
     (v32, v34, v36, v38, v39, v37, v35, v33)
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 pub(super) fn do_idct_8<D: SimdDescriptor>(
     d: D,
@@ -103,6 +104,7 @@ pub(super) fn do_idct_8<D: SimdDescriptor>(
     v7.store_array(&mut data[7 * stride]);
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 pub(super) fn do_idct_8_rowblock<D: SimdDescriptor>(
     d: D,
@@ -154,6 +156,7 @@ pub(super) fn do_idct_8_rowblock<D: SimdDescriptor>(
     v7.store_array(&mut data[row_stride * (7 % D::F32Vec::LEN) + (7 / D::F32Vec::LEN)]);
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 pub(super) fn do_idct_8_trh<D: SimdDescriptor>(
     d: D,

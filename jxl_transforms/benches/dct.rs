@@ -3,6 +3,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+#![feature(struct_target_features)]
+#![allow(incomplete_features)]
 #![allow(clippy::identity_op)]
 
 use criterion::measurement::Measurement;
@@ -12,6 +14,7 @@ use jxl_transforms::*;
 
 const MAX_COEFF_AREA: usize = 256 * 256;
 
+#[target_feature(from_args)]
 fn bench_idct2d<D: SimdDescriptor>(d: D, c: &mut BenchmarkGroup<'_, impl Measurement>, name: &str) {
     let mut data = vec![1.0; MAX_COEFF_AREA];
 
@@ -20,10 +23,7 @@ fn bench_idct2d<D: SimdDescriptor>(d: D, c: &mut BenchmarkGroup<'_, impl Measure
             let id = BenchmarkId::new(name, format_args!("{}", $name));
             c.bench_function(id, |b| {
                 b.iter(|| {
-                    d.call(
-                        #[inline(always)]
-                        |d| $fun(d, &mut data[..$sz]),
-                    );
+                    $fun(d, &mut data[..$sz]);
                 })
             });
         };
@@ -53,6 +53,7 @@ fn bench_idct2d<D: SimdDescriptor>(d: D, c: &mut BenchmarkGroup<'_, impl Measure
     run!(idct2d_256_256, "256x256", 256 * 256);
 }
 
+#[target_feature(from_args)]
 fn bench_reinterpreting_dct<D: SimdDescriptor>(
     d: D,
     c: &mut BenchmarkGroup<'_, impl Measurement>,
@@ -67,10 +68,7 @@ fn bench_reinterpreting_dct<D: SimdDescriptor>(
 
             c.bench_function(id, |b| {
                 b.iter(|| {
-                    d.call(
-                        #[inline(always)]
-                        |d| $fun(d, &mut data[..$sz], &mut output),
-                    )
+                    $fun(d, &mut data[..$sz], &mut output);
                 })
             });
         };

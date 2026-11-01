@@ -3,10 +3,10 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+use crate::*;
 use jxl_simd::{F32SimdVec, SimdDescriptor};
 
-use crate::*;
-
+#[target_feature(from_args)]
 #[inline(always)]
 fn reinterpreting_dct2d_1_2_impl<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     assert_eq!(data.len(), 2, "Data length mismatch");
@@ -24,6 +24,7 @@ fn reinterpreting_dct2d_1_2_impl<D: SimdDescriptor>(d: D, data: &mut [f32], outp
     }
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn reinterpreting_dct2d_2_1_impl<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     assert_eq!(data.len(), 2, "Data length mismatch");
@@ -41,6 +42,7 @@ fn reinterpreting_dct2d_2_1_impl<D: SimdDescriptor>(d: D, data: &mut [f32], outp
     }
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn reinterpreting_dct2d_1_4_impl<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     assert_eq!(data.len(), 4, "Data length mismatch");
@@ -58,6 +60,7 @@ fn reinterpreting_dct2d_1_4_impl<D: SimdDescriptor>(d: D, data: &mut [f32], outp
     }
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn reinterpreting_dct2d_4_1_impl<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     assert_eq!(data.len(), 4, "Data length mismatch");
@@ -75,6 +78,7 @@ fn reinterpreting_dct2d_4_1_impl<D: SimdDescriptor>(d: D, data: &mut [f32], outp
     }
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn reinterpreting_dct2d_2_2_impl<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     assert_eq!(data.len(), 4, "Data length mismatch");
@@ -106,6 +110,7 @@ fn reinterpreting_dct2d_2_2_impl<D: SimdDescriptor>(d: D, data: &mut [f32], outp
     }
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn reinterpreting_dct2d_2_4_impl<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     assert_eq!(data.len(), 8, "Data length mismatch");
@@ -136,6 +141,7 @@ fn reinterpreting_dct2d_2_4_impl<D: SimdDescriptor>(d: D, data: &mut [f32], outp
     }
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn reinterpreting_dct2d_4_2_impl<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     assert_eq!(data.len(), 8, "Data length mismatch");
@@ -181,6 +187,7 @@ fn reinterpreting_dct2d_4_2_impl<D: SimdDescriptor>(d: D, data: &mut [f32], outp
     }
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn reinterpreting_dct2d_4_4_impl<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     assert_eq!(data.len(), 16, "Data length mismatch");
@@ -212,6 +219,7 @@ fn reinterpreting_dct2d_4_4_impl<D: SimdDescriptor>(d: D, data: &mut [f32], outp
     }
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn reinterpreting_dct2d_4_8_impl<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     assert_eq!(data.len(), 32, "Data length mismatch");
@@ -242,6 +250,7 @@ fn reinterpreting_dct2d_4_8_impl<D: SimdDescriptor>(d: D, data: &mut [f32], outp
     }
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn reinterpreting_dct2d_8_4_impl<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     assert_eq!(data.len(), 32, "Data length mismatch");
@@ -287,6 +296,7 @@ fn reinterpreting_dct2d_8_4_impl<D: SimdDescriptor>(d: D, data: &mut [f32], outp
     }
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn reinterpreting_dct2d_8_8_impl<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     assert_eq!(data.len(), 64, "Data length mismatch");
@@ -318,7 +328,7 @@ fn reinterpreting_dct2d_8_8_impl<D: SimdDescriptor>(d: D, data: &mut [f32], outp
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn reinterpreting_dct2d_8_16_impl<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     assert_eq!(data.len(), 128, "Data length mismatch");
     assert!(output.len() > 911);
@@ -348,7 +358,7 @@ fn reinterpreting_dct2d_8_16_impl<D: SimdDescriptor>(d: D, data: &mut [f32], out
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn reinterpreting_dct2d_16_8_impl<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     assert_eq!(data.len(), 128, "Data length mismatch");
     assert!(output.len() > 911);
@@ -393,7 +403,7 @@ fn reinterpreting_dct2d_16_8_impl<D: SimdDescriptor>(d: D, data: &mut [f32], out
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn reinterpreting_dct2d_16_16_impl<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     assert_eq!(data.len(), 256, "Data length mismatch");
     assert!(output.len() > 1935);
@@ -424,7 +434,7 @@ fn reinterpreting_dct2d_16_16_impl<D: SimdDescriptor>(d: D, data: &mut [f32], ou
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn reinterpreting_dct2d_16_32_impl<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     assert_eq!(data.len(), 512, "Data length mismatch");
     assert!(output.len() > 3871);
@@ -454,7 +464,7 @@ fn reinterpreting_dct2d_16_32_impl<D: SimdDescriptor>(d: D, data: &mut [f32], ou
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn reinterpreting_dct2d_32_16_impl<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     assert_eq!(data.len(), 512, "Data length mismatch");
     assert!(output.len() > 3871);
@@ -499,7 +509,7 @@ fn reinterpreting_dct2d_32_16_impl<D: SimdDescriptor>(d: D, data: &mut [f32], ou
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn reinterpreting_dct2d_32_32_impl<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     assert_eq!(data.len(), 1024, "Data length mismatch");
     assert!(output.len() > 7967);
@@ -530,116 +540,116 @@ fn reinterpreting_dct2d_32_32_impl<D: SimdDescriptor>(d: D, data: &mut [f32], ou
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn reinterpreting_dct2d_1_2<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     let d = jxl_simd::ScalarDescriptor::new().unwrap();
     reinterpreting_dct2d_1_2_impl(d, data, output)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn reinterpreting_dct2d_2_1<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     let d = jxl_simd::ScalarDescriptor::new().unwrap();
     reinterpreting_dct2d_2_1_impl(d, data, output)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn reinterpreting_dct2d_1_4<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     let d = jxl_simd::ScalarDescriptor::new().unwrap();
     reinterpreting_dct2d_1_4_impl(d, data, output)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn reinterpreting_dct2d_4_1<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     let d = jxl_simd::ScalarDescriptor::new().unwrap();
     reinterpreting_dct2d_4_1_impl(d, data, output)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn reinterpreting_dct2d_2_2<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     let d = jxl_simd::ScalarDescriptor::new().unwrap();
     reinterpreting_dct2d_2_2_impl(d, data, output)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn reinterpreting_dct2d_2_4<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     let d = jxl_simd::ScalarDescriptor::new().unwrap();
     reinterpreting_dct2d_2_4_impl(d, data, output)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn reinterpreting_dct2d_4_2<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     let d = jxl_simd::ScalarDescriptor::new().unwrap();
     reinterpreting_dct2d_4_2_impl(d, data, output)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn reinterpreting_dct2d_4_4<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     let d = d.maybe_downgrade_128bit();
     reinterpreting_dct2d_4_4_impl(d, data, output)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn reinterpreting_dct2d_4_8<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     let d = d.maybe_downgrade_128bit();
     reinterpreting_dct2d_4_8_impl(d, data, output)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn reinterpreting_dct2d_8_4<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     let d = d.maybe_downgrade_128bit();
     reinterpreting_dct2d_8_4_impl(d, data, output)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn reinterpreting_dct2d_8_8<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     let d = d.maybe_downgrade_256bit();
     reinterpreting_dct2d_8_8_impl(d, data, output)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn reinterpreting_dct2d_8_16<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     let d = d.maybe_downgrade_256bit();
     reinterpreting_dct2d_8_16_impl(d, data, output)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn reinterpreting_dct2d_16_8<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     let d = d.maybe_downgrade_256bit();
     reinterpreting_dct2d_16_8_impl(d, data, output)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn reinterpreting_dct2d_16_16<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     reinterpreting_dct2d_16_16_impl(d, data, output)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn reinterpreting_dct2d_16_32<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     reinterpreting_dct2d_16_32_impl(d, data, output)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn reinterpreting_dct2d_32_16<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     reinterpreting_dct2d_32_16_impl(d, data, output)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 #[allow(unused_variables)]
 pub fn reinterpreting_dct2d_32_32<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {
     reinterpreting_dct2d_32_32_impl(d, data, output)

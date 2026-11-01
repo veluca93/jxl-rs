@@ -62,7 +62,7 @@ def b_transpose(variables):
     ret = [0] * len(variables)
     for i in range(1, n):
         ret[i] = next()
-        print("let mut v%d = v%d + v%d;" % (ret[i], variables[i - 1], variables[i]))
+    print("let mut v%d = v%d + v%d;" % (ret[i], variables[i - 1], variables[i]))
     ret[0] = next()
     print(
         "let mut v%d = v%d * D::F32Vec::splat(d, std::f32::consts::SQRT_2);"
@@ -75,14 +75,14 @@ def multiply_and_add(variables):
     n = len(variables)
     ret = [0] * len(variables)
     for i in range(n // 2):
-        print("let mul = D::F32Vec::splat(d, %.16f);" % wc_multiplier(i, n))
+    print("let mul = D::F32Vec::splat(d, %.16f);" % wc_multiplier(i, n))
         ret[i] = next()
-        print(
+    print(
             "let mut v%d = v%d.mul_add(mul, v%d);"
             % (ret[i], variables[n // 2 + i], variables[i])
         )
         ret[n - i - 1] = next()
-        print(
+    print(
             "let mut v%d = v%d.neg_mul_add(mul, v%d);"
             % (ret[n - i - 1], variables[n // 2 + i], variables[i])
         )
@@ -93,17 +93,11 @@ def call_idct(variables):
     n = len(variables)
     print("(")
     for i in variables:
-        print("v%d," % i)
+    print("v%d," % i)
     print(") = idct_%d(d," % n)
     for i in variables:
-        print("v%d," % i)
+    print("v%d," % i)
     print(");")
-
-
-def d_call_idct(variables):
-    print("d.call(#[inline(always)] |_| {")
-    call_idct(variables)
-    print("});")
 
 
 def idct(variables):
@@ -111,9 +105,9 @@ def idct(variables):
     ret = [0] * len(variables)
     if n == 2:
         ret[0] = next()
-        print("let mut v%d = v%d + v%d;" % (ret[0], variables[0], variables[1]))
+    print("let mut v%d = v%d + v%d;" % (ret[0], variables[0], variables[1]))
         ret[1] = next()
-        print("let mut v%d = v%d - v%d;" % (ret[1], variables[0], variables[1]))
+    print("let mut v%d = v%d - v%d;" % (ret[1], variables[0], variables[1]))
     else:
         ret = forward_even_odd(variables)
         first_half = ret[: n // 2]
@@ -129,6 +123,7 @@ def idct(variables):
 
 print("#[allow(clippy::too_many_arguments)]")
 print("#[allow(clippy::excessive_precision)]")
+print("#[target_feature(from_args)]")
 print("#[inline(always)]")
 print("pub(super) fn idct_%d<D: SimdDescriptor>(d: D," % n)
 for v in variables:
@@ -151,6 +146,7 @@ print("}")
 
 
 print()
+print("#[target_feature(from_args)]")
 print("#[inline(always)]")
 print(
     "pub(super) fn do_idct_%d<D: SimdDescriptor>(d: D, data: &mut [<D::F32Vec as F32SimdVec>::UnderlyingArray], stride: usize) {"
@@ -170,6 +166,7 @@ print("}")
 
 # IDCT on one row of KxK blocks, where K is the vector length.
 print()
+print("#[target_feature(from_args)]")
 print("#[inline(always)]")
 print(
     "pub(super) fn do_idct_%d_rowblock<D: SimdDescriptor>(d: D, data: &mut [<D::F32Vec as F32SimdVec>::UnderlyingArray]) {"
@@ -200,6 +197,7 @@ print("}")
 # n-IDCT + partial transpose of a n x (n/2) matrix
 if n > 2:
     print()
+    print("#[target_feature(from_args)]")
     print("#[inline(always)]")
     print(
         "pub(super) fn do_idct_%d_trh<D: SimdDescriptor>(d: D, data: &mut [<D::F32Vec as F32SimdVec>::UnderlyingArray]) {"
@@ -213,7 +211,7 @@ if n > 2:
     indices = forward_even_odd(list(range(n)))
 
     for i in range(n):
-        print(
+    print(
             "let mut v%d = D::F32Vec::load_array(d, &data[row_stride*%d]);"
             % (i, indices[i])
         )
@@ -221,13 +219,14 @@ if n > 2:
     call_idct(list(range(n)))
 
     for i in range(n):
-        print("v%d.store_array(&mut data[row_stride*%d]);" % (i, i))
+    print("v%d.store_array(&mut data[row_stride*%d]);" % (i, i))
 
     print("}")
 
 # 32-IDCT + partial transpose of a 32x8 matrix
 if n == 32:
     print()
+    print("#[target_feature(from_args)]")
     print("#[inline(always)]")
     print(
         "pub(super) fn do_idct_32_trq<D: SimdDescriptor>(d: D, data: &mut [<D::F32Vec as F32SimdVec>::UnderlyingArray]) {"
@@ -273,7 +272,7 @@ if n == 32:
     ]
 
     for i in range(n):
-        print(
+    print(
             "let mut v%d = D::F32Vec::load_array(d, &data[row_stride*%d]);"
             % (i, indices[i])
         )
@@ -281,6 +280,6 @@ if n == 32:
     call_idct(list(range(32)))
 
     for i in range(n):
-        print("v%d.store_array(&mut data[row_stride*%d]);" % (i, i))
+    print("v%d.store_array(&mut data[row_stride*%d]);" % (i, i))
 
     print("}")

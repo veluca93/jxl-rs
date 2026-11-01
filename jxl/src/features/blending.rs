@@ -32,6 +32,7 @@ struct BlendConfig {
     order: BlendOrder,
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn load_vec<D: SimdDescriptor>(d: D, s: &[f32], x: usize) -> D::F32Vec {
     let lanes = D::F32Vec::LEN;
@@ -44,6 +45,7 @@ fn load_vec<D: SimdDescriptor>(d: D, s: &[f32], x: usize) -> D::F32Vec {
     }
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn store_vec<D: SimdDescriptor>(_d: D, v: D::F32Vec, s: &mut [f32], x: usize) {
     let lanes = D::F32Vec::LEN;

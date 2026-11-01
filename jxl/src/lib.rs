@@ -3,6 +3,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+#![feature(struct_target_features)]
+#![allow(incomplete_features)]
 #![deny(unsafe_code)]
 pub mod api;
 pub mod bit_reader;

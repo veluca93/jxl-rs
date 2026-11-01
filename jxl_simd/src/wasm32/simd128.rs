@@ -60,10 +60,6 @@ impl SimdDescriptor for Simd128Descriptor {
     fn maybe_downgrade_128bit(self) -> Self {
         self
     }
-
-    fn call<R>(self, f: impl FnOnce(Self) -> R) -> R {
-        f(self)
-    }
 }
 
 #[derive(Clone, Copy, Debug)]

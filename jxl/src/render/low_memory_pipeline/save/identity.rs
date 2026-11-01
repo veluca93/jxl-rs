@@ -13,7 +13,7 @@ use crate::render::low_memory_pipeline::row_buffers::RowBuffer;
 
 macro_rules! define_run_interleaved {
     ($fn_name:ident, $ty:ty, $vec_trait:ident, $store_fn:ident, $cnt:expr, $($arg:ident),+) => {
-        #[inline(always)]
+        #[target_feature(from_args)]
         fn $fn_name<D: SimdDescriptor>(
             d: D,
             $($arg: &[$ty]),+,

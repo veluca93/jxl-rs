@@ -10,6 +10,7 @@ use jxl_simd::{F32SimdVec, SimdDescriptor};
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::excessive_precision)]
+#[target_feature(from_args)]
 #[inline(always)]
 pub(super) fn reinterpreting_dct_32<D: SimdDescriptor>(
     d: D,
@@ -452,6 +453,7 @@ pub(super) fn reinterpreting_dct_32<D: SimdDescriptor>(
     )
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 pub(super) fn do_reinterpreting_dct_32<D: SimdDescriptor>(
     d: D,
@@ -532,6 +534,7 @@ pub(super) fn do_reinterpreting_dct_32<D: SimdDescriptor>(
     v31.store_array(&mut data[31 * stride]);
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 pub(super) fn do_reinterpreting_dct_32_rowblock<D: SimdDescriptor>(
     d: D,
@@ -709,6 +712,7 @@ pub(super) fn do_reinterpreting_dct_32_rowblock<D: SimdDescriptor>(
     v31.store_array(&mut data[row_stride * (31 % D::F32Vec::LEN) + (31 / D::F32Vec::LEN)]);
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 pub(super) fn do_reinterpreting_dct_32_trh<D: SimdDescriptor>(
     d: D,

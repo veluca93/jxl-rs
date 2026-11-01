@@ -66,7 +66,7 @@ impl Xorshift128Plus {
         }
     }
 
-    #[inline(always)]
+    #[target_feature(from_args)]
     pub fn fill_u16_simd<D: SimdDescriptor>(&mut self, d: D, dest: &mut [u16]) {
         if D::U64Vec::LEN == 1 {
             for ((s0, s1), dest_chunk) in self
@@ -123,6 +123,7 @@ mod test {
 
     use super::Xorshift128Plus;
 
+    #[target_feature(from_args)]
     fn test_xorshift128plus_simd_scalar_equivalence<D: SimdDescriptor>(d: D) {
         arbtest::arbtest(|u| {
             let s1 = u.arbitrary::<u32>()?;

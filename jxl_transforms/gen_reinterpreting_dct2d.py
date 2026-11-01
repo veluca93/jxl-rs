@@ -126,7 +126,9 @@ for ROWS, COLS in SIZES:
     SZ = ROWS * COLS
     L = min(ROWS, COLS)
     S = max(ROWS, COLS)
-    print("#[inline(always)]")
+    print("#[target_feature(from_args)]")
+    if ROWS <= 8 and COLS <= 8:
+        print("#[inline(always)]")
     print(
         "fn reinterpreting_dct2d_%d_%d_impl<D: SimdDescriptor>(d: D, data: &mut[f32], output: &mut[f32]) {"
         % (ROWS, COLS)
@@ -158,6 +160,7 @@ for ROWS, COLS in SIZES:
 # Wrappers to reduce SIMD size.
 for ROWS, COLS in SIZES:
     print()
+    print("#[target_feature(from_args)]")
     print("#[inline(always)]")
     print("#[allow(unused_variables)]")
     print(

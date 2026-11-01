@@ -91,6 +91,7 @@ fn predict_num_nonzeros(nzeros_map: &Image<u32>, bx: usize, by: usize) -> usize 
 }
 
 #[inline(always)]
+#[target_feature(from_args)]
 fn adjust_quant_bias<D: SimdDescriptor>(
     d: D,
     c: usize,
@@ -111,6 +112,7 @@ pub trait CoeffStorage: Sized {
 
 impl CoeffStorage for i32 {
     #[inline(always)]
+    #[target_feature(from_args)]
     fn load_simd<D: SimdDescriptor>(slice: &[i32], d: D, offset: usize) -> D::I32Vec {
         D::I32Vec::load(d, &slice[offset..])
     }
@@ -122,6 +124,7 @@ impl CoeffStorage for i32 {
 
 impl CoeffStorage for i16 {
     #[inline(always)]
+    #[target_feature(from_args)]
     fn load_simd<D: SimdDescriptor>(slice: &[i16], d: D, offset: usize) -> D::I32Vec {
         D::I32Vec::load_from_i16(d, &slice[offset..])
     }
@@ -251,6 +254,7 @@ impl<'a> CoeffsMut<'a> {
 
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
+#[target_feature(from_args)]
 fn dequant_lane<D: SimdDescriptor, S: CoeffStorage>(
     d: D,
     scaled_dequant_x: f32,
@@ -288,6 +292,7 @@ fn dequant_lane<D: SimdDescriptor, S: CoeffStorage>(
 
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
+#[target_feature(from_args)]
 fn dequant_block<D: SimdDescriptor>(
     d: D,
     hf_type: HfTransformType,
@@ -357,6 +362,7 @@ fn dequant_block<D: SimdDescriptor>(
 
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
+#[target_feature(from_args)]
 fn dequant_and_transform_to_pixels<D: SimdDescriptor>(
     d: D,
     quant_biases: &[f32; 4],

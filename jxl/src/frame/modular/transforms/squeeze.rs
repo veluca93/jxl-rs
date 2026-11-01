@@ -110,6 +110,7 @@ pub fn default_squeeze(data_channel_info: &[(usize, ChannelInfo)]) -> Vec<Squeez
     params
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn smooth_tendency_impl<D: SimdDescriptor>(
     d: D,
@@ -146,6 +147,7 @@ fn smooth_tendency_impl<D: SimdDescriptor>(
     need_neg.if_then_else_i32(-x, x)
 }
 
+#[target_feature(from_args)]
 #[inline(always)]
 fn smooth_tendency_impl_i16<D: SimdDescriptor>(
     d: D,
@@ -216,7 +218,7 @@ fn smooth_tendency_scalar(b: i64, a: i64, n: i64) -> i64 {
     diff
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn unsqueeze_impl<D: SimdDescriptor>(
     d: D,
     avg: D::I32Vec,
@@ -233,7 +235,7 @@ fn unsqueeze_impl<D: SimdDescriptor>(
     (a, b)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn unsqueeze_impl_i16<D: SimdDescriptor>(
     d: D,
     avg: D::I16Vec,
@@ -259,7 +261,7 @@ fn unsqueeze_scalar(avg: i32, res: i32, next_avg: i32, prev: i32) -> (i32, i32) 
     (a as i32, b as i32)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn hsqueeze_impl<D: SimdDescriptor>(
     d: D,
     y_start: usize,
@@ -504,8 +506,8 @@ fn hsqueeze_scalar(
     }
 }
 
-#[inline(always)]
 #[allow(clippy::too_many_arguments)]
+#[target_feature(from_args)]
 fn hsqueeze_impl_i16<D: SimdDescriptor>(
     d: D,
     y_start: usize,
@@ -887,7 +889,7 @@ pub fn do_hsqueeze_step(
     }
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn vsqueeze_impl<D: SimdDescriptor>(
     d: D,
     x_start: usize,
@@ -980,7 +982,7 @@ fn vsqueeze_impl<D: SimdDescriptor>(
     vsqueeze_scalar(x_limit, in_avg, in_res, in_next_avg, out_prev, out)
 }
 
-#[inline(always)]
+#[target_feature(from_args)]
 fn vsqueeze_impl_i16<D: SimdDescriptor>(
     d: D,
     x_start: usize,
