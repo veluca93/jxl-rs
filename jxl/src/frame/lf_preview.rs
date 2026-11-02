@@ -44,12 +44,7 @@ impl Frame {
         );
         let len = rect.size.0;
         let ulen = len * 8;
-        let mut scratch = [
-            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, ulen)?,
-            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, ulen)?,
-            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, ulen)?,
-            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, ulen)?,
-        ];
+        let mut scratch = SaveStage::allocate_scratch(ulen)?;
 
         let upsample_stage = Upsample8x::new(&self.decoder_state.file_header.transform_data, 0);
 

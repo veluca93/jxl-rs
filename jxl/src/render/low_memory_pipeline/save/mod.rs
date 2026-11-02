@@ -7,6 +7,7 @@ use super::row_buffers::RowBuffer;
 use crate::api::{Endianness, JxlDataFormat};
 use crate::error::Result;
 use crate::headers::Orientation;
+use crate::image::DataTypeTag;
 use crate::render::buffer_splitter::OutputChannelRef;
 use crate::render::save::{SaveChannelType, SaveStage};
 use crate::util::ChannelVec;
@@ -15,6 +16,15 @@ mod identity;
 
 // Placeholder slow implementation.
 impl SaveStage {
+    pub fn allocate_scratch(row_len: usize) -> Result<[RowBuffer; 4]> {
+        Ok([
+            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, row_len)?,
+            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, row_len)?,
+            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, row_len)?,
+            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, row_len)?,
+        ])
+    }
+
     // Takes as input only those channels that are *actually* saved.
     #[allow(clippy::too_many_arguments)]
     pub fn save_lowmem(

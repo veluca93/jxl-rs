@@ -17,6 +17,7 @@ use crate::image::{DataTypeTag, Image, ImageDataType, Rect};
 use crate::render::buffer_splitter::{BufferSplitter, SaveStageBufferInfo};
 use crate::render::internal::Stage;
 use crate::render::low_memory_pipeline::input_buffers::InputBuffers;
+use crate::render::save::SaveStage;
 use crate::render::{ErasedLocalState, MAX_BORDER};
 use crate::util::sync::atomic::Ordering;
 use crate::util::tracing_wrappers::*;
@@ -83,12 +84,7 @@ impl LowMemoryRenderPipelinePerThread {
             .map(|stage_cfgs| stage_cfgs.iter().map(RowBufferConfig::allocate).collect())
             .collect::<Result<_>>()?;
         let scratch_len = p.shared.chunk_size + 2 * p.border_size.0;
-        self.save_scratch = Some([
-            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, scratch_len)?,
-            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, scratch_len)?,
-            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, scratch_len)?,
-            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, scratch_len)?,
-        ]);
+        self.save_scratch = Some(SaveStage::allocate_scratch(scratch_len)?);
         self.local_states = p
             .shared
             .stages
