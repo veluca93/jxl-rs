@@ -86,12 +86,56 @@ pub struct OutputChannelRef<'a, 'b> {
 }
 
 impl<'a, 'b> OutputChannelRef<'a, 'b> {
+    #[cfg(test)]
     pub(crate) fn row_mut(&mut self, row: usize) -> &mut [u8] {
         self.buf.as_mut().unwrap().row_mut(row)
     }
 
     pub(crate) fn typed_row_mut<T: ImageDataType>(&mut self, row: usize) -> &mut [T] {
         self.buf.as_mut().unwrap().typed_row_mut(row)
+    }
+
+    #[inline(always)]
+    pub fn write_row(
+        &mut self,
+        row: usize,
+        num_pixels: usize,
+        scratch: &mut [u8],
+        f: impl FnOnce(&mut [u8]) -> bool,
+    ) -> bool {
+        assert!(!scratch.is_empty());
+        let buf = self.buf.as_mut().unwrap();
+        if let Some(transform) = buf.transform() {
+            if f(scratch) {
+                let bpp = transform.bytes_per_pixel;
+                let x = self.r.origin.0 / bpp;
+                let y = self.r.origin.1 + row;
+                let dst = &mut buf.row_mut(row)[..num_pixels * bpp];
+                (transform.func)(x, y, scratch, dst);
+                true
+            } else {
+                false
+            }
+        } else {
+            let len = scratch.len();
+            f(&mut buf.row_mut(row)[..len])
+        }
+    }
+
+    #[inline(always)]
+    pub fn write_pixel(&mut self, row: usize, col_pixel: usize, src_pixel: &[u8]) {
+        assert!(!src_pixel.is_empty());
+        let buf = self.buf.as_mut().unwrap();
+        if let Some(transform) = buf.transform() {
+            let bpp = transform.bytes_per_pixel;
+            let x = self.r.origin.0 / bpp + col_pixel;
+            let y = self.r.origin.1 + row;
+            let dst = &mut buf.row_mut(row)[col_pixel * bpp..(col_pixel + 1) * bpp];
+            (transform.func)(x, y, src_pixel, dst);
+        } else {
+            let bpp = src_pixel.len();
+            buf.row_mut(row)[col_pixel * bpp..(col_pixel + 1) * bpp].copy_from_slice(src_pixel);
+        }
     }
 }
 
@@ -214,7 +258,8 @@ impl<'a> BufferSplitter<'a> {
                     return None;
                 }
                 let channel_rect = bi.orientation.display_rect(channel_rect, full_image_size);
-                let channel_rect = channel_rect.to_byte_rect_sz(bi.byte_size);
+                let byte_size = buf.buffer.bytes_per_pixel().unwrap_or(bi.byte_size);
+                let channel_rect = channel_rect.to_byte_rect_sz(byte_size);
                 Some(buf.borrow_rect(channel_rect))
             })
             .collect()

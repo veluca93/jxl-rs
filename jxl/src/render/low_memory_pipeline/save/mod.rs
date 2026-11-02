@@ -16,12 +16,13 @@ mod identity;
 
 // Placeholder slow implementation.
 impl SaveStage {
-    pub fn allocate_scratch(row_len: usize) -> Result<[RowBuffer; 4]> {
+    pub fn allocate_scratch(row_len: usize) -> Result<[RowBuffer; 5]> {
         Ok([
             RowBuffer::new(DataTypeTag::F32, 0, 0, 0, row_len)?,
             RowBuffer::new(DataTypeTag::F32, 0, 0, 0, row_len)?,
             RowBuffer::new(DataTypeTag::F32, 0, 0, 0, row_len)?,
             RowBuffer::new(DataTypeTag::F32, 0, 0, 0, row_len)?,
+            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, 4 * row_len)?,
         ])
     }
 
@@ -30,7 +31,7 @@ impl SaveStage {
     pub fn save_lowmem(
         &self,
         data: &[&RowBuffer],
-        scratch: &mut [RowBuffer; 4],
+        scratch: &mut [RowBuffer; 5],
         buffers: &mut [Option<OutputChannelRef>],
         group_size: (usize, usize),
         frame_y: usize,
@@ -82,24 +83,41 @@ impl SaveStage {
             _ => None,
         };
 
+        let conv_start = save_start.0;
+        let conv_len = save_end.0 - conv_start;
+        let pixel_bytes = self.output_channels() * self.data_format.bytes_per_sample();
+        let byte_len = conv_len * pixel_bytes;
+        let [s0, s1, s2, s3, out_scratch] = scratch;
+        // `out_scratch` is a `RowBuffer` backed by `CacheLine` (64-byte aligned), and
+        // `x0_byte_offset()` is a multiple of 64, so `scratch_slice` is aligned to at least
+        // `self.data_format.bytes_per_sample()` (1, 2, or 4 bytes) and its length is a non-zero
+        // multiple of `pixel_bytes`.
+        let scratch_off = RowBuffer::x0_byte_offset();
+        let scratch_slice =
+            &mut out_scratch.get_row_mut::<u8>(0)[scratch_off..scratch_off + byte_len];
+        debug_assert_eq!(
+            scratch_slice
+                .as_ptr()
+                .align_offset(self.data_format.bytes_per_sample()),
+            0
+        );
+
         if let Some(output_y) = output_y
-            && identity::store_fused(
-                self,
-                data,
-                frame_y,
-                group_origin.0,
-                save_start.0..save_end.0,
-                buf,
-                output_y,
-            )
+            && buf.write_row(output_y, conv_len, scratch_slice, |out_slice| {
+                identity::store_fused(
+                    self,
+                    data,
+                    frame_y,
+                    group_origin.0,
+                    save_start.0..save_end.0,
+                    out_slice,
+                )
+            })
         {
             return Ok(());
         }
 
-        let conv_start = save_start.0;
-        let conv_len = save_end.0 - conv_start;
         let mut save_buffers: ChannelVec<&RowBuffer> = ChannelVec::new();
-        let [s0, s1, s2, s3] = scratch;
         let mut scratch_iter = [s0, s1, s2, s3].into_iter();
 
         for (i, (&in_buf, &ch_ty)) in data.iter().zip(self.channel_types.iter()).enumerate() {
@@ -206,14 +224,15 @@ impl SaveStage {
         let data = &save_buffers[..];
 
         if let Some(output_y) = output_y
-            && identity::store(
-                data,
-                frame_y,
-                save_start.0..save_end.0,
-                buf,
-                output_y,
-                self.data_format,
-            )
+            && buf.write_row(output_y, conv_len, scratch_slice, |out_slice| {
+                identity::store(
+                    data,
+                    frame_y,
+                    save_start.0..save_end.0,
+                    out_slice,
+                    self.data_format,
+                )
+            })
         {
             return Ok(());
         }
@@ -249,26 +268,28 @@ impl SaveStage {
                     ($nc:literal) => {{
                         const PIXEL_BYTES: usize = $nc * $bps;
                         if dy == 0 {
-                            let out_row = buf.row_mut(y0 as usize);
-                            for i in 0..conv_len {
-                                let x = (x0 + dx * i as isize) as usize;
-                                let dst = &mut out_row[x * PIXEL_BYTES..][..PIXEL_BYTES];
-                                for (c, chunk) in
-                                    dst.as_chunks_mut::<$bps>().0.iter_mut().enumerate()
-                                {
-                                    *chunk = to_bytes(src_rows[c][i]);
+                            buf.write_row(y0 as usize, conv_len, scratch_slice, |out_row| {
+                                for i in 0..conv_len {
+                                    let x = (x0 + dx * i as isize) as usize;
+                                    let dst = &mut out_row[x * PIXEL_BYTES..][..PIXEL_BYTES];
+                                    for (c, chunk) in
+                                        dst.as_chunks_mut::<$bps>().0.iter_mut().enumerate()
+                                    {
+                                        *chunk = to_bytes(src_rows[c][i]);
+                                    }
                                 }
-                            }
+                                true
+                            });
                         } else {
-                            let byte_x = (x0 as usize) * PIXEL_BYTES;
+                            let pixel = &mut scratch_slice[..PIXEL_BYTES];
                             for i in 0..conv_len {
                                 let y = (y0 + dy * i as isize) as usize;
-                                let dst = &mut buf.row_mut(y)[byte_x..byte_x + PIXEL_BYTES];
                                 for (c, chunk) in
-                                    dst.as_chunks_mut::<$bps>().0.iter_mut().enumerate()
+                                    pixel.as_chunks_mut::<$bps>().0.iter_mut().enumerate()
                                 {
                                     *chunk = to_bytes(src_rows[c][i]);
                                 }
+                                buf.write_pixel(y, x0 as usize, pixel);
                             }
                         }
                     }};

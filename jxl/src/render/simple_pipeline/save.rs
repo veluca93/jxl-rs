@@ -29,7 +29,12 @@ impl SaveStage {
         let output_channels = self.output_channels();
         let bps = self.data_format.bytes_per_sample();
         let pixel_bytes = output_channels * bps;
-        let mut px_buf = [0u8; 16];
+        // Align `px_buf` to 4 bytes so that the slice passed to `buf.write_pixel` is aligned to
+        // `bps` (1, 2, or 4 bytes) as promised by `JxlOutputTransform`.
+        #[repr(C, align(4))]
+        struct AlignedPixel([u8; 16]);
+        let mut px_buf = AlignedPixel([0u8; 16]);
+        let px_buf = &mut px_buf.0[..pixel_bytes];
 
         // Pre-fill opaque alpha if needed (when RGBA requested but image has no alpha)
         if self.fill_opaque_alpha {
@@ -107,8 +112,7 @@ impl SaveStage {
                     }
                 }
 
-                buf.row_mut(dy)[dx * pixel_bytes..][..pixel_bytes]
-                    .copy_from_slice(&px_buf[..pixel_bytes]);
+                buf.write_pixel(dy, dx, px_buf);
             }
         }
 

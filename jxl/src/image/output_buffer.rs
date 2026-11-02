@@ -10,11 +10,32 @@ use super::internal::RawImageBuffer;
 use super::{RawImageRectMut, Rect};
 use crate::image::ImageDataType;
 
+/// Callback that transforms a horizontal span of `num_pixels` decoded pixels from `src` into
+/// `dst`: `(x, y, src, dst)`, starting at output coordinates `(x, y)`.
+///
+/// `src` has length `num_pixels * src_bytes_per_pixel` (and is aligned to the sample type of the
+/// channel's [`crate::api::JxlDataFormat`]), and `dst` has length `num_pixels * bytes_per_pixel`.
+pub type JxlOutputTransform<'a> = dyn Fn(usize, usize, &[u8], &mut [u8]) + Sync + 'a;
+
+#[derive(Clone, Copy)]
+pub(crate) struct OutputTransform<'a> {
+    pub(crate) bytes_per_pixel: usize,
+    pub(crate) func: &'a JxlOutputTransform<'a>,
+}
+
+impl Debug for OutputTransform<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OutputTransform")
+            .field("bytes_per_pixel", &self.bytes_per_pixel)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug)]
-#[repr(transparent)]
 pub struct JxlOutputBuffer<'a> {
     // Safety invariant: `self` has exclusive (write) access to the accessible bytes of `inner`.
     inner: RawImageBuffer,
+    transform: Option<OutputTransform<'a>>,
     _ph: PhantomData<&'a mut u8>,
 }
 
@@ -46,6 +67,7 @@ impl<'a> JxlOutputBuffer<'a> {
                     bytes_between_rows,
                 )
             },
+            transform: None,
             _ph: PhantomData,
         }
     }
@@ -55,6 +77,7 @@ impl<'a> JxlOutputBuffer<'a> {
             // Safety note: since `raw` has exclusive access to the data, we are just transferring
             // this access.
             inner: raw.data,
+            transform: None,
             _ph: PhantomData,
         }
     }
@@ -81,6 +104,29 @@ impl<'a> JxlOutputBuffer<'a> {
 
     pub fn new(buf: &'a mut [u8], num_rows: usize, bytes_per_row: usize) -> Self {
         Self::new_with_stride(buf, num_rows, bytes_per_row, bytes_per_row)
+    }
+
+    /// Attaches a pixel transform to this [`JxlOutputBuffer`], specifying the destination
+    /// `bytes_per_pixel` in this buffer (which must be non-zero).
+    pub fn with_transform(
+        mut self,
+        bytes_per_pixel: usize,
+        transform: &'a JxlOutputTransform<'a>,
+    ) -> Self {
+        assert_ne!(bytes_per_pixel, 0, "bytes_per_pixel must be non-zero");
+        self.transform = Some(OutputTransform {
+            bytes_per_pixel,
+            func: transform,
+        });
+        self
+    }
+
+    pub(crate) fn bytes_per_pixel(&self) -> Option<usize> {
+        self.transform.map(|t| t.bytes_per_pixel)
+    }
+
+    pub(crate) fn transform(&self) -> Option<OutputTransform<'a>> {
+        self.transform
     }
 
     pub(crate) fn reborrow(lender: &'a mut JxlOutputBuffer<'_>) -> JxlOutputBuffer<'a> {
@@ -114,6 +160,7 @@ impl<'a> JxlOutputBuffer<'a> {
         // exclusive access to that region.
         Self {
             inner: self.inner.rect(rect),
+            transform: self.transform,
             _ph: PhantomData,
         }
     }

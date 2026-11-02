@@ -100,7 +100,10 @@ impl SaveStage {
         };
         let osize = self.orientation.map_size(size);
 
-        let expected_w = self.output_channels() * self.data_format.bytes_per_sample() * osize.0;
+        let bpp = buf
+            .bytes_per_pixel()
+            .unwrap_or_else(|| self.output_channels() * self.data_format.bytes_per_sample());
+        let expected_w = bpp * osize.0;
 
         if buf.byte_size() != (expected_w, osize.1) {
             return Err(Error::InvalidOutputBufferSize(

@@ -62,7 +62,7 @@ impl RowBufferConfig {
 
 struct LowMemoryRenderPipelinePerThread {
     row_buffers: Vec<Vec<RowBuffer>>,
-    save_scratch: Option<[RowBuffer; 4]>,
+    save_scratch: Option<[RowBuffer; 5]>,
     // Local states of each stage, if any.
     local_states: Vec<Option<Box<ErasedLocalState>>>,
 }

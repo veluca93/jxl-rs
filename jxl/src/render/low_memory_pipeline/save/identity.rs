@@ -12,7 +12,6 @@ use jxl_simd::{
 
 use crate::api::{Endianness, JxlDataFormat};
 use crate::image::ImageDataType;
-use crate::render::buffer_splitter::OutputChannelRef;
 use crate::render::low_memory_pipeline::row_buffers::RowBuffer;
 use crate::render::save::{SaveChannelType, SaveStage};
 use crate::util::DITHER_TABLE;
@@ -492,11 +491,8 @@ pub(super) fn store_fused(
     input_y: usize,
     group_x0: usize,
     xrange: Range<usize>,
-    output_buf: &mut OutputChannelRef,
-    output_y: usize,
+    output_slice: &mut [u8],
 ) -> bool {
-    let len = xrange.len();
-    let out_channels = stage.output_channels();
     let f32_row = |i: usize| {
         let off = RowBuffer::x0_offset::<f32>() + xrange.start;
         &input_buf[i].get_row::<f32>(input_y)[off..]
@@ -510,7 +506,6 @@ pub(super) fn store_fused(
             let max = ((1u16 << bit_depth) - 1) as u8;
             let scale = |bd: u8| (max as i32) / ((1i32 << bd) - 1);
             let pos = (group_x0 + xrange.start, input_y);
-            let output_slice = &mut output_buf.row_mut(output_y)[0..len * out_channels];
             match stage.channel_types.as_slice() {
                 [
                     SaveChannelType::F32,
@@ -567,7 +562,6 @@ pub(super) fn store_fused(
             }
         }
         JxlDataFormat::F16 { endianness } if endianness == Endianness::native() => {
-            let output_slice = &mut output_buf.row_mut(output_y)[0..len * out_channels * 2];
             if output_slice
                 .as_mut_ptr()
                 .align_offset(std::mem::align_of::<u16>())
@@ -604,8 +598,7 @@ pub(super) fn store(
     input_buf: &[&RowBuffer],
     input_y: usize,
     xrange: Range<usize>,
-    output_buf: &mut OutputChannelRef,
-    output_y: usize,
+    output_buf: &mut [u8],
     data_format: JxlDataFormat,
 ) -> bool {
     let byte_start = xrange.start * data_format.bytes_per_sample() + RowBuffer::x0_byte_offset();
@@ -616,8 +609,6 @@ pub(super) fn store(
         | JxlDataFormat::U16 { endianness, .. }
         | JxlDataFormat::F32 { endianness, .. } => endianness == Endianness::native(),
     };
-    let output_buf = output_buf.row_mut(output_y);
-    let output_buf = &mut output_buf[0..(byte_end - byte_start) * input_buf.len()];
     match (
         input_buf.len(),
         data_format.bytes_per_sample(),
