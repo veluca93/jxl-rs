@@ -22,6 +22,7 @@ mod wasm32;
 
 pub mod float16;
 pub mod scalar;
+pub mod unaligned;
 
 #[cfg(all(target_arch = "aarch64", feature = "neon"))]
 pub use aarch64::neon::NeonDescriptor;
