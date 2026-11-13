@@ -108,7 +108,7 @@ impl AvxDescriptor {
         Self(())
     }
 
-    pub fn as_sse42(&self) -> Sse42Descriptor {
+    pub fn downgrade_sse42(self) -> Sse42Descriptor {
         // SAFETY: the safety invariant on `self` guarantees avx is available, which implies
         // sse42.
         unsafe { Sse42Descriptor::new_unchecked() }
@@ -121,7 +121,14 @@ impl AvxDescriptor {
 #[repr(transparent)]
 pub struct Bf16Table8Avx(__m256);
 
+impl crate::SimdDescriptor256 for AvxDescriptor {}
+
 impl SimdDescriptor for AvxDescriptor {
+    #[inline(always)]
+    fn as_avx(self) -> Option<Self> {
+        Some(self)
+    }
+
     type F32Vec = F32VecAvx;
     type I32Vec = I32VecAvx;
     type I16Vec = I16VecAvx;
@@ -141,7 +148,7 @@ impl SimdDescriptor for AvxDescriptor {
     }
 
     fn maybe_downgrade_128bit(self) -> Self::Descriptor128 {
-        self.as_sse42()
+        self.downgrade_sse42()
     }
 
     fn new() -> Option<Self> {
@@ -212,6 +219,8 @@ pub struct Mask16Avx(__m256i, AvxDescriptor);
 
 impl F32SimdVec for F32VecAvx {
     type Descriptor = AvxDescriptor;
+    crate::impl_isa_conversions!(avx, F32VecAvx);
+    crate::impl_isa_array_conversions!(avx, f32, 8);
 
     const LEN: usize = 8;
 
@@ -708,6 +717,7 @@ pub struct I32VecAvx(__m256i, AvxDescriptor);
 
 impl I32SimdVec for I32VecAvx {
     type Descriptor = AvxDescriptor;
+    crate::impl_isa_conversions!(avx, I32VecAvx);
 
     const LEN: usize = 8;
 
@@ -951,6 +961,8 @@ pub struct I16VecAvx(__m256i, AvxDescriptor);
 
 impl I16SimdVec for I16VecAvx {
     type Descriptor = AvxDescriptor;
+    crate::impl_isa_conversions!(avx, I16VecAvx);
+    crate::impl_isa_array_conversions!(avx, i16, 16);
 
     const LEN: usize = 16;
 
@@ -1243,6 +1255,7 @@ pub struct U32VecAvx(__m256i, AvxDescriptor);
 
 impl U32SimdVec for U32VecAvx {
     type Descriptor = AvxDescriptor;
+    crate::impl_isa_conversions!(avx, U32VecAvx);
 
     const LEN: usize = 8;
 
@@ -1262,6 +1275,7 @@ pub struct U64VecAvx(__m256i, AvxDescriptor);
 
 impl U64SimdVec for U64VecAvx {
     type Descriptor = AvxDescriptor;
+    crate::impl_isa_conversions!(avx, U64VecAvx);
 
     const LEN: usize = 4;
 
@@ -1356,6 +1370,7 @@ pub struct U8VecAvx(__m256i, AvxDescriptor);
 
 impl U8SimdVec for U8VecAvx {
     type Descriptor = AvxDescriptor;
+    crate::impl_isa_conversions!(avx, U8VecAvx);
     const LEN: usize = 32;
 
     fn_avx!(
@@ -1523,6 +1538,7 @@ pub struct U16VecAvx(__m256i, AvxDescriptor);
 
 impl U16SimdVec for U16VecAvx {
     type Descriptor = AvxDescriptor;
+    crate::impl_isa_conversions!(avx, U16VecAvx);
     const LEN: usize = 16;
 
     fn_avx!(
@@ -1691,6 +1707,7 @@ impl U16SimdVec for U16VecAvx {
 
 impl SimdMask for MaskAvx {
     type Descriptor = AvxDescriptor;
+    crate::impl_isa_conversions!(avx, MaskAvx);
 
     fn_avx!(this: MaskAvx, fn if_then_else_f32(if_true: F32VecAvx, if_false: F32VecAvx) -> F32VecAvx {
         F32VecAvx(_mm256_blendv_ps(if_false.0, if_true.0, this.0), this.1)
@@ -1729,6 +1746,7 @@ impl BitOr<MaskAvx> for MaskAvx {
 
 impl SimdMask16 for Mask16Avx {
     type Descriptor = AvxDescriptor;
+    crate::impl_isa_conversions!(avx, Mask16Avx);
 
     fn_avx!(this: Mask16Avx, fn if_then_else_i16(if_true: I16VecAvx, if_false: I16VecAvx) -> I16VecAvx {
         I16VecAvx(_mm256_blendv_epi8(if_false.0, if_true.0, this.0), this.1)
@@ -1760,3 +1778,13 @@ impl BitOr<Mask16Avx> for Mask16Avx {
         Mask16Avx(_mm256_or_si256(this.0, rhs.0), this.1)
     });
 }
+
+crate::impl_raw_accessors!(F32VecAvx, __m256, AvxDescriptor);
+crate::impl_raw_accessors!(I32VecAvx, __m256i, AvxDescriptor);
+crate::impl_raw_accessors!(I16VecAvx, __m256i, AvxDescriptor);
+crate::impl_raw_accessors!(U32VecAvx, __m256i, AvxDescriptor);
+crate::impl_raw_accessors!(U64VecAvx, __m256i, AvxDescriptor);
+crate::impl_raw_accessors!(U8VecAvx, __m256i, AvxDescriptor);
+crate::impl_raw_accessors!(U16VecAvx, __m256i, AvxDescriptor);
+crate::impl_raw_accessors!(MaskAvx, __m256, AvxDescriptor);
+crate::impl_raw_accessors!(Mask16Avx, __m256i, AvxDescriptor);

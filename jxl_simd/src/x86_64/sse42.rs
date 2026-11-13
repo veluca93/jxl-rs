@@ -27,7 +27,14 @@ impl Sse42Descriptor {
     }
 }
 
+impl crate::SimdDescriptor128 for Sse42Descriptor {}
+
 impl SimdDescriptor for Sse42Descriptor {
+    #[inline(always)]
+    fn as_sse42(self) -> Option<Self> {
+        Some(self)
+    }
+
     type F32Vec = F32VecSse42;
     type I32Vec = I32VecSse42;
     type I16Vec = I16VecSse42;
@@ -120,6 +127,8 @@ pub struct Mask16Sse42(__m128i, Sse42Descriptor);
 
 impl F32SimdVec for F32VecSse42 {
     type Descriptor = Sse42Descriptor;
+    crate::impl_isa_conversions!(sse42, F32VecSse42);
+    crate::impl_isa_array_conversions!(sse42, f32, 4);
 
     const LEN: usize = 4;
 
@@ -631,6 +640,7 @@ pub struct I32VecSse42(__m128i, Sse42Descriptor);
 
 impl I32SimdVec for I32VecSse42 {
     type Descriptor = Sse42Descriptor;
+    crate::impl_isa_conversions!(sse42, I32VecSse42);
 
     const LEN: usize = 4;
 
@@ -841,6 +851,8 @@ pub struct I16VecSse42(__m128i, Sse42Descriptor);
 
 impl I16SimdVec for I16VecSse42 {
     type Descriptor = Sse42Descriptor;
+    crate::impl_isa_conversions!(sse42, I16VecSse42);
+    crate::impl_isa_array_conversions!(sse42, i16, 8);
 
     const LEN: usize = 8;
 
@@ -1069,6 +1081,7 @@ pub struct U32VecSse42(__m128i, Sse42Descriptor);
 
 impl U32SimdVec for U32VecSse42 {
     type Descriptor = Sse42Descriptor;
+    crate::impl_isa_conversions!(sse42, U32VecSse42);
 
     const LEN: usize = 4;
 
@@ -1088,6 +1101,7 @@ pub struct U64VecSse42(__m128i, Sse42Descriptor);
 
 impl U64SimdVec for U64VecSse42 {
     type Descriptor = Sse42Descriptor;
+    crate::impl_isa_conversions!(sse42, U64VecSse42);
 
     const LEN: usize = 2;
 
@@ -1182,6 +1196,7 @@ pub struct U8VecSse42(__m128i, Sse42Descriptor);
 
 impl U8SimdVec for U8VecSse42 {
     type Descriptor = Sse42Descriptor;
+    crate::impl_isa_conversions!(sse42, U8VecSse42);
     const LEN: usize = 16;
 
     fn_sse42!(
@@ -1304,6 +1319,7 @@ pub struct U16VecSse42(__m128i, Sse42Descriptor);
 
 impl U16SimdVec for U16VecSse42 {
     type Descriptor = Sse42Descriptor;
+    crate::impl_isa_conversions!(sse42, U16VecSse42);
     const LEN: usize = 8;
 
     fn_sse42!(
@@ -1430,6 +1446,7 @@ impl U16SimdVec for U16VecSse42 {
 
 impl SimdMask for MaskSse42 {
     type Descriptor = Sse42Descriptor;
+    crate::impl_isa_conversions!(sse42, MaskSse42);
 
     fn_sse42!(this: MaskSse42, fn if_then_else_f32(if_true: F32VecSse42, if_false: F32VecSse42) -> F32VecSse42 {
         F32VecSse42(_mm_blendv_ps(if_false.0, if_true.0, this.0), this.1)
@@ -1468,6 +1485,7 @@ impl BitOr<MaskSse42> for MaskSse42 {
 
 impl SimdMask16 for Mask16Sse42 {
     type Descriptor = Sse42Descriptor;
+    crate::impl_isa_conversions!(sse42, Mask16Sse42);
 
     fn_sse42!(this: Mask16Sse42, fn if_then_else_i16(if_true: I16VecSse42, if_false: I16VecSse42) -> I16VecSse42 {
         I16VecSse42(_mm_blendv_epi8(if_false.0, if_true.0, this.0), this.1)
@@ -1499,3 +1517,13 @@ impl BitOr<Mask16Sse42> for Mask16Sse42 {
         Mask16Sse42(_mm_or_si128(this.0, rhs.0), this.1)
     });
 }
+
+crate::impl_raw_accessors!(F32VecSse42, __m128, Sse42Descriptor);
+crate::impl_raw_accessors!(I32VecSse42, __m128i, Sse42Descriptor);
+crate::impl_raw_accessors!(I16VecSse42, __m128i, Sse42Descriptor);
+crate::impl_raw_accessors!(U32VecSse42, __m128i, Sse42Descriptor);
+crate::impl_raw_accessors!(U64VecSse42, __m128i, Sse42Descriptor);
+crate::impl_raw_accessors!(U8VecSse42, __m128i, Sse42Descriptor);
+crate::impl_raw_accessors!(U16VecSse42, __m128i, Sse42Descriptor);
+crate::impl_raw_accessors!(MaskSse42, __m128, Sse42Descriptor);
+crate::impl_raw_accessors!(Mask16Sse42, __m128i, Sse42Descriptor);

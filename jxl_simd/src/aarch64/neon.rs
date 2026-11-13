@@ -33,7 +33,14 @@ impl NeonDescriptor {
 #[repr(transparent)]
 pub struct Bf16Table8Neon(uint8x16_t);
 
+impl crate::SimdDescriptor128 for NeonDescriptor {}
+
 impl SimdDescriptor for NeonDescriptor {
+    #[inline(always)]
+    fn as_neon(self) -> Option<Self> {
+        Some(self)
+    }
+
     type F32Vec = F32VecNeon;
 
     type I32Vec = I32VecNeon;
@@ -136,6 +143,8 @@ pub struct F32VecNeon(float32x4_t, NeonDescriptor);
 
 impl F32SimdVec for F32VecNeon {
     type Descriptor = NeonDescriptor;
+    crate::impl_isa_conversions!(neon, F32VecNeon);
+    crate::impl_isa_array_conversions!(neon, f32, 4);
 
     const LEN: usize = 4;
 
@@ -564,6 +573,7 @@ pub struct I32VecNeon(int32x4_t, NeonDescriptor);
 
 impl I32SimdVec for I32VecNeon {
     type Descriptor = NeonDescriptor;
+    crate::impl_isa_conversions!(neon, I32VecNeon);
 
     const LEN: usize = 4;
 
@@ -776,6 +786,8 @@ pub struct I16VecNeon(int16x8_t, NeonDescriptor);
 
 impl I16SimdVec for I16VecNeon {
     type Descriptor = NeonDescriptor;
+    crate::impl_isa_conversions!(neon, I16VecNeon);
+    crate::impl_isa_array_conversions!(neon, i16, 8);
 
     const LEN: usize = 8;
 
@@ -1075,6 +1087,7 @@ pub struct U32VecNeon(uint32x4_t, NeonDescriptor);
 
 impl U32SimdVec for U32VecNeon {
     type Descriptor = NeonDescriptor;
+    crate::impl_isa_conversions!(neon, U32VecNeon);
 
     const LEN: usize = 4;
 
@@ -1095,6 +1108,7 @@ pub struct U64VecNeon(uint64x2_t, NeonDescriptor);
 
 impl U64SimdVec for U64VecNeon {
     type Descriptor = NeonDescriptor;
+    crate::impl_isa_conversions!(neon, U64VecNeon);
 
     const LEN: usize = 2;
 
@@ -1199,6 +1213,7 @@ pub struct U8VecNeon(uint8x16_t, NeonDescriptor);
 
 impl U8SimdVec for U8VecNeon {
     type Descriptor = NeonDescriptor;
+    crate::impl_isa_conversions!(neon, U8VecNeon);
     const LEN: usize = 16;
 
     fn_neon!(assoc fn load(d: NeonDescriptor, mem: &[u8]) -> U8VecNeon {
@@ -1238,6 +1253,7 @@ pub struct U16VecNeon(uint16x8_t, NeonDescriptor);
 
 impl U16SimdVec for U16VecNeon {
     type Descriptor = NeonDescriptor;
+    crate::impl_isa_conversions!(neon, U16VecNeon);
     const LEN: usize = 8;
 
     fn_neon!(assoc fn load(d: NeonDescriptor, mem: &[u16]) -> U16VecNeon {
@@ -1281,6 +1297,7 @@ pub struct MaskNeon(uint32x4_t, NeonDescriptor);
 
 impl SimdMask for MaskNeon {
     type Descriptor = NeonDescriptor;
+    crate::impl_isa_conversions!(neon, MaskNeon);
 
     fn_neon! {
         fn if_then_else_f32(
@@ -1337,6 +1354,7 @@ pub struct Mask16Neon(uint16x8_t, NeonDescriptor);
 
 impl SimdMask16 for Mask16Neon {
     type Descriptor = NeonDescriptor;
+    crate::impl_isa_conversions!(neon, Mask16Neon);
 
     fn_neon! {
         fn if_then_else_i16(
@@ -1378,3 +1396,13 @@ impl BitOr<Mask16Neon> for Mask16Neon {
         }
     }
 }
+
+crate::impl_raw_accessors!(F32VecNeon, float32x4_t, NeonDescriptor);
+crate::impl_raw_accessors!(I32VecNeon, int32x4_t, NeonDescriptor);
+crate::impl_raw_accessors!(I16VecNeon, int16x8_t, NeonDescriptor);
+crate::impl_raw_accessors!(U32VecNeon, uint32x4_t, NeonDescriptor);
+crate::impl_raw_accessors!(U64VecNeon, uint64x2_t, NeonDescriptor);
+crate::impl_raw_accessors!(U8VecNeon, uint8x16_t, NeonDescriptor);
+crate::impl_raw_accessors!(U16VecNeon, uint16x8_t, NeonDescriptor);
+crate::impl_raw_accessors!(MaskNeon, uint32x4_t, NeonDescriptor);
+crate::impl_raw_accessors!(Mask16Neon, uint16x8_t, NeonDescriptor);

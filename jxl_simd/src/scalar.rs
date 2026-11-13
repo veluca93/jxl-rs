@@ -14,6 +14,11 @@ use crate::{U32SimdVec, U64SimdVec, f16, impl_f32_array_interface, impl_i16_arra
 pub struct ScalarDescriptor;
 
 impl SimdDescriptor for ScalarDescriptor {
+    #[inline(always)]
+    fn as_scalar(self) -> Option<Self> {
+        Some(self)
+    }
+
     type F32Vec = f32;
     type I32Vec = Wrapping<i32>;
     type I16Vec = Wrapping<i16>;
@@ -48,6 +53,8 @@ impl SimdDescriptor for ScalarDescriptor {
 
 impl F32SimdVec for f32 {
     type Descriptor = ScalarDescriptor;
+    crate::impl_isa_conversions!(scalar, f32);
+    crate::impl_isa_array_conversions!(scalar, f32, 1);
 
     const LEN: usize = 1;
 
@@ -230,6 +237,7 @@ impl F32SimdVec for f32 {
 
 impl I32SimdVec for Wrapping<i32> {
     type Descriptor = ScalarDescriptor;
+    crate::impl_isa_conversions!(scalar, std::num::Wrapping<i32>);
 
     const LEN: usize = 1;
 
@@ -326,6 +334,8 @@ impl I32SimdVec for Wrapping<i32> {
 
 impl I16SimdVec for Wrapping<i16> {
     type Descriptor = ScalarDescriptor;
+    crate::impl_isa_conversions!(scalar, std::num::Wrapping<i16>);
+    crate::impl_isa_array_conversions!(scalar, i16, 1);
 
     const LEN: usize = 1;
 
@@ -412,6 +422,7 @@ impl I16SimdVec for Wrapping<i16> {
 
 impl U32SimdVec for Wrapping<u32> {
     type Descriptor = ScalarDescriptor;
+    crate::impl_isa_conversions!(scalar, std::num::Wrapping<u32>);
 
     const LEN: usize = 1;
 
@@ -428,6 +439,7 @@ impl U32SimdVec for Wrapping<u32> {
 
 impl U64SimdVec for Wrapping<u64> {
     type Descriptor = ScalarDescriptor;
+    crate::impl_isa_conversions!(scalar, std::num::Wrapping<u64>);
 
     const LEN: usize = 1;
 
@@ -464,6 +476,7 @@ impl U64SimdVec for Wrapping<u64> {
 
 impl U8SimdVec for u8 {
     type Descriptor = ScalarDescriptor;
+    crate::impl_isa_conversions!(scalar, u8);
     const LEN: usize = 1;
 
     #[inline(always)]
@@ -505,6 +518,7 @@ impl U8SimdVec for u8 {
 
 impl U16SimdVec for u16 {
     type Descriptor = ScalarDescriptor;
+    crate::impl_isa_conversions!(scalar, u16);
     const LEN: usize = 1;
 
     #[inline(always)]
@@ -551,6 +565,7 @@ impl U16SimdVec for u16 {
 
 impl SimdMask for bool {
     type Descriptor = ScalarDescriptor;
+    crate::impl_isa_conversions!(scalar, bool);
 
     #[inline(always)]
     fn if_then_else_f32(self, if_true: f32, if_false: f32) -> f32 {
@@ -580,6 +595,7 @@ impl SimdMask for bool {
 
 impl SimdMask16 for bool {
     type Descriptor = ScalarDescriptor;
+    crate::impl_isa_conversions!(scalar, bool);
 
     #[inline(always)]
     fn if_then_else_i16(self, if_true: Wrapping<i16>, if_false: Wrapping<i16>) -> Wrapping<i16> {

@@ -29,7 +29,7 @@ impl Avx512Descriptor {
     pub unsafe fn new_unchecked() -> Self {
         Self(())
     }
-    pub fn as_avx(&self) -> AvxDescriptor {
+    pub fn downgrade_avx(self) -> AvxDescriptor {
         // SAFETY: the safety invariant on `self` guarantees avx512f is available, which implies
         // avx2 and fma.
         unsafe { AvxDescriptor::new_unchecked() }
@@ -43,7 +43,14 @@ impl Avx512Descriptor {
 #[repr(transparent)]
 pub struct Bf16Table8Avx512(__m512);
 
+impl crate::SimdDescriptor512 for Avx512Descriptor {}
+
 impl SimdDescriptor for Avx512Descriptor {
+    #[inline(always)]
+    fn as_avx512(self) -> Option<Self> {
+        Some(self)
+    }
+
     type F32Vec = F32VecAvx512;
     type I32Vec = I32VecAvx512;
     type I16Vec = I16VecAvx512;
@@ -59,11 +66,11 @@ impl SimdDescriptor for Avx512Descriptor {
     type Descriptor128 = Sse42Descriptor;
 
     fn maybe_downgrade_256bit(self) -> Self::Descriptor256 {
-        self.as_avx()
+        self.downgrade_avx()
     }
 
     fn maybe_downgrade_128bit(self) -> Self::Descriptor128 {
-        self.as_avx().as_sse42()
+        self.downgrade_avx().downgrade_sse42()
     }
 
     fn new() -> Option<Self> {
@@ -131,6 +138,8 @@ pub struct Mask16Avx512(__mmask32, Avx512Descriptor);
 
 impl F32SimdVec for F32VecAvx512 {
     type Descriptor = Avx512Descriptor;
+    crate::impl_isa_conversions!(avx512, F32VecAvx512);
+    crate::impl_isa_array_conversions!(avx512, f32, 16);
 
     const LEN: usize = 16;
 
@@ -886,6 +895,7 @@ pub struct I32VecAvx512(__m512i, Avx512Descriptor);
 
 impl I32SimdVec for I32VecAvx512 {
     type Descriptor = Avx512Descriptor;
+    crate::impl_isa_conversions!(avx512, I32VecAvx512);
 
     const LEN: usize = 16;
 
@@ -1108,6 +1118,8 @@ pub struct I16VecAvx512(__m512i, Avx512Descriptor);
 
 impl I16SimdVec for I16VecAvx512 {
     type Descriptor = Avx512Descriptor;
+    crate::impl_isa_conversions!(avx512, I16VecAvx512);
+    crate::impl_isa_array_conversions!(avx512, i16, 32);
 
     const LEN: usize = 32;
 
@@ -1412,6 +1424,7 @@ pub struct U32VecAvx512(__m512i, Avx512Descriptor);
 
 impl U32SimdVec for U32VecAvx512 {
     type Descriptor = Avx512Descriptor;
+    crate::impl_isa_conversions!(avx512, U32VecAvx512);
 
     const LEN: usize = 16;
 
@@ -1431,6 +1444,7 @@ pub struct U64VecAvx512(__m512i, Avx512Descriptor);
 
 impl U64SimdVec for U64VecAvx512 {
     type Descriptor = Avx512Descriptor;
+    crate::impl_isa_conversions!(avx512, U64VecAvx512);
 
     const LEN: usize = 8;
 
@@ -1525,6 +1539,7 @@ pub struct U8VecAvx512(__m512i, Avx512Descriptor);
 
 impl U8SimdVec for U8VecAvx512 {
     type Descriptor = Avx512Descriptor;
+    crate::impl_isa_conversions!(avx512, U8VecAvx512);
     const LEN: usize = 64;
 
     fn_avx!(
@@ -1690,6 +1705,7 @@ pub struct U16VecAvx512(__m512i, Avx512Descriptor);
 
 impl U16SimdVec for U16VecAvx512 {
     type Descriptor = Avx512Descriptor;
+    crate::impl_isa_conversions!(avx512, U16VecAvx512);
     const LEN: usize = 32;
 
     fn_avx!(
@@ -1865,6 +1881,7 @@ impl U16SimdVec for U16VecAvx512 {
 
 impl SimdMask for MaskAvx512 {
     type Descriptor = Avx512Descriptor;
+    crate::impl_isa_conversions!(avx512, MaskAvx512);
 
     fn_avx!(this: MaskAvx512, fn if_then_else_f32(if_true: F32VecAvx512, if_false: F32VecAvx512) -> F32VecAvx512 {
         F32VecAvx512(_mm512_mask_blend_ps(this.0, if_false.0, if_true.0), this.1)
@@ -1903,6 +1920,7 @@ impl BitOr<MaskAvx512> for MaskAvx512 {
 
 impl SimdMask16 for Mask16Avx512 {
     type Descriptor = Avx512Descriptor;
+    crate::impl_isa_conversions!(avx512, Mask16Avx512);
 
     fn_avx!(this: Mask16Avx512, fn if_then_else_i16(if_true: I16VecAvx512, if_false: I16VecAvx512) -> I16VecAvx512 {
         I16VecAvx512(_mm512_mask_blend_epi16(this.0, if_false.0, if_true.0), this.1)
@@ -1934,3 +1952,13 @@ impl BitOr<Mask16Avx512> for Mask16Avx512 {
         Mask16Avx512(this.0 | rhs.0, this.1)
     });
 }
+
+crate::impl_raw_accessors!(F32VecAvx512, __m512, Avx512Descriptor);
+crate::impl_raw_accessors!(I32VecAvx512, __m512i, Avx512Descriptor);
+crate::impl_raw_accessors!(I16VecAvx512, __m512i, Avx512Descriptor);
+crate::impl_raw_accessors!(U32VecAvx512, __m512i, Avx512Descriptor);
+crate::impl_raw_accessors!(U64VecAvx512, __m512i, Avx512Descriptor);
+crate::impl_raw_accessors!(U8VecAvx512, __m512i, Avx512Descriptor);
+crate::impl_raw_accessors!(U16VecAvx512, __m512i, Avx512Descriptor);
+crate::impl_raw_accessors!(MaskAvx512, __mmask16, Avx512Descriptor);
+crate::impl_raw_accessors!(Mask16Avx512, __mmask32, Avx512Descriptor);

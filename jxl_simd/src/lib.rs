@@ -25,17 +25,379 @@ pub mod scalar;
 pub mod unaligned;
 
 #[cfg(all(target_arch = "aarch64", feature = "neon"))]
-pub use aarch64::neon::NeonDescriptor;
+pub use aarch64::neon::{
+    Bf16Table8Neon, F32VecNeon, I16VecNeon, I32VecNeon, Mask16Neon, MaskNeon, NeonDescriptor,
+    U8VecNeon, U16VecNeon, U32VecNeon, U64VecNeon,
+};
 pub use float16::f16;
 pub use scalar::ScalarDescriptor;
 #[cfg(all(target_arch = "wasm32", feature = "simd128"))]
-pub use wasm32::simd128::Simd128Descriptor;
+pub use wasm32::simd128::{
+    Bf16Table8Simd128, F32VecSimd128, I16VecSimd128, I32VecSimd128, Mask16Simd128, MaskSimd128,
+    Simd128Descriptor, U8VecSimd128, U16VecSimd128, U32VecSimd128, U64VecSimd128,
+};
 #[cfg(all(target_arch = "x86_64", feature = "avx"))]
-pub use x86_64::avx::AvxDescriptor;
+pub use x86_64::avx::{
+    AvxDescriptor, Bf16Table8Avx, F32VecAvx, I16VecAvx, I32VecAvx, Mask16Avx, MaskAvx, U8VecAvx,
+    U16VecAvx, U32VecAvx, U64VecAvx,
+};
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
-pub use x86_64::avx512::Avx512Descriptor;
+pub use x86_64::avx512::{
+    Avx512Descriptor, Bf16Table8Avx512, F32VecAvx512, I16VecAvx512, I32VecAvx512, Mask16Avx512,
+    MaskAvx512, U8VecAvx512, U16VecAvx512, U32VecAvx512, U64VecAvx512,
+};
 #[cfg(all(target_arch = "x86_64", feature = "sse42"))]
-pub use x86_64::sse42::Sse42Descriptor;
+pub use x86_64::sse42::{
+    Bf16Table8Sse42, F32VecSse42, I16VecSse42, I32VecSse42, Mask16Sse42, MaskSse42,
+    Sse42Descriptor, U8VecSse42, U16VecSse42, U32VecSse42, U64VecSse42,
+};
+
+macro_rules! decl_isa_conversions {
+    ($scalar_ty:ty, $sse42_ty:ident, $avx_ty:ident, $avx512_ty:ident, $neon_ty:ident, $simd128_ty:ident) => {
+        #[inline(always)]
+        fn as_scalar(self) -> Option<$scalar_ty> {
+            None
+        }
+
+        #[inline(always)]
+        fn from_scalar(_v: $scalar_ty) -> Option<Self> {
+            None
+        }
+
+        #[cfg(all(target_arch = "x86_64", feature = "sse42"))]
+        #[inline(always)]
+        fn as_sse42(self) -> Option<$sse42_ty> {
+            None
+        }
+
+        #[cfg(all(target_arch = "x86_64", feature = "sse42"))]
+        #[inline(always)]
+        fn from_sse42(_v: $sse42_ty) -> Option<Self> {
+            None
+        }
+
+        #[cfg(all(target_arch = "x86_64", feature = "avx"))]
+        #[inline(always)]
+        fn as_avx(self) -> Option<$avx_ty> {
+            None
+        }
+
+        #[cfg(all(target_arch = "x86_64", feature = "avx"))]
+        #[inline(always)]
+        fn from_avx(_v: $avx_ty) -> Option<Self> {
+            None
+        }
+
+        #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+        #[inline(always)]
+        fn as_avx512(self) -> Option<$avx512_ty> {
+            None
+        }
+
+        #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+        #[inline(always)]
+        fn from_avx512(_v: $avx512_ty) -> Option<Self> {
+            None
+        }
+
+        #[cfg(all(target_arch = "aarch64", feature = "neon"))]
+        #[inline(always)]
+        fn as_neon(self) -> Option<$neon_ty> {
+            None
+        }
+
+        #[cfg(all(target_arch = "aarch64", feature = "neon"))]
+        #[inline(always)]
+        fn from_neon(_v: $neon_ty) -> Option<Self> {
+            None
+        }
+
+        #[cfg(all(target_arch = "wasm32", feature = "simd128"))]
+        #[inline(always)]
+        fn as_simd128(self) -> Option<$simd128_ty> {
+            None
+        }
+
+        #[cfg(all(target_arch = "wasm32", feature = "simd128"))]
+        #[inline(always)]
+        fn from_simd128(_v: $simd128_ty) -> Option<Self> {
+            None
+        }
+    };
+}
+
+macro_rules! decl_isa_array_conversions {
+    ($elem:ty, $scalar_len:literal, $sse42_len:literal, $avx_len:literal, $avx512_len:literal, $neon_len:literal, $simd128_len:literal) => {
+        #[inline(always)]
+        fn array_slice_as_scalar(
+            _slice: &[Self::UnderlyingArray],
+        ) -> Option<&[[$elem; $scalar_len]]> {
+            None
+        }
+
+        #[inline(always)]
+        fn array_slice_mut_as_scalar(
+            _slice: &mut [Self::UnderlyingArray],
+        ) -> Option<&mut [[$elem; $scalar_len]]> {
+            None
+        }
+
+        #[cfg(all(target_arch = "x86_64", feature = "sse42"))]
+        #[inline(always)]
+        fn array_slice_as_sse42(
+            _slice: &[Self::UnderlyingArray],
+        ) -> Option<&[[$elem; $sse42_len]]> {
+            None
+        }
+
+        #[cfg(all(target_arch = "x86_64", feature = "sse42"))]
+        #[inline(always)]
+        fn array_slice_mut_as_sse42(
+            _slice: &mut [Self::UnderlyingArray],
+        ) -> Option<&mut [[$elem; $sse42_len]]> {
+            None
+        }
+
+        #[cfg(all(target_arch = "x86_64", feature = "avx"))]
+        #[inline(always)]
+        fn array_slice_as_avx(_slice: &[Self::UnderlyingArray]) -> Option<&[[$elem; $avx_len]]> {
+            None
+        }
+
+        #[cfg(all(target_arch = "x86_64", feature = "avx"))]
+        #[inline(always)]
+        fn array_slice_mut_as_avx(
+            _slice: &mut [Self::UnderlyingArray],
+        ) -> Option<&mut [[$elem; $avx_len]]> {
+            None
+        }
+
+        #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+        #[inline(always)]
+        fn array_slice_as_avx512(
+            _slice: &[Self::UnderlyingArray],
+        ) -> Option<&[[$elem; $avx512_len]]> {
+            None
+        }
+
+        #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+        #[inline(always)]
+        fn array_slice_mut_as_avx512(
+            _slice: &mut [Self::UnderlyingArray],
+        ) -> Option<&mut [[$elem; $avx512_len]]> {
+            None
+        }
+
+        #[cfg(all(target_arch = "aarch64", feature = "neon"))]
+        #[inline(always)]
+        fn array_slice_as_neon(_slice: &[Self::UnderlyingArray]) -> Option<&[[$elem; $neon_len]]> {
+            None
+        }
+
+        #[cfg(all(target_arch = "aarch64", feature = "neon"))]
+        #[inline(always)]
+        fn array_slice_mut_as_neon(
+            _slice: &mut [Self::UnderlyingArray],
+        ) -> Option<&mut [[$elem; $neon_len]]> {
+            None
+        }
+
+        #[cfg(all(target_arch = "wasm32", feature = "simd128"))]
+        #[inline(always)]
+        fn array_slice_as_simd128(
+            _slice: &[Self::UnderlyingArray],
+        ) -> Option<&[[$elem; $simd128_len]]> {
+            None
+        }
+
+        #[cfg(all(target_arch = "wasm32", feature = "simd128"))]
+        #[inline(always)]
+        fn array_slice_mut_as_simd128(
+            _slice: &mut [Self::UnderlyingArray],
+        ) -> Option<&mut [[$elem; $simd128_len]]> {
+            None
+        }
+    };
+}
+
+#[allow(unused_macros)]
+macro_rules! impl_raw_accessors {
+    ($vec:ty, $raw:ty, $desc:ty) => {
+        impl $vec {
+            #[inline(always)]
+            pub fn raw(self) -> $raw {
+                self.0
+            }
+
+            #[inline(always)]
+            pub fn descriptor(self) -> $desc {
+                self.1
+            }
+
+            #[inline(always)]
+            pub fn from_raw(d: $desc, raw: $raw) -> Self {
+                Self(raw, d)
+            }
+        }
+    };
+}
+
+#[allow(unused_imports)]
+pub(crate) use impl_raw_accessors;
+
+macro_rules! impl_isa_conversions {
+    (scalar, $ty:ty) => {
+        #[inline(always)]
+        fn as_scalar(self) -> Option<$ty> {
+            Some(self)
+        }
+
+        #[inline(always)]
+        fn from_scalar(v: $ty) -> Option<Self> {
+            Some(v)
+        }
+    };
+    (sse42, $ty:ty) => {
+        #[inline(always)]
+        fn as_sse42(self) -> Option<$ty> {
+            Some(self)
+        }
+
+        #[inline(always)]
+        fn from_sse42(v: $ty) -> Option<Self> {
+            Some(v)
+        }
+    };
+    (avx, $ty:ty) => {
+        #[inline(always)]
+        fn as_avx(self) -> Option<$ty> {
+            Some(self)
+        }
+
+        #[inline(always)]
+        fn from_avx(v: $ty) -> Option<Self> {
+            Some(v)
+        }
+    };
+    (avx512, $ty:ty) => {
+        #[inline(always)]
+        fn as_avx512(self) -> Option<$ty> {
+            Some(self)
+        }
+
+        #[inline(always)]
+        fn from_avx512(v: $ty) -> Option<Self> {
+            Some(v)
+        }
+    };
+    (neon, $ty:ty) => {
+        #[inline(always)]
+        fn as_neon(self) -> Option<$ty> {
+            Some(self)
+        }
+
+        #[inline(always)]
+        fn from_neon(v: $ty) -> Option<Self> {
+            Some(v)
+        }
+    };
+    (simd128, $ty:ty) => {
+        #[inline(always)]
+        fn as_simd128(self) -> Option<$ty> {
+            Some(self)
+        }
+
+        #[inline(always)]
+        fn from_simd128(v: $ty) -> Option<Self> {
+            Some(v)
+        }
+    };
+}
+
+pub(crate) use impl_isa_conversions;
+
+macro_rules! impl_isa_array_conversions {
+    (scalar, $elem:ty, $len:literal) => {
+        #[inline(always)]
+        fn array_slice_as_scalar(slice: &[Self::UnderlyingArray]) -> Option<&[[$elem; $len]]> {
+            Some(slice)
+        }
+
+        #[inline(always)]
+        fn array_slice_mut_as_scalar(
+            slice: &mut [Self::UnderlyingArray],
+        ) -> Option<&mut [[$elem; $len]]> {
+            Some(slice)
+        }
+    };
+    (sse42, $elem:ty, $len:literal) => {
+        #[inline(always)]
+        fn array_slice_as_sse42(slice: &[Self::UnderlyingArray]) -> Option<&[[$elem; $len]]> {
+            Some(slice)
+        }
+
+        #[inline(always)]
+        fn array_slice_mut_as_sse42(
+            slice: &mut [Self::UnderlyingArray],
+        ) -> Option<&mut [[$elem; $len]]> {
+            Some(slice)
+        }
+    };
+    (avx, $elem:ty, $len:literal) => {
+        #[inline(always)]
+        fn array_slice_as_avx(slice: &[Self::UnderlyingArray]) -> Option<&[[$elem; $len]]> {
+            Some(slice)
+        }
+
+        #[inline(always)]
+        fn array_slice_mut_as_avx(
+            slice: &mut [Self::UnderlyingArray],
+        ) -> Option<&mut [[$elem; $len]]> {
+            Some(slice)
+        }
+    };
+    (avx512, $elem:ty, $len:literal) => {
+        #[inline(always)]
+        fn array_slice_as_avx512(slice: &[Self::UnderlyingArray]) -> Option<&[[$elem; $len]]> {
+            Some(slice)
+        }
+
+        #[inline(always)]
+        fn array_slice_mut_as_avx512(
+            slice: &mut [Self::UnderlyingArray],
+        ) -> Option<&mut [[$elem; $len]]> {
+            Some(slice)
+        }
+    };
+    (neon, $elem:ty, $len:literal) => {
+        #[inline(always)]
+        fn array_slice_as_neon(slice: &[Self::UnderlyingArray]) -> Option<&[[$elem; $len]]> {
+            Some(slice)
+        }
+
+        #[inline(always)]
+        fn array_slice_mut_as_neon(
+            slice: &mut [Self::UnderlyingArray],
+        ) -> Option<&mut [[$elem; $len]]> {
+            Some(slice)
+        }
+    };
+    (simd128, $elem:ty, $len:literal) => {
+        #[inline(always)]
+        fn array_slice_as_simd128(slice: &[Self::UnderlyingArray]) -> Option<&[[$elem; $len]]> {
+            Some(slice)
+        }
+
+        #[inline(always)]
+        fn array_slice_mut_as_simd128(
+            slice: &mut [Self::UnderlyingArray],
+        ) -> Option<&mut [[$elem; $len]]> {
+            Some(slice)
+        }
+    };
+}
+
+pub(crate) use impl_isa_array_conversions;
 
 pub trait SimdDescriptor: Sized + Copy + Debug + Send + Sync {
     type F32Vec: F32SimdVec<Descriptor = Self>;
@@ -78,7 +440,81 @@ pub trait SimdDescriptor: Sized + Copy + Debug + Send + Sync {
     /// This enables establishing an unbroken chain of inline functions from the feature-annotated
     /// gateway up to the closure, allowing SIMD intrinsics to be used safely.
     fn call<R>(self, f: impl FnOnce(Self) -> R) -> R;
+
+    #[inline(always)]
+    fn as_scalar(self) -> Option<ScalarDescriptor> {
+        None
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "sse42"))]
+    #[inline(always)]
+    fn as_sse42(self) -> Option<Sse42Descriptor> {
+        None
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "avx"))]
+    #[inline(always)]
+    fn as_avx(self) -> Option<AvxDescriptor> {
+        None
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    #[inline(always)]
+    fn as_avx512(self) -> Option<Avx512Descriptor> {
+        None
+    }
+
+    #[cfg(all(target_arch = "aarch64", feature = "neon"))]
+    #[inline(always)]
+    fn as_neon(self) -> Option<NeonDescriptor> {
+        None
+    }
+
+    #[cfg(all(target_arch = "wasm32", feature = "simd128"))]
+    #[inline(always)]
+    fn as_simd128(self) -> Option<Simd128Descriptor> {
+        None
+    }
 }
+
+/// Subtrait for 128-bit SIMD descriptors (`Sse42Descriptor`, `NeonDescriptor`, `Simd128Descriptor`).
+pub trait SimdDescriptor128:
+    SimdDescriptor<
+        F32Vec: F32SimdVec<Descriptor = Self, UnderlyingArray = [f32; 4]>,
+        I16Vec: I16SimdVec<Descriptor = Self, UnderlyingArray = [i16; 8]>,
+    >
+{
+}
+
+/// Subtrait for 256-bit SIMD descriptors (`AvxDescriptor`).
+pub trait SimdDescriptor256:
+    SimdDescriptor<
+        F32Vec: F32SimdVec<Descriptor = Self, UnderlyingArray = [f32; 8]>,
+        I16Vec: I16SimdVec<Descriptor = Self, UnderlyingArray = [i16; 16]>,
+    >
+{
+}
+
+/// Subtrait for 512-bit SIMD descriptors (`Avx512Descriptor`).
+pub trait SimdDescriptor512:
+    SimdDescriptor<
+        F32Vec: F32SimdVec<Descriptor = Self, UnderlyingArray = [f32; 16]>,
+        I16Vec: I16SimdVec<Descriptor = Self, UnderlyingArray = [i16; 32]>,
+    >
+{
+}
+
+pub type F32Vec<D> = <D as SimdDescriptor>::F32Vec;
+pub type I32Vec<D> = <D as SimdDescriptor>::I32Vec;
+pub type I16Vec<D> = <D as SimdDescriptor>::I16Vec;
+pub type U64Vec<D> = <D as SimdDescriptor>::U64Vec;
+pub type U32Vec<D> = <D as SimdDescriptor>::U32Vec;
+pub type U16Vec<D> = <D as SimdDescriptor>::U16Vec;
+pub type U8Vec<D> = <D as SimdDescriptor>::U8Vec;
+pub type Mask<D> = <D as SimdDescriptor>::Mask;
+pub type Mask16<D> = <D as SimdDescriptor>::Mask16;
+pub type F32VecArray<D> = <<D as SimdDescriptor>::F32Vec as F32SimdVec>::UnderlyingArray;
+pub type I16VecArray<D> = <<D as SimdDescriptor>::I16Vec as I16SimdVec>::UnderlyingArray;
 
 pub trait F32SimdVec:
     Sized
@@ -100,7 +536,13 @@ pub trait F32SimdVec:
     const LEN: usize;
 
     /// An array of f32 of length Self::LEN.
-    type UnderlyingArray: Copy + Default + Debug;
+    type UnderlyingArray: Copy
+        + Default
+        + Debug
+        + AsRef<[f32]>
+        + AsMut<[f32]>
+        + std::ops::Index<usize, Output = f32>
+        + std::ops::IndexMut<usize, Output = f32>;
 
     /// Converts v to an array of v.
     fn splat(d: Self::Descriptor, v: f32) -> Self;
@@ -240,6 +682,16 @@ pub trait F32SimdVec:
     /// Uses hardware conversion instructions when available (F16C on x86, NEON fp16 on ARM).
     /// Requires `dest.len() >= Self::LEN` or it will panic.
     fn store_f16_bits(self, dest: &mut [u16]);
+
+    decl_isa_conversions!(
+        f32,
+        F32VecSse42,
+        F32VecAvx,
+        F32VecAvx512,
+        F32VecNeon,
+        F32VecSimd128
+    );
+    decl_isa_array_conversions!(f32, 1, 4, 8, 16, 4, 4);
 }
 
 pub trait I32SimdVec:
@@ -325,6 +777,15 @@ pub trait I32SimdVec:
     /// Stores the lower 8 bits of each i32 lane as u8 values.
     /// Requires `dest.len() >= Self::LEN` or it will panic.
     fn store_u8(self, dest: &mut [u8]);
+
+    decl_isa_conversions!(
+        std::num::Wrapping<i32>,
+        I32VecSse42,
+        I32VecAvx,
+        I32VecAvx512,
+        I32VecNeon,
+        I32VecSimd128
+    );
 }
 
 pub trait I16SimdVec:
@@ -352,7 +813,13 @@ pub trait I16SimdVec:
     const LEN: usize;
 
     /// An array of i16 of length Self::LEN.
-    type UnderlyingArray: Copy + Default + Debug;
+    type UnderlyingArray: Copy
+        + Default
+        + Debug
+        + AsRef<[i16]>
+        + AsMut<[i16]>
+        + std::ops::Index<usize, Output = i16>
+        + std::ops::IndexMut<usize, Output = i16>;
 
     /// Converts v to an array of v.
     fn splat(d: Self::Descriptor, v: i16) -> Self;
@@ -453,6 +920,16 @@ pub trait I16SimdVec:
     /// Stores the lower 8 bits of each lane into `dest`.
     /// Requires `dest.len() >= Self::LEN` or it will panic.
     fn store_u8(self, dest: &mut [u8]);
+
+    decl_isa_conversions!(
+        std::num::Wrapping<i16>,
+        I16VecSse42,
+        I16VecAvx,
+        I16VecAvx512,
+        I16VecNeon,
+        I16VecSimd128
+    );
+    decl_isa_array_conversions!(i16, 1, 8, 16, 32, 8, 8);
 }
 
 pub trait U64SimdVec:
@@ -488,6 +965,15 @@ pub trait U64SimdVec:
     fn shr<const AMOUNT_U: u32, const AMOUNT_I: i32>(self) -> Self;
 
     fn bitcast_to_u32(self) -> <<Self as U64SimdVec>::Descriptor as SimdDescriptor>::U32Vec;
+
+    decl_isa_conversions!(
+        std::num::Wrapping<u64>,
+        U64VecSse42,
+        U64VecAvx,
+        U64VecAvx512,
+        U64VecNeon,
+        U64VecSimd128
+    );
 }
 
 pub trait U32SimdVec: Sized + Copy + Debug + Send + Sync {
@@ -499,6 +985,15 @@ pub trait U32SimdVec: Sized + Copy + Debug + Send + Sync {
     fn bitcast_to_i32(self) -> <<Self as U32SimdVec>::Descriptor as SimdDescriptor>::I32Vec;
 
     fn shr<const AMOUNT_U: u32, const AMOUNT_I: i32>(self) -> Self;
+
+    decl_isa_conversions!(
+        std::num::Wrapping<u32>,
+        U32VecSse42,
+        U32VecAvx,
+        U32VecAvx512,
+        U32VecNeon,
+        U32VecSimd128
+    );
 }
 
 pub trait U8SimdVec: Sized + Copy + Debug + Send + Sync {
@@ -521,6 +1016,15 @@ pub trait U8SimdVec: Sized + Copy + Debug + Send + Sync {
     /// Stores four vectors interleaved: [a0, b0, c0, d0, a1, b1, c1, d1, ...].
     /// Requires `dest.len() >= 4 * Self::LEN` or it will panic.
     fn store_interleaved_4(a: Self, b: Self, c: Self, d: Self, dest: &mut [u8]);
+
+    decl_isa_conversions!(
+        u8,
+        U8VecSse42,
+        U8VecAvx,
+        U8VecAvx512,
+        U8VecNeon,
+        U8VecSimd128
+    );
 }
 
 pub trait U16SimdVec: Sized + Copy + Debug + Send + Sync {
@@ -545,6 +1049,15 @@ pub trait U16SimdVec: Sized + Copy + Debug + Send + Sync {
     fn store_interleaved_4(a: Self, b: Self, c: Self, d: Self, dest: &mut [u16]);
 
     fn bitcast_i16(self) -> <<Self as U16SimdVec>::Descriptor as SimdDescriptor>::I16Vec;
+
+    decl_isa_conversions!(
+        u16,
+        U16VecSse42,
+        U16VecAvx,
+        U16VecAvx512,
+        U16VecNeon,
+        U16VecSimd128
+    );
 }
 
 #[macro_export]
@@ -587,6 +1100,8 @@ pub trait SimdMask:
 
     // !self & rhs
     fn andnot(self, rhs: Self) -> Self;
+
+    decl_isa_conversions!(bool, MaskSse42, MaskAvx, MaskAvx512, MaskNeon, MaskSimd128);
 }
 
 pub trait SimdMask16:
@@ -609,6 +1124,15 @@ pub trait SimdMask16:
 
     // !self & rhs
     fn andnot(self, rhs: Self) -> Self;
+
+    decl_isa_conversions!(
+        bool,
+        Mask16Sse42,
+        Mask16Avx,
+        Mask16Avx512,
+        Mask16Neon,
+        Mask16Simd128
+    );
 }
 
 macro_rules! impl_f32_array_interface {
@@ -674,6 +1198,1289 @@ macro_rules! impl_i16_array_interface {
 }
 
 pub(crate) use impl_i16_array_interface;
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_isa_type {
+    (scalar, Desc) => {
+        $crate::ScalarDescriptor
+    };
+    (scalar, F32Vec) => {
+        f32
+    };
+    (scalar, I32Vec) => {
+        ::std::num::Wrapping<i32>
+    };
+    (scalar, I16Vec) => {
+        ::std::num::Wrapping<i16>
+    };
+    (scalar, U64Vec) => {
+        ::std::num::Wrapping<u64>
+    };
+    (scalar, U32Vec) => {
+        ::std::num::Wrapping<u32>
+    };
+    (scalar, U16Vec) => {
+        u16
+    };
+    (scalar, U8Vec) => {
+        u8
+    };
+    (scalar, Mask) => {
+        bool
+    };
+    (scalar, Mask16) => {
+        bool
+    };
+    (scalar, F32ArrRef) => {
+        &[[f32; 1]]
+    };
+    (scalar, F32ArrMut) => {
+        &mut [[f32; 1]]
+    };
+    (scalar, I16ArrRef) => {
+        &[[i16; 1]]
+    };
+    (scalar, I16ArrMut) => {
+        &mut [[i16; 1]]
+    };
+
+    (sse42, Desc) => {
+        $crate::Sse42Descriptor
+    };
+    (sse42, F32Vec) => {
+        $crate::F32VecSse42
+    };
+    (sse42, I32Vec) => {
+        $crate::I32VecSse42
+    };
+    (sse42, I16Vec) => {
+        $crate::I16VecSse42
+    };
+    (sse42, U64Vec) => {
+        $crate::U64VecSse42
+    };
+    (sse42, U32Vec) => {
+        $crate::U32VecSse42
+    };
+    (sse42, U16Vec) => {
+        $crate::U16VecSse42
+    };
+    (sse42, U8Vec) => {
+        $crate::U8VecSse42
+    };
+    (sse42, Mask) => {
+        $crate::MaskSse42
+    };
+    (sse42, Mask16) => {
+        $crate::Mask16Sse42
+    };
+    (sse42, F32ArrRef) => {
+        &[[f32; 4]]
+    };
+    (sse42, F32ArrMut) => {
+        &mut [[f32; 4]]
+    };
+    (sse42, I16ArrRef) => {
+        &[[i16; 8]]
+    };
+    (sse42, I16ArrMut) => {
+        &mut [[i16; 8]]
+    };
+
+    (avx, Desc) => {
+        $crate::AvxDescriptor
+    };
+    (avx, F32Vec) => {
+        $crate::F32VecAvx
+    };
+    (avx, I32Vec) => {
+        $crate::I32VecAvx
+    };
+    (avx, I16Vec) => {
+        $crate::I16VecAvx
+    };
+    (avx, U64Vec) => {
+        $crate::U64VecAvx
+    };
+    (avx, U32Vec) => {
+        $crate::U32VecAvx
+    };
+    (avx, U16Vec) => {
+        $crate::U16VecAvx
+    };
+    (avx, U8Vec) => {
+        $crate::U8VecAvx
+    };
+    (avx, Mask) => {
+        $crate::MaskAvx
+    };
+    (avx, Mask16) => {
+        $crate::Mask16Avx
+    };
+    (avx, F32ArrRef) => {
+        &[[f32; 8]]
+    };
+    (avx, F32ArrMut) => {
+        &mut [[f32; 8]]
+    };
+    (avx, I16ArrRef) => {
+        &[[i16; 16]]
+    };
+    (avx, I16ArrMut) => {
+        &mut [[i16; 16]]
+    };
+
+    (avx512, Desc) => {
+        $crate::Avx512Descriptor
+    };
+    (avx512, F32Vec) => {
+        $crate::F32VecAvx512
+    };
+    (avx512, I32Vec) => {
+        $crate::I32VecAvx512
+    };
+    (avx512, I16Vec) => {
+        $crate::I16VecAvx512
+    };
+    (avx512, U64Vec) => {
+        $crate::U64VecAvx512
+    };
+    (avx512, U32Vec) => {
+        $crate::U32VecAvx512
+    };
+    (avx512, U16Vec) => {
+        $crate::U16VecAvx512
+    };
+    (avx512, U8Vec) => {
+        $crate::U8VecAvx512
+    };
+    (avx512, Mask) => {
+        $crate::MaskAvx512
+    };
+    (avx512, Mask16) => {
+        $crate::Mask16Avx512
+    };
+    (avx512, F32ArrRef) => {
+        &[[f32; 16]]
+    };
+    (avx512, F32ArrMut) => {
+        &mut [[f32; 16]]
+    };
+    (avx512, I16ArrRef) => {
+        &[[i16; 32]]
+    };
+    (avx512, I16ArrMut) => {
+        &mut [[i16; 32]]
+    };
+
+    (neon, Desc) => {
+        $crate::NeonDescriptor
+    };
+    (neon, F32Vec) => {
+        $crate::F32VecNeon
+    };
+    (neon, I32Vec) => {
+        $crate::I32VecNeon
+    };
+    (neon, I16Vec) => {
+        $crate::I16VecNeon
+    };
+    (neon, U64Vec) => {
+        $crate::U64VecNeon
+    };
+    (neon, U32Vec) => {
+        $crate::U32VecNeon
+    };
+    (neon, U16Vec) => {
+        $crate::U16VecNeon
+    };
+    (neon, U8Vec) => {
+        $crate::U8VecNeon
+    };
+    (neon, Mask) => {
+        $crate::MaskNeon
+    };
+    (neon, Mask16) => {
+        $crate::Mask16Neon
+    };
+    (neon, F32ArrRef) => {
+        &[[f32; 4]]
+    };
+    (neon, F32ArrMut) => {
+        &mut [[f32; 4]]
+    };
+    (neon, I16ArrRef) => {
+        &[[i16; 8]]
+    };
+    (neon, I16ArrMut) => {
+        &mut [[i16; 8]]
+    };
+
+    (simd128, Desc) => {
+        $crate::Simd128Descriptor
+    };
+    (simd128, F32Vec) => {
+        $crate::F32VecSimd128
+    };
+    (simd128, I32Vec) => {
+        $crate::I32VecSimd128
+    };
+    (simd128, I16Vec) => {
+        $crate::I16VecSimd128
+    };
+    (simd128, U64Vec) => {
+        $crate::U64VecSimd128
+    };
+    (simd128, U32Vec) => {
+        $crate::U32VecSimd128
+    };
+    (simd128, U16Vec) => {
+        $crate::U16VecSimd128
+    };
+    (simd128, U8Vec) => {
+        $crate::U8VecSimd128
+    };
+    (simd128, Mask) => {
+        $crate::MaskSimd128
+    };
+    (simd128, Mask16) => {
+        $crate::Mask16Simd128
+    };
+    (simd128, F32ArrRef) => {
+        &[[f32; 4]]
+    };
+    (simd128, F32ArrMut) => {
+        &mut [[f32; 4]]
+    };
+    (simd128, I16ArrRef) => {
+        &[[i16; 8]]
+    };
+    (simd128, I16ArrMut) => {
+        &mut [[i16; 8]]
+    };
+
+    (v128, F32ArrRef) => {
+        &[[f32; 4]]
+    };
+    (v128, F32ArrMut) => {
+        &mut [[f32; 4]]
+    };
+    (v128, I16ArrRef) => {
+        &[[i16; 8]]
+    };
+    (v128, I16ArrMut) => {
+        &mut [[i16; 8]]
+    };
+
+    (v256, F32ArrRef) => {
+        &[[f32; 8]]
+    };
+    (v256, F32ArrMut) => {
+        &mut [[f32; 8]]
+    };
+    (v256, I16ArrRef) => {
+        &[[i16; 16]]
+    };
+    (v256, I16ArrMut) => {
+        &mut [[i16; 16]]
+    };
+
+    (v512, F32ArrRef) => {
+        &[[f32; 16]]
+    };
+    (v512, F32ArrMut) => {
+        &mut [[f32; 16]]
+    };
+    (v512, I16ArrRef) => {
+        &[[i16; 32]]
+    };
+    (v512, I16ArrMut) => {
+        &mut [[i16; 32]]
+    };
+
+    ((@width $w:ident $D:ident), F32ArrRef) => {
+        $crate::__simd_specialize_isa_type!($w, F32ArrRef)
+    };
+    ((@width $w:ident $D:ident), F32ArrMut) => {
+        $crate::__simd_specialize_isa_type!($w, F32ArrMut)
+    };
+    ((@width $w:ident $D:ident), I16ArrRef) => {
+        $crate::__simd_specialize_isa_type!($w, I16ArrRef)
+    };
+    ((@width $w:ident $D:ident), I16ArrMut) => {
+        $crate::__simd_specialize_isa_type!($w, I16ArrMut)
+    };
+    ((@width $w:ident $D:ident), $assoc:ident) => {
+        <$D as $crate::SimdDescriptor>::$assoc
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_arg_ty {
+    ($isa:tt, $D2:ident :: F32Vec) => {
+        $crate::__simd_specialize_isa_type!($isa, F32Vec)
+    };
+    ($isa:tt, F32Vec < $D2:ty >) => {
+        $crate::__simd_specialize_isa_type!($isa, F32Vec)
+    };
+    ($isa:tt, $p:ident :: F32Vec < $D2:ty >) => {
+        $crate::__simd_specialize_isa_type!($isa, F32Vec)
+    };
+    ($isa:tt, $D2:ident :: I32Vec) => {
+        $crate::__simd_specialize_isa_type!($isa, I32Vec)
+    };
+    ($isa:tt, I32Vec < $D2:ty >) => {
+        $crate::__simd_specialize_isa_type!($isa, I32Vec)
+    };
+    ($isa:tt, $p:ident :: I32Vec < $D2:ty >) => {
+        $crate::__simd_specialize_isa_type!($isa, I32Vec)
+    };
+    ($isa:tt, $D2:ident :: I16Vec) => {
+        $crate::__simd_specialize_isa_type!($isa, I16Vec)
+    };
+    ($isa:tt, I16Vec < $D2:ty >) => {
+        $crate::__simd_specialize_isa_type!($isa, I16Vec)
+    };
+    ($isa:tt, $p:ident :: I16Vec < $D2:ty >) => {
+        $crate::__simd_specialize_isa_type!($isa, I16Vec)
+    };
+    ($isa:tt, $D2:ident :: U64Vec) => {
+        $crate::__simd_specialize_isa_type!($isa, U64Vec)
+    };
+    ($isa:tt, U64Vec < $D2:ty >) => {
+        $crate::__simd_specialize_isa_type!($isa, U64Vec)
+    };
+    ($isa:tt, $p:ident :: U64Vec < $D2:ty >) => {
+        $crate::__simd_specialize_isa_type!($isa, U64Vec)
+    };
+    ($isa:tt, $D2:ident :: U32Vec) => {
+        $crate::__simd_specialize_isa_type!($isa, U32Vec)
+    };
+    ($isa:tt, U32Vec < $D2:ty >) => {
+        $crate::__simd_specialize_isa_type!($isa, U32Vec)
+    };
+    ($isa:tt, $p:ident :: U32Vec < $D2:ty >) => {
+        $crate::__simd_specialize_isa_type!($isa, U32Vec)
+    };
+    ($isa:tt, $D2:ident :: U16Vec) => {
+        $crate::__simd_specialize_isa_type!($isa, U16Vec)
+    };
+    ($isa:tt, U16Vec < $D2:ty >) => {
+        $crate::__simd_specialize_isa_type!($isa, U16Vec)
+    };
+    ($isa:tt, $p:ident :: U16Vec < $D2:ty >) => {
+        $crate::__simd_specialize_isa_type!($isa, U16Vec)
+    };
+    ($isa:tt, $D2:ident :: U8Vec) => {
+        $crate::__simd_specialize_isa_type!($isa, U8Vec)
+    };
+    ($isa:tt, U8Vec < $D2:ty >) => {
+        $crate::__simd_specialize_isa_type!($isa, U8Vec)
+    };
+    ($isa:tt, $p:ident :: U8Vec < $D2:ty >) => {
+        $crate::__simd_specialize_isa_type!($isa, U8Vec)
+    };
+    ($isa:tt, $D2:ident :: Mask) => {
+        $crate::__simd_specialize_isa_type!($isa, Mask)
+    };
+    ($isa:tt, Mask < $D2:ty >) => {
+        $crate::__simd_specialize_isa_type!($isa, Mask)
+    };
+    ($isa:tt, $p:ident :: Mask < $D2:ty >) => {
+        $crate::__simd_specialize_isa_type!($isa, Mask)
+    };
+    ($isa:tt, $D2:ident :: Mask16) => {
+        $crate::__simd_specialize_isa_type!($isa, Mask16)
+    };
+    ($isa:tt, Mask16 < $D2:ty >) => {
+        $crate::__simd_specialize_isa_type!($isa, Mask16)
+    };
+    ($isa:tt, $p:ident :: Mask16 < $D2:ty >) => {
+        $crate::__simd_specialize_isa_type!($isa, Mask16)
+    };
+    ($isa:tt, & [ F32VecArray < $D2:ty > ]) => {
+        $crate::__simd_specialize_isa_type!($isa, F32ArrRef)
+    };
+    ($isa:tt, & [ $p:ident :: F32VecArray < $D2:ty > ]) => {
+        $crate::__simd_specialize_isa_type!($isa, F32ArrRef)
+    };
+    ($isa:tt, & mut [ F32VecArray < $D2:ty > ]) => {
+        $crate::__simd_specialize_isa_type!($isa, F32ArrMut)
+    };
+    ($isa:tt, & mut [ $p:ident :: F32VecArray < $D2:ty > ]) => {
+        $crate::__simd_specialize_isa_type!($isa, F32ArrMut)
+    };
+    ($isa:tt, & [ I16VecArray < $D2:ty > ]) => {
+        $crate::__simd_specialize_isa_type!($isa, I16ArrRef)
+    };
+    ($isa:tt, & [ $p:ident :: I16VecArray < $D2:ty > ]) => {
+        $crate::__simd_specialize_isa_type!($isa, I16ArrRef)
+    };
+    ($isa:tt, & mut [ I16VecArray < $D2:ty > ]) => {
+        $crate::__simd_specialize_isa_type!($isa, I16ArrMut)
+    };
+    ($isa:tt, & mut [ $p:ident :: I16VecArray < $D2:ty > ]) => {
+        $crate::__simd_specialize_isa_type!($isa, I16ArrMut)
+    };
+    ($isa:tt, & [ < $D2:ident :: F32Vec as F32SimdVec > :: UnderlyingArray ]) => {
+        $crate::__simd_specialize_isa_type!($isa, F32ArrRef)
+    };
+    ($isa:tt, & [ < $D2:ident :: F32Vec as $p:ident :: F32SimdVec > :: UnderlyingArray ]) => {
+        $crate::__simd_specialize_isa_type!($isa, F32ArrRef)
+    };
+    ($isa:tt, & mut [ < $D2:ident :: F32Vec as F32SimdVec > :: UnderlyingArray ]) => {
+        $crate::__simd_specialize_isa_type!($isa, F32ArrMut)
+    };
+    ($isa:tt, & mut [ < $D2:ident :: F32Vec as $p:ident :: F32SimdVec > :: UnderlyingArray ]) => {
+        $crate::__simd_specialize_isa_type!($isa, F32ArrMut)
+    };
+    ($isa:tt, & [ < $D2:ident :: I16Vec as I16SimdVec > :: UnderlyingArray ]) => {
+        $crate::__simd_specialize_isa_type!($isa, I16ArrRef)
+    };
+    ($isa:tt, & [ < $D2:ident :: I16Vec as $p:ident :: I16SimdVec > :: UnderlyingArray ]) => {
+        $crate::__simd_specialize_isa_type!($isa, I16ArrRef)
+    };
+    ($isa:tt, & mut [ < $D2:ident :: I16Vec as I16SimdVec > :: UnderlyingArray ]) => {
+        $crate::__simd_specialize_isa_type!($isa, I16ArrMut)
+    };
+    ($isa:tt, & mut [ < $D2:ident :: I16Vec as $p:ident :: I16SimdVec > :: UnderlyingArray ]) => {
+        $crate::__simd_specialize_isa_type!($isa, I16ArrMut)
+    };
+    ($isa:tt, $($other:tt)+) => {
+        $($other)+
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_arg_conv {
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, $D2:ident :: F32Vec) => {
+        <$D::F32Vec as $crate::F32SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, F32Vec < $D2:ty >) => {
+        <$D::F32Vec as $crate::F32SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, $p:ident :: F32Vec < $D2:ty >) => {
+        <$D::F32Vec as $crate::F32SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, $D2:ident :: I32Vec) => {
+        <$D::I32Vec as $crate::I32SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, I32Vec < $D2:ty >) => {
+        <$D::I32Vec as $crate::I32SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, $p:ident :: I32Vec < $D2:ty >) => {
+        <$D::I32Vec as $crate::I32SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, $D2:ident :: I16Vec) => {
+        <$D::I16Vec as $crate::I16SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, I16Vec < $D2:ty >) => {
+        <$D::I16Vec as $crate::I16SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, $p:ident :: I16Vec < $D2:ty >) => {
+        <$D::I16Vec as $crate::I16SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, $D2:ident :: U64Vec) => {
+        <$D::U64Vec as $crate::U64SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, U64Vec < $D2:ty >) => {
+        <$D::U64Vec as $crate::U64SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, $p:ident :: U64Vec < $D2:ty >) => {
+        <$D::U64Vec as $crate::U64SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, $D2:ident :: U32Vec) => {
+        <$D::U32Vec as $crate::U32SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, U32Vec < $D2:ty >) => {
+        <$D::U32Vec as $crate::U32SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, $p:ident :: U32Vec < $D2:ty >) => {
+        <$D::U32Vec as $crate::U32SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, $D2:ident :: U16Vec) => {
+        <$D::U16Vec as $crate::U16SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, U16Vec < $D2:ty >) => {
+        <$D::U16Vec as $crate::U16SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, $p:ident :: U16Vec < $D2:ty >) => {
+        <$D::U16Vec as $crate::U16SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, $D2:ident :: U8Vec) => {
+        <$D::U8Vec as $crate::U8SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, U8Vec < $D2:ty >) => {
+        <$D::U8Vec as $crate::U8SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, $p:ident :: U8Vec < $D2:ty >) => {
+        <$D::U8Vec as $crate::U8SimdVec>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, $D2:ident :: Mask) => {
+        <$D::Mask as $crate::SimdMask>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, Mask < $D2:ty >) => {
+        <$D::Mask as $crate::SimdMask>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, $p:ident :: Mask < $D2:ty >) => {
+        <$D::Mask as $crate::SimdMask>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, $D2:ident :: Mask16) => {
+        <$D::Mask16 as $crate::SimdMask16>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, Mask16 < $D2:ty >) => {
+        <$D::Mask16 as $crate::SimdMask16>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, $p:ident :: Mask16 < $D2:ty >) => {
+        <$D::Mask16 as $crate::SimdMask16>::$as_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, & [ F32VecArray < $D2:ty > ]) => {
+        <$D::F32Vec as $crate::F32SimdVec>::$arr_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, & [ $p:ident :: F32VecArray < $D2:ty > ]) => {
+        <$D::F32Vec as $crate::F32SimdVec>::$arr_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, & mut [ F32VecArray < $D2:ty > ]) => {
+        <$D::F32Vec as $crate::F32SimdVec>::$arr_mut_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, & mut [ $p:ident :: F32VecArray < $D2:ty > ]) => {
+        <$D::F32Vec as $crate::F32SimdVec>::$arr_mut_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, & [ I16VecArray < $D2:ty > ]) => {
+        <$D::I16Vec as $crate::I16SimdVec>::$arr_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, & [ $p:ident :: I16VecArray < $D2:ty > ]) => {
+        <$D::I16Vec as $crate::I16SimdVec>::$arr_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, & mut [ I16VecArray < $D2:ty > ]) => {
+        <$D::I16Vec as $crate::I16SimdVec>::$arr_mut_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, & mut [ $p:ident :: I16VecArray < $D2:ty > ]) => {
+        <$D::I16Vec as $crate::I16SimdVec>::$arr_mut_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, & [ < $D2:ident :: F32Vec as F32SimdVec > :: UnderlyingArray ]) => {
+        <$D::F32Vec as $crate::F32SimdVec>::$arr_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, & [ < $D2:ident :: F32Vec as $p:ident :: F32SimdVec > :: UnderlyingArray ]) => {
+        <$D::F32Vec as $crate::F32SimdVec>::$arr_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, & mut [ < $D2:ident :: F32Vec as F32SimdVec > :: UnderlyingArray ]) => {
+        <$D::F32Vec as $crate::F32SimdVec>::$arr_mut_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, & mut [ < $D2:ident :: F32Vec as $p:ident :: F32SimdVec > :: UnderlyingArray ]) => {
+        <$D::F32Vec as $crate::F32SimdVec>::$arr_mut_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, & [ < $D2:ident :: I16Vec as I16SimdVec > :: UnderlyingArray ]) => {
+        <$D::I16Vec as $crate::I16SimdVec>::$arr_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, & [ < $D2:ident :: I16Vec as $p:ident :: I16SimdVec > :: UnderlyingArray ]) => {
+        <$D::I16Vec as $crate::I16SimdVec>::$arr_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, & mut [ < $D2:ident :: I16Vec as I16SimdVec > :: UnderlyingArray ]) => {
+        <$D::I16Vec as $crate::I16SimdVec>::$arr_mut_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, & mut [ < $D2:ident :: I16Vec as $p:ident :: I16SimdVec > :: UnderlyingArray ]) => {
+        <$D::I16Vec as $crate::I16SimdVec>::$arr_mut_fn($arg).unwrap()
+    };
+    ($as_fn:ident, $arr_fn:ident, $arr_mut_fn:ident, $D:ident, $arg:ident, $($other:tt)+) => {
+        $arg
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_ret_ty {
+    ($isa:tt, ()) => {
+        ()
+    };
+    ($isa:tt, $($other:tt)+) => {
+        $crate::__simd_specialize_arg_ty!($isa, $($other)+)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_ret_conv {
+    ($from_fn:ident, $D:ident, $val:expr, $D2:ident :: F32Vec) => {
+        <$D::F32Vec as $crate::F32SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, F32Vec < $D2:ty >) => {
+        <$D::F32Vec as $crate::F32SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, $p:ident :: F32Vec < $D2:ty >) => {
+        <$D::F32Vec as $crate::F32SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, $D2:ident :: I32Vec) => {
+        <$D::I32Vec as $crate::I32SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, I32Vec < $D2:ty >) => {
+        <$D::I32Vec as $crate::I32SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, $p:ident :: I32Vec < $D2:ty >) => {
+        <$D::I32Vec as $crate::I32SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, $D2:ident :: I16Vec) => {
+        <$D::I16Vec as $crate::I16SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, I16Vec < $D2:ty >) => {
+        <$D::I16Vec as $crate::I16SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, $p:ident :: I16Vec < $D2:ty >) => {
+        <$D::I16Vec as $crate::I16SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, $D2:ident :: U64Vec) => {
+        <$D::U64Vec as $crate::U64SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, U64Vec < $D2:ty >) => {
+        <$D::U64Vec as $crate::U64SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, $p:ident :: U64Vec < $D2:ty >) => {
+        <$D::U64Vec as $crate::U64SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, $D2:ident :: U32Vec) => {
+        <$D::U32Vec as $crate::U32SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, U32Vec < $D2:ty >) => {
+        <$D::U32Vec as $crate::U32SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, $p:ident :: U32Vec < $D2:ty >) => {
+        <$D::U32Vec as $crate::U32SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, $D2:ident :: U16Vec) => {
+        <$D::U16Vec as $crate::U16SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, U16Vec < $D2:ty >) => {
+        <$D::U16Vec as $crate::U16SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, $p:ident :: U16Vec < $D2:ty >) => {
+        <$D::U16Vec as $crate::U16SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, $D2:ident :: U8Vec) => {
+        <$D::U8Vec as $crate::U8SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, U8Vec < $D2:ty >) => {
+        <$D::U8Vec as $crate::U8SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, $p:ident :: U8Vec < $D2:ty >) => {
+        <$D::U8Vec as $crate::U8SimdVec>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, $D2:ident :: Mask) => {
+        <$D::Mask as $crate::SimdMask>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, Mask < $D2:ty >) => {
+        <$D::Mask as $crate::SimdMask>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, $p:ident :: Mask < $D2:ty >) => {
+        <$D::Mask as $crate::SimdMask>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, $D2:ident :: Mask16) => {
+        <$D::Mask16 as $crate::SimdMask16>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, Mask16 < $D2:ty >) => {
+        <$D::Mask16 as $crate::SimdMask16>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, $p:ident :: Mask16 < $D2:ty >) => {
+        <$D::Mask16 as $crate::SimdMask16>::$from_fn($val).unwrap()
+    };
+    ($from_fn:ident, $D:ident, $val:expr, $($other:tt)+) => {
+        $val
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_arm_scalar {
+    ($d:ident : $D:ident, [$(($arg:ident : [$($arg_ty:tt)+]))*], [$($ret:tt)+], $body:block, $else:block) => {
+        if let ::core::option::Option::Some(__simd_d) = <$D as $crate::SimdDescriptor>::as_scalar($d) {
+            #[inline]
+            fn __simd_arm(
+                $d: $crate::ScalarDescriptor,
+                $(
+                    $arg: $crate::__simd_specialize_arg_ty!(scalar, $($arg_ty)+),
+                )*
+            ) -> $crate::__simd_specialize_ret_ty!(scalar, $($ret)+) {
+                let _ = (&$d, $(&$arg,)*);
+                $body
+            }
+            let __simd_ret = __simd_arm(
+                __simd_d,
+                $(
+                    $crate::__simd_specialize_arg_conv!(as_scalar, array_slice_as_scalar, array_slice_mut_as_scalar, $D, $arg, $($arg_ty)+),
+                )*
+            );
+            $crate::__simd_specialize_ret_conv!(from_scalar, $D, __simd_ret, $($ret)+)
+        } else $else
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_arm_common {
+    (
+        $isa:ident,
+        $desc:ident,
+        $feat:literal,
+        $as_desc:ident,
+        $as_vec:ident,
+        $from_vec:ident,
+        $arr:ident,
+        $arr_mut:ident;
+        $d:ident : $D:ident,
+        [$(($arg:ident : [$($arg_ty:tt)+]))*],
+        [$($ret:tt)+],
+        $body:block,
+        $else:block
+    ) => {
+        if let ::core::option::Option::Some(__simd_d) = <$D as $crate::SimdDescriptor>::$as_desc($d) {
+            #[target_feature(enable = $feat)]
+            #[inline]
+            fn __simd_arm(
+                $d: $crate::$desc,
+                $(
+                    $arg: $crate::__simd_specialize_arg_ty!($isa, $($arg_ty)+),
+                )*
+            ) -> $crate::__simd_specialize_ret_ty!($isa, $($ret)+) {
+                let _ = (&$d, $(&$arg,)*);
+                $body
+            }
+            // SAFETY: The `as_*` descriptor conversion witnesses that the target feature is enabled.
+            #[allow(unsafe_code, unused_unsafe, clippy::undocumented_unsafe_blocks)]
+            let __simd_ret = unsafe {
+                __simd_arm(
+                    __simd_d,
+                    $(
+                        $crate::__simd_specialize_arg_conv!($as_vec, $arr, $arr_mut, $D, $arg, $($arg_ty)+),
+                    )*
+                )
+            };
+            $crate::__simd_specialize_ret_conv!($from_vec, $D, __simd_ret, $($ret)+)
+        } else $else
+    };
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "sse42"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_arm_sse42 {
+    ($($tt:tt)*) => {
+        $crate::__simd_specialize_arm_common!(
+            sse42,
+            Sse42Descriptor,
+            "sse4.2",
+            as_sse42,
+            as_sse42,
+            from_sse42,
+            array_slice_as_sse42,
+            array_slice_mut_as_sse42;
+            $($tt)*
+        )
+    };
+}
+
+#[cfg(not(all(target_arch = "x86_64", feature = "sse42")))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_arm_sse42 {
+    ($d:ident : $D:ident, $params:tt, $ret:tt, $body:block, $else:block) => {
+        $else
+    };
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_arm_avx {
+    ($($tt:tt)*) => {
+        $crate::__simd_specialize_arm_common!(
+            avx,
+            AvxDescriptor,
+            "avx2,fma,f16c",
+            as_avx,
+            as_avx,
+            from_avx,
+            array_slice_as_avx,
+            array_slice_mut_as_avx;
+            $($tt)*
+        )
+    };
+}
+
+#[cfg(not(all(target_arch = "x86_64", feature = "avx")))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_arm_avx {
+    ($d:ident : $D:ident, $params:tt, $ret:tt, $body:block, $else:block) => {
+        $else
+    };
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_arm_avx512 {
+    ($($tt:tt)*) => {
+        $crate::__simd_specialize_arm_common!(
+            avx512,
+            Avx512Descriptor,
+            "avx512f,avx512bw",
+            as_avx512,
+            as_avx512,
+            from_avx512,
+            array_slice_as_avx512,
+            array_slice_mut_as_avx512;
+            $($tt)*
+        )
+    };
+}
+
+#[cfg(not(all(target_arch = "x86_64", feature = "avx512")))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_arm_avx512 {
+    ($d:ident : $D:ident, $params:tt, $ret:tt, $body:block, $else:block) => {
+        $else
+    };
+}
+
+#[cfg(all(target_arch = "aarch64", feature = "neon"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_arm_neon {
+    ($($tt:tt)*) => {
+        $crate::__simd_specialize_arm_common!(
+            neon,
+            NeonDescriptor,
+            "neon",
+            as_neon,
+            as_neon,
+            from_neon,
+            array_slice_as_neon,
+            array_slice_mut_as_neon;
+            $($tt)*
+        )
+    };
+}
+
+#[cfg(not(all(target_arch = "aarch64", feature = "neon")))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_arm_neon {
+    ($d:ident : $D:ident, $params:tt, $ret:tt, $body:block, $else:block) => {
+        $else
+    };
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "simd128"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_arm_simd128 {
+    ($($tt:tt)*) => {
+        $crate::__simd_specialize_arm_common!(
+            simd128,
+            Simd128Descriptor,
+            "simd128",
+            as_simd128,
+            as_simd128,
+            from_simd128,
+            array_slice_as_simd128,
+            array_slice_mut_as_simd128;
+            $($tt)*
+        )
+    };
+}
+
+#[cfg(not(all(target_arch = "wasm32", feature = "simd128")))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_arm_simd128 {
+    ($d:ident : $D:ident, $params:tt, $ret:tt, $body:block, $else:block) => {
+        $else
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_width_dispatch_backend {
+    (
+        $isa_arm:ident,
+        $desc:ident,
+        $feat:literal,
+        $as_desc:ident,
+        $as_vec:ident,
+        $from_vec:ident,
+        $arr:ident,
+        $arr_mut:ident;
+        $arm_fn:ident,
+        $d:ident : $D:ident,
+        [$(($arg:ident : [$($arg_ty:tt)+]))*],
+        [$($ret:tt)+],
+        $else:block
+    ) => {
+        if let ::core::option::Option::Some(__simd_d) = <$D as $crate::SimdDescriptor>::$as_desc($d) {
+            #[target_feature(enable = $feat)]
+            #[inline]
+            fn __simd_trampoline(
+                $d: $crate::$desc,
+                $(
+                    $arg: $crate::__simd_specialize_arg_ty!($isa_arm, $($arg_ty)+),
+                )*
+            ) -> $crate::__simd_specialize_ret_ty!($isa_arm, $($ret)+) {
+                $arm_fn::<$crate::$desc>($d, $($arg,)*)
+            }
+            // SAFETY: The `as_*` descriptor conversion witnesses that the target feature is enabled.
+            #[allow(unsafe_code, unused_unsafe, clippy::undocumented_unsafe_blocks)]
+            let __simd_ret = unsafe {
+                __simd_trampoline(
+                    __simd_d,
+                    $(
+                        $crate::__simd_specialize_arg_conv!($as_vec, $arr, $arr_mut, $D, $arg, $($arg_ty)+),
+                    )*
+                )
+            };
+            $crate::__simd_specialize_ret_conv!($from_vec, $D, __simd_ret, $($ret)+)
+        } else $else
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_arm_width_common {
+    (
+        $width:ident,
+        $trait_name:ident,
+        $call_macro:ident;
+        $d:ident : $D:ident,
+        [$(($arg:ident : [$($arg_ty:tt)+]))*],
+        [$($ret:tt)+],
+        $body:block,
+        $else:block
+    ) => {
+        {
+            #[allow(dead_code)]
+            #[inline(always)]
+            fn __simd_arm<$D: $crate::$trait_name>(
+                $d: $D,
+                $(
+                    $arg: $crate::__simd_specialize_arg_ty!((@width $width $D), $($arg_ty)+),
+                )*
+            ) -> $crate::__simd_specialize_ret_ty!((@width $width $D), $($ret)+) {
+                let _ = (&$d, $(&$arg,)*);
+                $body
+            }
+            $crate::$call_macro!(
+                __simd_arm,
+                $d : $D,
+                [$(($arg : [$($arg_ty)+]))*],
+                [$($ret)+],
+                $else
+            )
+        }
+    };
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "sse42"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_call_v128 {
+    ($arm_fn:ident, $d:ident : $D:ident, $params:tt, $ret:tt, $else:block) => {
+        $crate::__simd_specialize_width_dispatch_backend!(
+            sse42,
+            Sse42Descriptor,
+            "sse4.2",
+            as_sse42,
+            as_sse42,
+            from_sse42,
+            array_slice_as_sse42,
+            array_slice_mut_as_sse42;
+            $arm_fn,
+            $d : $D,
+            $params,
+            $ret,
+            $else
+        )
+    };
+}
+
+#[cfg(all(target_arch = "aarch64", feature = "neon"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_call_v128 {
+    ($arm_fn:ident, $d:ident : $D:ident, $params:tt, $ret:tt, $else:block) => {
+        $crate::__simd_specialize_width_dispatch_backend!(
+            neon,
+            NeonDescriptor,
+            "neon",
+            as_neon,
+            as_neon,
+            from_neon,
+            array_slice_as_neon,
+            array_slice_mut_as_neon;
+            $arm_fn,
+            $d : $D,
+            $params,
+            $ret,
+            $else
+        )
+    };
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "simd128"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_call_v128 {
+    ($arm_fn:ident, $d:ident : $D:ident, $params:tt, $ret:tt, $else:block) => {
+        $crate::__simd_specialize_width_dispatch_backend!(
+            simd128,
+            Simd128Descriptor,
+            "simd128",
+            as_simd128,
+            as_simd128,
+            from_simd128,
+            array_slice_as_simd128,
+            array_slice_mut_as_simd128;
+            $arm_fn,
+            $d : $D,
+            $params,
+            $ret,
+            $else
+        )
+    };
+}
+
+#[cfg(not(any(
+    all(target_arch = "x86_64", feature = "sse42"),
+    all(target_arch = "aarch64", feature = "neon"),
+    all(target_arch = "wasm32", feature = "simd128")
+)))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_call_v128 {
+    ($arm_fn:ident, $d:ident : $D:ident, $params:tt, $ret:tt, $else:block) => {
+        $else
+    };
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_call_v256 {
+    ($arm_fn:ident, $d:ident : $D:ident, $params:tt, $ret:tt, $else:block) => {
+        $crate::__simd_specialize_width_dispatch_backend!(
+            avx,
+            AvxDescriptor,
+            "avx2,fma,f16c",
+            as_avx,
+            as_avx,
+            from_avx,
+            array_slice_as_avx,
+            array_slice_mut_as_avx;
+            $arm_fn,
+            $d : $D,
+            $params,
+            $ret,
+            $else
+        )
+    };
+}
+
+#[cfg(not(all(target_arch = "x86_64", feature = "avx")))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_call_v256 {
+    ($arm_fn:ident, $d:ident : $D:ident, $params:tt, $ret:tt, $else:block) => {
+        $else
+    };
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_call_v512 {
+    ($arm_fn:ident, $d:ident : $D:ident, $params:tt, $ret:tt, $else:block) => {
+        $crate::__simd_specialize_width_dispatch_backend!(
+            avx512,
+            Avx512Descriptor,
+            "avx512f,avx512bw",
+            as_avx512,
+            as_avx512,
+            from_avx512,
+            array_slice_as_avx512,
+            array_slice_mut_as_avx512;
+            $arm_fn,
+            $d : $D,
+            $params,
+            $ret,
+            $else
+        )
+    };
+}
+
+#[cfg(not(all(target_arch = "x86_64", feature = "avx512")))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_call_v512 {
+    ($arm_fn:ident, $d:ident : $D:ident, $params:tt, $ret:tt, $else:block) => {
+        $else
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_arm_v128 {
+    ($($tt:tt)*) => {
+        $crate::__simd_specialize_arm_width_common!(v128, SimdDescriptor128, __simd_specialize_call_v128; $($tt)*)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_arm_v256 {
+    ($($tt:tt)*) => {
+        $crate::__simd_specialize_arm_width_common!(v256, SimdDescriptor256, __simd_specialize_call_v256; $($tt)*)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_arm_v512 {
+    ($($tt:tt)*) => {
+        $crate::__simd_specialize_arm_width_common!(v512, SimdDescriptor512, __simd_specialize_call_v512; $($tt)*)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_dispatch {
+    (scalar, $($rest:tt)*) => {
+        $crate::__simd_specialize_arm_scalar!($($rest)*)
+    };
+    (sse42, $($rest:tt)*) => {
+        $crate::__simd_specialize_arm_sse42!($($rest)*)
+    };
+    (avx, $($rest:tt)*) => {
+        $crate::__simd_specialize_arm_avx!($($rest)*)
+    };
+    (avx512, $($rest:tt)*) => {
+        $crate::__simd_specialize_arm_avx512!($($rest)*)
+    };
+    (neon, $($rest:tt)*) => {
+        $crate::__simd_specialize_arm_neon!($($rest)*)
+    };
+    (simd128, $($rest:tt)*) => {
+        $crate::__simd_specialize_arm_simd128!($($rest)*)
+    };
+    (v128, $($rest:tt)*) => {
+        $crate::__simd_specialize_arm_v128!($($rest)*)
+    };
+    (v256, $($rest:tt)*) => {
+        $crate::__simd_specialize_arm_v256!($($rest)*)
+    };
+    (v512, $($rest:tt)*) => {
+        $crate::__simd_specialize_arm_v512!($($rest)*)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_emit {
+    (@chain [$d:ident : $D:ident] $params:tt $ret:tt [] $fallback:block) => {
+        $fallback
+    };
+    (@chain [$d:ident : $D:ident] $params:tt $ret:tt [($isa:ident => $body:block) $($rest:tt)*] $fallback:block) => {
+        $crate::__simd_specialize_dispatch!(
+            $isa,
+            $d : $D,
+            $params,
+            $ret,
+            $body,
+            {
+                $crate::__simd_specialize_emit!(@chain [$d : $D] $params $ret [$($rest)*] $fallback)
+            }
+        )
+    };
+    ([$d:ident : $D:ident] $params:tt $ret:tt $arms:tt $fallback:block) => {
+        {
+            let _ = &$d;
+            $crate::__simd_specialize_emit!(@chain [$d : $D] $params $ret $arms $fallback)
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_parse_arms {
+    ([$d:ident : $D:ident] [$($params:tt)*] [$($ret:tt)+] [$($acc:tt)*] _ => $fallback:block $(,)?) => {
+        $crate::__simd_specialize_emit!([$d : $D] [$($params)*] [$($ret)+] [$($acc)*] $fallback)
+    };
+    ([$d:ident : $D:ident] [$($params:tt)*] [$($ret:tt)+] [$($acc:tt)*] _ => $fallback:expr $(,)?) => {
+        $crate::__simd_specialize_emit!([$d : $D] [$($params)*] [$($ret)+] [$($acc)*] { $fallback })
+    };
+    ([$d:ident : $D:ident] [$($params:tt)*] [$($ret:tt)+] [$($acc:tt)*] $isa:ident => $body:block , $($rest:tt)+) => {
+        $crate::__simd_specialize_parse_arms!([$d : $D] [$($params)*] [$($ret)+] [$($acc)* ($isa => $body)] $($rest)+)
+    };
+    ([$d:ident : $D:ident] [$($params:tt)*] [$($ret:tt)+] [$($acc:tt)*] $isa:ident => $body:block $($rest:tt)+) => {
+        $crate::__simd_specialize_parse_arms!([$d : $D] [$($params)*] [$($ret)+] [$($acc)* ($isa => $body)] $($rest)+)
+    };
+    ([$d:ident : $D:ident] [$($params:tt)*] [$($ret:tt)+] [$($acc:tt)*] $isa:ident => $body:expr , $($rest:tt)+) => {
+        $crate::__simd_specialize_parse_arms!([$d : $D] [$($params)*] [$($ret)+] [$($acc)* ($isa => { $body })] $($rest)+)
+    };
+    ([$d:ident : $D:ident] [$($params:tt)*] [$($ret:tt)+] [$($arms:tt)+]) => {
+        $crate::__simd_specialize_parse_arms!([$d : $D] [$($params)*] [$($ret)+] [] $($arms)+)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_parse_params {
+    (@init [$d:ident : $D:ident] [$($ret:tt)+] [$($arms:tt)*]) => {
+        $crate::__simd_specialize_parse_arms!([$d : $D] [] [$($ret)+] [$($arms)*])
+    };
+    (@init [$d:ident : $D:ident] [$($ret:tt)+] [$($arms:tt)*] $arg:ident : $($rest:tt)+) => {
+        $crate::__simd_specialize_parse_params!(@ty [$d : $D] [] [$arg] [] [$($ret)+] [$($arms)*] $($rest)+)
+    };
+    (@ty [$d:ident : $D:ident] [$($parsed:tt)*] [$cur_arg:ident] [$($cur_ty:tt)+] [$($ret:tt)+] [$($arms:tt)*] , $next:ident : $($rest:tt)+) => {
+        $crate::__simd_specialize_parse_params!(@ty [$d : $D] [$($parsed)* ($cur_arg : [$($cur_ty)+])] [$next] [] [$($ret)+] [$($arms)*] $($rest)+)
+    };
+    (@ty [$d:ident : $D:ident] [$($parsed:tt)*] [$cur_arg:ident] [$($cur_ty:tt)+] [$($ret:tt)+] [$($arms:tt)*] ,) => {
+        $crate::__simd_specialize_parse_arms!([$d : $D] [$($parsed)* ($cur_arg : [$($cur_ty)+])] [$($ret)+] [$($arms)*])
+    };
+    (@ty [$d:ident : $D:ident] [$($parsed:tt)*] [$cur_arg:ident] [$($cur_ty:tt)+] [$($ret:tt)+] [$($arms:tt)*]) => {
+        $crate::__simd_specialize_parse_arms!([$d : $D] [$($parsed)* ($cur_arg : [$($cur_ty)+])] [$($ret)+] [$($arms)*])
+    };
+    (@ty [$d:ident : $D:ident] [$($parsed:tt)*] [$cur_arg:ident] [$($cur_ty:tt)*] [$($ret:tt)+] [$($arms:tt)*] $t:tt $($rest:tt)*) => {
+        $crate::__simd_specialize_parse_params!(@ty [$d : $D] [$($parsed)*] [$cur_arg] [$($cur_ty)* $t] [$($ret)+] [$($arms)*] $($rest)*)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_specialize_split_ret {
+    (@ret [$($ret:tt)+] [$d:ident : $D:ident] [$($rest_params:tt)*] { $($arms:tt)* }) => {
+        $crate::__simd_specialize_parse_params!(@init [$d : $D] [$($ret)+] [$($arms)*] $($rest_params)*)
+    };
+    (@ret [$($ret:tt)*] [$d:ident : $D:ident] [$($rest_params:tt)*] $t:tt $($tail:tt)+) => {
+        $crate::__simd_specialize_split_ret!(@ret [$($ret)* $t] [$d : $D] [$($rest_params)*] $($tail)+)
+    };
+}
+
+/// Dispatches to a platform-specific SIMD implementation when `d` matches an arm's ISA, falling
+/// back to `_ => { ... }` otherwise.
+#[macro_export]
+macro_rules! simd_specialize {
+    (
+        fn($d:ident : $D:ident $(, $($rest_params:tt)*)?) -> $($after:tt)+
+    ) => {
+        $crate::__simd_specialize_split_ret!(@ret [] [$d : $D] [$($($rest_params)*)?] $($after)+)
+    };
+    (
+        fn($d:ident : $D:ident $(, $($rest_params:tt)*)?) { $($arms:tt)* }
+    ) => {
+        $crate::__simd_specialize_parse_params!(@init [$d : $D] [()] [$($arms)*] $($($rest_params)*)?)
+    };
+}
 
 #[cfg(test)]
 mod test {
@@ -2238,4 +4045,190 @@ mod test {
         }
     }
     test_all_instruction_sets!(test_i16_store_interleaved_4);
+
+    fn test_as_isa_roundtrip<D: SimdDescriptor>(d: D) {
+        let len = D::F32Vec::LEN;
+        let input: Vec<f32> = (0..len).map(|i| i as f32 + 0.5).collect();
+        let v = D::F32Vec::load(d, &input);
+
+        if let Some(sd) = d.as_scalar() {
+            let sv = v.as_scalar().unwrap();
+            assert_eq!(sv, input[0]);
+            let back = D::F32Vec::from_scalar(sv).unwrap();
+            let mut out = vec![0.0; len];
+            back.store(&mut out);
+            assert_eq!(out, input);
+            assert!(sd.as_scalar().is_some());
+        }
+
+        #[cfg(all(target_arch = "x86_64", feature = "sse42"))]
+        if let Some(sd) = d.as_sse42() {
+            let sv = v.as_sse42().unwrap();
+            let raw = sv.raw();
+            let back = crate::F32VecSse42::from_raw(sd, raw);
+            let gen_back = D::F32Vec::from_sse42(back).unwrap();
+            let mut out = vec![0.0; len];
+            gen_back.store(&mut out);
+            assert_eq!(out, input);
+            assert!(sv.descriptor().as_sse42().is_some());
+        }
+
+        #[cfg(all(target_arch = "x86_64", feature = "avx"))]
+        if let Some(ad) = d.as_avx() {
+            let av = v.as_avx().unwrap();
+            let raw = av.raw();
+            let back = crate::F32VecAvx::from_raw(ad, raw);
+            let gen_back = D::F32Vec::from_avx(back).unwrap();
+            let mut out = vec![0.0; len];
+            gen_back.store(&mut out);
+            assert_eq!(out, input);
+        }
+
+        #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+        if let Some(zd) = d.as_avx512() {
+            let zv = v.as_avx512().unwrap();
+            let raw = zv.raw();
+            let back = crate::F32VecAvx512::from_raw(zd, raw);
+            let gen_back = D::F32Vec::from_avx512(back).unwrap();
+            let mut out = vec![0.0; len];
+            gen_back.store(&mut out);
+            assert_eq!(out, input);
+        }
+    }
+    test_all_instruction_sets!(test_as_isa_roundtrip);
+
+    #[deny(unsafe_code)]
+    fn test_simd_specialize<D: SimdDescriptor>(d: D) {
+        use crate::{F32Vec, F32VecArray, I16VecArray};
+
+        let len = D::F32Vec::LEN;
+        let a_data: Vec<f32> = (0..len).map(|i| i as f32 + 1.0).collect();
+        let b_data: Vec<f32> = (0..len).map(|i| (i * 2) as f32).collect();
+        let a = D::F32Vec::load(d, &a_data);
+        let b = D::F32Vec::load(d, &b_data);
+
+        // 1. Vector arguments (both D::F32Vec and F32Vec<D>), partial ISA arms, vector return.
+        #[deny(unsafe_code)]
+        fn scale_and_add_bias<D: SimdDescriptor>(
+            d: D,
+            a: D::F32Vec,
+            b: F32Vec<D>,
+            bias: f32,
+        ) -> F32Vec<D> {
+            crate::simd_specialize!(
+                fn(d: D, a: D::F32Vec, b: F32Vec<D>, bias: f32) -> F32Vec<D> {
+                    avx => {
+                        let raw = std::arch::x86_64::_mm256_add_ps(
+                            a.raw(),
+                            crate::F32VecAvx::splat(d, bias).raw(),
+                        );
+                        crate::F32VecAvx::from_raw(d, raw) + b
+                    }
+                    sse42 => a + crate::F32VecSse42::splat(d, bias) + b,
+                    _ => a + D::F32Vec::splat(d, bias) + b,
+                }
+            )
+        }
+        let mut out = vec![0.0f32; len];
+        let res = scale_and_add_bias(d, a, b, 3.0);
+        res.store(&mut out);
+        for i in 0..len {
+            assert_eq!(out[i], a_data[i] + 3.0 + b_data[i]);
+        }
+
+        // 2. Mutable F32VecArray and I16VecArray slices + scalar arg.
+        #[deny(unsafe_code)]
+        fn set_f32_ends<D: SimdDescriptor>(d: D, data: &mut [F32VecArray<D>], val: f32) {
+            crate::simd_specialize!(
+                fn(d: D, data: &mut [F32VecArray<D>], val: f32) {
+                    avx => {
+                        data[0][0] = val;
+                        data[1][7] = val * 2.0;
+                    }
+                    sse42 => {
+                        data[0][0] = val;
+                        data[1][3] = val * 2.0;
+                    }
+                    _ => {
+                        data[0][0] = val;
+                        data[1][D::F32Vec::LEN - 1] = val * 2.0;
+                    }
+                }
+            );
+        }
+
+        let mut arr_f32 = vec![0.0f32; len * 2];
+        set_f32_ends(d, D::F32Vec::make_array_slice_mut(&mut arr_f32), 7.0);
+        assert_eq!(arr_f32[0], 7.0);
+        assert_eq!(arr_f32[len * 2 - 1], 14.0);
+
+        #[deny(unsafe_code)]
+        fn set_i16_last<D: SimdDescriptor>(d: D, data: &mut [I16VecArray<D>], val: i16) {
+            crate::simd_specialize!(
+                fn(d: D, data: &mut [I16VecArray<D>], val: i16) {
+                    avx => {
+                        data[0][15] = val;
+                    }
+                    _ => {
+                        data[0][D::I16Vec::LEN - 1] = val;
+                    }
+                }
+            );
+        }
+
+        let i16_len = D::I16Vec::LEN;
+        let mut arr_i16 = vec![0i16; i16_len];
+        set_i16_last(d, D::I16Vec::make_array_slice_mut(&mut arr_i16), 42);
+        assert_eq!(arr_i16[i16_len - 1], 42);
+
+        // 3. Width arms (`v128`, `v256`, `v512`) and mixed ISA + width arms under `#[deny(unsafe_code)]`.
+        #[deny(unsafe_code)]
+        fn width_specialize<D: SimdDescriptor>(
+            d: D,
+            a: D::F32Vec,
+            data: &mut [F32VecArray<D>],
+            bias: f32,
+        ) -> F32Vec<D> {
+            crate::simd_specialize!(
+                fn(d: D, a: D::F32Vec, data: &mut [F32VecArray<D>], bias: f32) -> F32Vec<D> {
+                    v512 => {
+                        data[0][15] = bias * 4.0;
+                        a + D::F32Vec::splat(d, bias)
+                    }
+                    v256 => {
+                        data[0][7] = bias * 3.0;
+                        a + D::F32Vec::splat(d, bias)
+                    }
+                    neon => {
+                        data[0][3] = bias * 2.0;
+                        a + crate::F32VecNeon::splat(d, bias)
+                    }
+                    v128 => {
+                        data[0][3] = bias * 2.0;
+                        a + D::F32Vec::splat(d, bias)
+                    }
+                    _ => {
+                        data[0][D::F32Vec::LEN - 1] = bias;
+                        a + D::F32Vec::splat(d, bias)
+                    }
+                }
+            )
+        }
+
+        let mut arr_width = vec![0.0f32; len];
+        let res_w = width_specialize(d, a, D::F32Vec::make_array_slice_mut(&mut arr_width), 5.0);
+        let mut out_w = vec![0.0f32; len];
+        res_w.store(&mut out_w);
+        for i in 0..len {
+            assert_eq!(out_w[i], a_data[i] + 5.0);
+        }
+        let expected_factor = match len {
+            16 => 4.0,
+            8 => 3.0,
+            4 => 2.0,
+            _ => 1.0,
+        };
+        assert_eq!(arr_width[len - 1], 5.0 * expected_factor);
+    }
+    test_all_instruction_sets!(test_simd_specialize);
 }

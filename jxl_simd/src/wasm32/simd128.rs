@@ -67,7 +67,14 @@ macro_rules! fn_simd128 {
 #[repr(transparent)]
 pub struct Bf16Table8Simd128(v128);
 
+impl crate::SimdDescriptor128 for Simd128Descriptor {}
+
 impl SimdDescriptor for Simd128Descriptor {
+    #[inline(always)]
+    fn as_simd128(self) -> Option<Self> {
+        Some(self)
+    }
+
     type F32Vec = F32VecSimd128;
 
     type I32Vec = I32VecSimd128;
@@ -117,6 +124,8 @@ pub struct F32VecSimd128(v128, Simd128Descriptor);
 
 impl F32SimdVec for F32VecSimd128 {
     type Descriptor = Simd128Descriptor;
+    crate::impl_isa_conversions!(simd128, F32VecSimd128);
+    crate::impl_isa_array_conversions!(simd128, f32, 4);
 
     const LEN: usize = 4;
 
@@ -651,6 +660,7 @@ pub struct I32VecSimd128(v128, Simd128Descriptor);
 
 impl I32SimdVec for I32VecSimd128 {
     type Descriptor = Simd128Descriptor;
+    crate::impl_isa_conversions!(simd128, I32VecSimd128);
 
     const LEN: usize = 4;
 
@@ -884,6 +894,8 @@ pub struct I16VecSimd128(v128, Simd128Descriptor);
 
 impl I16SimdVec for I16VecSimd128 {
     type Descriptor = Simd128Descriptor;
+    crate::impl_isa_conversions!(simd128, I16VecSimd128);
+    crate::impl_isa_array_conversions!(simd128, i16, 8);
 
     const LEN: usize = 8;
 
@@ -1126,6 +1138,7 @@ pub struct U32VecSimd128(v128, Simd128Descriptor);
 
 impl U32SimdVec for U32VecSimd128 {
     type Descriptor = Simd128Descriptor;
+    crate::impl_isa_conversions!(simd128, U32VecSimd128);
 
     const LEN: usize = 4;
 
@@ -1147,6 +1160,7 @@ pub struct U64VecSimd128(v128, Simd128Descriptor);
 
 impl U64SimdVec for U64VecSimd128 {
     type Descriptor = Simd128Descriptor;
+    crate::impl_isa_conversions!(simd128, U64VecSimd128);
 
     const LEN: usize = 2;
 
@@ -1247,6 +1261,7 @@ pub struct U8VecSimd128(v128, Simd128Descriptor);
 
 impl U8SimdVec for U8VecSimd128 {
     type Descriptor = Simd128Descriptor;
+    crate::impl_isa_conversions!(simd128, U8VecSimd128);
     const LEN: usize = 16;
 
     fn_simd128!(
@@ -1357,6 +1372,7 @@ pub struct U16VecSimd128(v128, Simd128Descriptor);
 
 impl U16SimdVec for U16VecSimd128 {
     type Descriptor = Simd128Descriptor;
+    crate::impl_isa_conversions!(simd128, U16VecSimd128);
     const LEN: usize = 8;
 
     fn_simd128!(
@@ -1454,6 +1470,7 @@ pub struct MaskSimd128(v128, Simd128Descriptor);
 
 impl SimdMask for MaskSimd128 {
     type Descriptor = Simd128Descriptor;
+    crate::impl_isa_conversions!(simd128, MaskSimd128);
 
     #[inline(always)]
     fn if_then_else_f32(self, if_true: F32VecSimd128, if_false: F32VecSimd128) -> F32VecSimd128 {
@@ -1525,6 +1542,7 @@ pub struct Mask16Simd128(v128, Simd128Descriptor);
 
 impl SimdMask16 for Mask16Simd128 {
     type Descriptor = Simd128Descriptor;
+    crate::impl_isa_conversions!(simd128, Mask16Simd128);
 
     #[inline(always)]
     fn if_then_else_i16(self, if_true: I16VecSimd128, if_false: I16VecSimd128) -> I16VecSimd128 {
@@ -1574,3 +1592,13 @@ impl BitOr<Mask16Simd128> for Mask16Simd128 {
         Mask16Simd128(v128_or(self.0, rhs.0), self.1)
     }
 }
+
+crate::impl_raw_accessors!(F32VecSimd128, v128, Simd128Descriptor);
+crate::impl_raw_accessors!(I32VecSimd128, v128, Simd128Descriptor);
+crate::impl_raw_accessors!(I16VecSimd128, v128, Simd128Descriptor);
+crate::impl_raw_accessors!(U32VecSimd128, v128, Simd128Descriptor);
+crate::impl_raw_accessors!(U64VecSimd128, v128, Simd128Descriptor);
+crate::impl_raw_accessors!(U8VecSimd128, v128, Simd128Descriptor);
+crate::impl_raw_accessors!(U16VecSimd128, v128, Simd128Descriptor);
+crate::impl_raw_accessors!(MaskSimd128, v128, Simd128Descriptor);
+crate::impl_raw_accessors!(Mask16Simd128, v128, Simd128Descriptor);
