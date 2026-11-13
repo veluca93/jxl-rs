@@ -228,11 +228,6 @@ impl F32SimdVec for f32 {
     }
 
     impl_f32_array_interface!();
-
-    #[inline(always)]
-    fn transpose_square(_d: Self::Descriptor, _data: &mut [Self::UnderlyingArray], _stride: usize) {
-        // Nothing to do.
-    }
 }
 
 impl I32SimdVec for Wrapping<i32> {
@@ -407,11 +402,6 @@ impl I16SimdVec for Wrapping<i16> {
     }
 
     impl_i16_array_interface!();
-
-    #[inline(always)]
-    fn transpose_square(_d: Self::Descriptor, _data: &mut [Self::UnderlyingArray], _stride: usize) {
-        // Nothing to do for 1x1 transpose.
-    }
 
     #[inline(always)]
     fn store_u8(self, dest: &mut [u8]) {

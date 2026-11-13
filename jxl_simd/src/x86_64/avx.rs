@@ -18,7 +18,7 @@ use crate::{U32SimdVec, U64SimdVec, impl_f32_array_interface, impl_i16_array_int
 
 /// Core 8x8 transpose algorithm for AVX2.
 /// Takes 8 __m256 vectors representing rows and returns 8 transposed vectors.
-/// Used by both store_interleaved_8 and transpose_square.
+/// Used by `store_interleaved_8`.
 #[target_feature(enable = "avx2")]
 #[inline]
 fn transpose_8x8_core(
@@ -353,7 +353,7 @@ impl F32SimdVec for F32VecAvx {
             let [d0, d1, d2, d3, d4, d5, d6, d7, ..] = dest.as_chunks_mut::<8>().0 else {
                 panic!("dest too short");
             };
-            // This is essentially an 8x8 transpose, same algorithm as transpose_square
+            // Transpose the 8x8 block.
             let (c0, c1, c2, c3, c4, c5, c6, c7) =
                 transpose_8x8_core(a.0, b.0, c.0, d.0, e.0, f.0, g.0, h.0);
 
@@ -623,40 +623,6 @@ impl F32SimdVec for F32VecAvx {
         let bits = _mm256_cvtps_ph::<{ _MM_FROUND_TO_NEAREST_INT }>(this.0);
         unaligned::_mm_storeu_si128_u16(out, bits);
     });
-
-    #[inline(always)]
-    fn transpose_square(d: Self::Descriptor, data: &mut [Self::UnderlyingArray], stride: usize) {
-        #[target_feature(enable = "avx2")]
-        #[inline]
-        fn transpose8x8f32(d: AvxDescriptor, data: &mut [[f32; 8]], stride: usize) {
-            assert!(data.len() > stride * 7);
-
-            let r0 = F32VecAvx::load_array(d, &data[0]).0;
-            let r1 = F32VecAvx::load_array(d, &data[1 * stride]).0;
-            let r2 = F32VecAvx::load_array(d, &data[2 * stride]).0;
-            let r3 = F32VecAvx::load_array(d, &data[3 * stride]).0;
-            let r4 = F32VecAvx::load_array(d, &data[4 * stride]).0;
-            let r5 = F32VecAvx::load_array(d, &data[5 * stride]).0;
-            let r6 = F32VecAvx::load_array(d, &data[6 * stride]).0;
-            let r7 = F32VecAvx::load_array(d, &data[7 * stride]).0;
-
-            let (c0, c1, c2, c3, c4, c5, c6, c7) =
-                transpose_8x8_core(r0, r1, r2, r3, r4, r5, r6, r7);
-
-            F32VecAvx(c0, d).store_array(&mut data[0]);
-            F32VecAvx(c1, d).store_array(&mut data[1 * stride]);
-            F32VecAvx(c2, d).store_array(&mut data[2 * stride]);
-            F32VecAvx(c3, d).store_array(&mut data[3 * stride]);
-            F32VecAvx(c4, d).store_array(&mut data[4 * stride]);
-            F32VecAvx(c5, d).store_array(&mut data[5 * stride]);
-            F32VecAvx(c6, d).store_array(&mut data[6 * stride]);
-            F32VecAvx(c7, d).store_array(&mut data[7 * stride]);
-        }
-        // SAFETY: the safety invariant on `d` guarantees avx2
-        unsafe {
-            transpose8x8f32(d, data, stride);
-        }
-    }
 }
 
 impl Add<F32VecAvx> for F32VecAvx {
@@ -1029,126 +995,6 @@ impl I16SimdVec for I16VecAvx {
     }
 
     impl_i16_array_interface!();
-
-    #[inline(always)]
-    fn transpose_square(d: Self::Descriptor, data: &mut [Self::UnderlyingArray], stride: usize) {
-        #[target_feature(enable = "avx2")]
-        #[inline]
-        fn transpose16x16i16(d: AvxDescriptor, data: &mut [[i16; 16]], stride: usize) {
-            assert!(data.len() > stride * 15);
-
-            #[target_feature(enable = "avx2")]
-            #[inline]
-            fn transpose_8x8_inlane(
-                r0: __m256i,
-                r1: __m256i,
-                r2: __m256i,
-                r3: __m256i,
-                r4: __m256i,
-                r5: __m256i,
-                r6: __m256i,
-                r7: __m256i,
-            ) -> (
-                __m256i,
-                __m256i,
-                __m256i,
-                __m256i,
-                __m256i,
-                __m256i,
-                __m256i,
-                __m256i,
-            ) {
-                let t0 = _mm256_unpacklo_epi16(r0, r1);
-                let t1 = _mm256_unpackhi_epi16(r0, r1);
-                let t2 = _mm256_unpacklo_epi16(r2, r3);
-                let t3 = _mm256_unpackhi_epi16(r2, r3);
-                let t4 = _mm256_unpacklo_epi16(r4, r5);
-                let t5 = _mm256_unpackhi_epi16(r4, r5);
-                let t6 = _mm256_unpacklo_epi16(r6, r7);
-                let t7 = _mm256_unpackhi_epi16(r6, r7);
-
-                let u0 = _mm256_unpacklo_epi32(t0, t2);
-                let u1 = _mm256_unpackhi_epi32(t0, t2);
-                let u2 = _mm256_unpacklo_epi32(t1, t3);
-                let u3 = _mm256_unpackhi_epi32(t1, t3);
-                let u4 = _mm256_unpacklo_epi32(t4, t6);
-                let u5 = _mm256_unpackhi_epi32(t4, t6);
-                let u6 = _mm256_unpacklo_epi32(t5, t7);
-                let u7 = _mm256_unpackhi_epi32(t5, t7);
-
-                let s0 = _mm256_unpacklo_epi64(u0, u4);
-                let s1 = _mm256_unpackhi_epi64(u0, u4);
-                let s2 = _mm256_unpacklo_epi64(u1, u5);
-                let s3 = _mm256_unpackhi_epi64(u1, u5);
-                let s4 = _mm256_unpacklo_epi64(u2, u6);
-                let s5 = _mm256_unpackhi_epi64(u2, u6);
-                let s6 = _mm256_unpacklo_epi64(u3, u7);
-                let s7 = _mm256_unpackhi_epi64(u3, u7);
-
-                (s0, s1, s2, s3, s4, s5, s6, s7)
-            }
-
-            let r0 = I16VecAvx::load_array(d, &data[0]).0;
-            let r1 = I16VecAvx::load_array(d, &data[1 * stride]).0;
-            let r2 = I16VecAvx::load_array(d, &data[2 * stride]).0;
-            let r3 = I16VecAvx::load_array(d, &data[3 * stride]).0;
-            let r4 = I16VecAvx::load_array(d, &data[4 * stride]).0;
-            let r5 = I16VecAvx::load_array(d, &data[5 * stride]).0;
-            let r6 = I16VecAvx::load_array(d, &data[6 * stride]).0;
-            let r7 = I16VecAvx::load_array(d, &data[7 * stride]).0;
-            let r8 = I16VecAvx::load_array(d, &data[8 * stride]).0;
-            let r9 = I16VecAvx::load_array(d, &data[9 * stride]).0;
-            let r10 = I16VecAvx::load_array(d, &data[10 * stride]).0;
-            let r11 = I16VecAvx::load_array(d, &data[11 * stride]).0;
-            let r12 = I16VecAvx::load_array(d, &data[12 * stride]).0;
-            let r13 = I16VecAvx::load_array(d, &data[13 * stride]).0;
-            let r14 = I16VecAvx::load_array(d, &data[14 * stride]).0;
-            let r15 = I16VecAvx::load_array(d, &data[15 * stride]).0;
-
-            let (t0, t1, t2, t3, t4, t5, t6, t7) =
-                transpose_8x8_inlane(r0, r1, r2, r3, r4, r5, r6, r7);
-            let (b0, b1, b2, b3, b4, b5, b6, b7) =
-                transpose_8x8_inlane(r8, r9, r10, r11, r12, r13, r14, r15);
-
-            I16VecAvx(_mm256_permute2x128_si256::<0x20>(t0, b0), d).store_array(&mut data[0]);
-            I16VecAvx(_mm256_permute2x128_si256::<0x20>(t1, b1), d)
-                .store_array(&mut data[1 * stride]);
-            I16VecAvx(_mm256_permute2x128_si256::<0x20>(t2, b2), d)
-                .store_array(&mut data[2 * stride]);
-            I16VecAvx(_mm256_permute2x128_si256::<0x20>(t3, b3), d)
-                .store_array(&mut data[3 * stride]);
-            I16VecAvx(_mm256_permute2x128_si256::<0x20>(t4, b4), d)
-                .store_array(&mut data[4 * stride]);
-            I16VecAvx(_mm256_permute2x128_si256::<0x20>(t5, b5), d)
-                .store_array(&mut data[5 * stride]);
-            I16VecAvx(_mm256_permute2x128_si256::<0x20>(t6, b6), d)
-                .store_array(&mut data[6 * stride]);
-            I16VecAvx(_mm256_permute2x128_si256::<0x20>(t7, b7), d)
-                .store_array(&mut data[7 * stride]);
-
-            I16VecAvx(_mm256_permute2x128_si256::<0x31>(t0, b0), d)
-                .store_array(&mut data[8 * stride]);
-            I16VecAvx(_mm256_permute2x128_si256::<0x31>(t1, b1), d)
-                .store_array(&mut data[9 * stride]);
-            I16VecAvx(_mm256_permute2x128_si256::<0x31>(t2, b2), d)
-                .store_array(&mut data[10 * stride]);
-            I16VecAvx(_mm256_permute2x128_si256::<0x31>(t3, b3), d)
-                .store_array(&mut data[11 * stride]);
-            I16VecAvx(_mm256_permute2x128_si256::<0x31>(t4, b4), d)
-                .store_array(&mut data[12 * stride]);
-            I16VecAvx(_mm256_permute2x128_si256::<0x31>(t5, b5), d)
-                .store_array(&mut data[13 * stride]);
-            I16VecAvx(_mm256_permute2x128_si256::<0x31>(t6, b6), d)
-                .store_array(&mut data[14 * stride]);
-            I16VecAvx(_mm256_permute2x128_si256::<0x31>(t7, b7), d)
-                .store_array(&mut data[15 * stride]);
-        }
-
-        // SAFETY: the safety invariant on `d` guarantees avx2
-        unsafe {
-            transpose16x16i16(d, data, stride);
-        }
-    }
 
     fn_avx!(this: I16VecAvx, fn store_u8(dest: &mut [u8]) {
         let out = dest.first_chunk_mut::<16>().unwrap();

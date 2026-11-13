@@ -33,7 +33,9 @@ SIZES = [
 
 print(HEADER)
 
-print("use jxl_simd::{SimdDescriptor, F32SimdVec};")
+print("use jxl_simd::{F32SimdVec, SimdDescriptor};")
+print()
+print("use crate::transpose::transpose_square_f32;")
 print("use crate::*;")
 
 
@@ -44,18 +46,14 @@ def impl_r_less_c(ROWS, COLS):
     # Step 1: do rowblock-DCTs on the first K rows, transposing KxK blocks first.
     print("for i in 0..row_chunks {")
     print("for j in 0..column_chunks {")
-    print(
-        "D::F32Vec::transpose_square(d, &mut data[i * %d + j..], column_chunks);" % COLS
-    )
+    print("transpose_square_f32(d, &mut data[i * %d + j..], column_chunks);" % COLS)
     print("}")
     print("do_reinterpreting_dct_%d_rowblock(d, &mut data[i * %d..]);" % (COLS, COLS))
     print("}")
     # Step 2: do column-DCTs on groups of K columns, transposing KxK blocks back.
     print("for i in 0..column_chunks {")
     print("for j in 0..row_chunks {")
-    print(
-        "D::F32Vec::transpose_square(d, &mut data[j * %d + i..], column_chunks);" % COLS
-    )
+    print("transpose_square_f32(d, &mut data[j * %d + i..], column_chunks);" % COLS)
     print("}")
     print("do_reinterpreting_dct_%d(d, &mut data[i..], column_chunks)" % ROWS)
     print("}")
@@ -71,10 +69,10 @@ def impl_square(N):
     # Step 2: do column-DCTs on groups of K columns, transposing KxK blocks and
     # swapping them in their final place as we do so.
     print("for i in 0..chunks {")
-    print("D::F32Vec::transpose_square(d, &mut data[i * %d + i..], chunks);" % N)
+    print("transpose_square_f32(d, &mut data[i * %d + i..], chunks);" % N)
     print("for j in i+1..chunks {")
-    print("D::F32Vec::transpose_square(d, &mut data[j * %d + i..], chunks);" % N)
-    print("D::F32Vec::transpose_square(d, &mut data[i * %d + j..], chunks);" % N)
+    print("transpose_square_f32(d, &mut data[j * %d + i..], chunks);" % N)
+    print("transpose_square_f32(d, &mut data[i * %d + j..], chunks);" % N)
     print("for k in 0..D::F32Vec::LEN {")
     print("data.swap(i * %d + j + k * chunks, j * %d + i + k * chunks);" % (N, N))
     print("}")
@@ -99,7 +97,7 @@ def impl_r_greater_c(ROWS, COLS):
         "let tr_block = |data: &mut [<D::F32Vec as F32SimdVec>::UnderlyingArray], i, j, l| {"
     )
     print(
-        "D::F32Vec::transpose_square(d, &mut data[i * %d + j + l * column_chunks..], row_chunks)};"
+        "transpose_square_f32(d, &mut data[i * %d + j + l * column_chunks..], row_chunks)};"
         % ROWS
     )
     print("tr_block(data, i, i, l);")

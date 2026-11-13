@@ -355,26 +355,6 @@ impl F32SimdVec for F32VecSimd128 {
         }
     );
 
-    #[inline(always)]
-    fn transpose_square(d: Simd128Descriptor, data: &mut [[f32; 4]], stride: usize) {
-        assert!(data.len() > 3 * stride);
-
-        let p0 = F32VecSimd128::load_array(d, &data[0]).0;
-        let p1 = F32VecSimd128::load_array(d, &data[stride]).0;
-        let p2 = F32VecSimd128::load_array(d, &data[2 * stride]).0;
-        let p3 = F32VecSimd128::load_array(d, &data[3 * stride]).0;
-
-        let tr0 = i32x4_shuffle::<0, 4, 1, 5>(p0, p1);
-        let tr1 = i32x4_shuffle::<2, 6, 3, 7>(p0, p1);
-        let tr2 = i32x4_shuffle::<0, 4, 1, 5>(p2, p3);
-        let tr3 = i32x4_shuffle::<2, 6, 3, 7>(p2, p3);
-
-        F32VecSimd128(i64x2_shuffle::<0, 2>(tr0, tr2), d).store_array(&mut data[0]);
-        F32VecSimd128(i64x2_shuffle::<1, 3>(tr0, tr2), d).store_array(&mut data[stride]);
-        F32VecSimd128(i64x2_shuffle::<0, 2>(tr1, tr3), d).store_array(&mut data[2 * stride]);
-        F32VecSimd128(i64x2_shuffle::<1, 3>(tr1, tr3), d).store_array(&mut data[3 * stride]);
-    }
-
     crate::impl_f32_array_interface!();
 
     #[inline(always)]
@@ -970,59 +950,6 @@ impl I16SimdVec for I16VecSimd128 {
     }
 
     impl_i16_array_interface!();
-
-    #[inline(always)]
-    fn transpose_square(d: Self::Descriptor, data: &mut [Self::UnderlyingArray], stride: usize) {
-        assert!(data.len() > 7 * stride);
-
-        let r0 = I16VecSimd128::load_array(d, &data[0]).0;
-        let r1 = I16VecSimd128::load_array(d, &data[stride]).0;
-        let r2 = I16VecSimd128::load_array(d, &data[2 * stride]).0;
-        let r3 = I16VecSimd128::load_array(d, &data[3 * stride]).0;
-        let r4 = I16VecSimd128::load_array(d, &data[4 * stride]).0;
-        let r5 = I16VecSimd128::load_array(d, &data[5 * stride]).0;
-        let r6 = I16VecSimd128::load_array(d, &data[6 * stride]).0;
-        let r7 = I16VecSimd128::load_array(d, &data[7 * stride]).0;
-
-        // Stage 1: 16-bit unpack (shuffle)
-        let t0 = i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(r0, r1);
-        let t1 = i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(r0, r1);
-        let t2 = i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(r2, r3);
-        let t3 = i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(r2, r3);
-        let t4 = i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(r4, r5);
-        let t5 = i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(r4, r5);
-        let t6 = i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(r6, r7);
-        let t7 = i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(r6, r7);
-
-        // Stage 2: 32-bit unpack (shuffle)
-        let u0 = i32x4_shuffle::<0, 4, 1, 5>(t0, t2);
-        let u1 = i32x4_shuffle::<2, 6, 3, 7>(t0, t2);
-        let u2 = i32x4_shuffle::<0, 4, 1, 5>(t1, t3);
-        let u3 = i32x4_shuffle::<2, 6, 3, 7>(t1, t3);
-        let u4 = i32x4_shuffle::<0, 4, 1, 5>(t4, t6);
-        let u5 = i32x4_shuffle::<2, 6, 3, 7>(t4, t6);
-        let u6 = i32x4_shuffle::<0, 4, 1, 5>(t5, t7);
-        let u7 = i32x4_shuffle::<2, 6, 3, 7>(t5, t7);
-
-        // Stage 3: 64-bit unpack (shuffle)
-        let out0 = i64x2_shuffle::<0, 2>(u0, u4);
-        let out1 = i64x2_shuffle::<1, 3>(u0, u4);
-        let out2 = i64x2_shuffle::<0, 2>(u1, u5);
-        let out3 = i64x2_shuffle::<1, 3>(u1, u5);
-        let out4 = i64x2_shuffle::<0, 2>(u2, u6);
-        let out5 = i64x2_shuffle::<1, 3>(u2, u6);
-        let out6 = i64x2_shuffle::<0, 2>(u3, u7);
-        let out7 = i64x2_shuffle::<1, 3>(u3, u7);
-
-        I16VecSimd128(out0, d).store_array(&mut data[0]);
-        I16VecSimd128(out1, d).store_array(&mut data[stride]);
-        I16VecSimd128(out2, d).store_array(&mut data[2 * stride]);
-        I16VecSimd128(out3, d).store_array(&mut data[3 * stride]);
-        I16VecSimd128(out4, d).store_array(&mut data[4 * stride]);
-        I16VecSimd128(out5, d).store_array(&mut data[5 * stride]);
-        I16VecSimd128(out6, d).store_array(&mut data[6 * stride]);
-        I16VecSimd128(out7, d).store_array(&mut data[7 * stride]);
-    }
 
     #[inline(always)]
     fn store_u8(self, dest: &mut [u8]) {

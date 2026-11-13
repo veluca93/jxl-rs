@@ -669,10 +669,6 @@ pub trait F32SimdVec:
     /// multiple of `Self::LEN` this will panic.
     fn make_array_slice_mut(slice: &mut [f32]) -> &mut [Self::UnderlyingArray];
 
-    /// Transposes the Self::LEN x Self::LEN matrix formed by array elements
-    /// `data[stride * i]` for i = 0..Self::LEN.
-    fn transpose_square(d: Self::Descriptor, data: &mut [Self::UnderlyingArray], stride: usize);
-
     /// Loads f16 values (stored as u16 bit patterns) and converts them to f32.
     /// Uses hardware conversion instructions when available (F16C on x86, NEON fp16 on ARM).
     /// Requires `mem.len() >= Self::LEN` or it will panic.
@@ -843,10 +839,6 @@ pub trait I16SimdVec:
     /// Converts a mut slice of i16 into a slice of Self::UnderlyingArray. If slice.len() is not a
     /// multiple of `Self::LEN` this will panic.
     fn make_array_slice_mut(slice: &mut [i16]) -> &mut [Self::UnderlyingArray];
-
-    /// Transposes the Self::LEN x Self::LEN matrix formed by array elements
-    /// `data[stride * i]` for i = 0..Self::LEN.
-    fn transpose_square(d: Self::Descriptor, data: &mut [Self::UnderlyingArray], stride: usize);
 
     fn abs(self) -> Self;
 
@@ -2745,33 +2737,6 @@ mod test {
     }
     test_all_instruction_sets!(test_neg);
 
-    fn test_transpose_square<D: SimdDescriptor>(d: D) {
-        // Test square matrix transpose
-        let len = D::F32Vec::LEN;
-        // Input: sequential values 0..
-        let mut input = vec![0.0f32; len * len];
-        for (i, val) in input.iter_mut().enumerate() {
-            *val = i as f32;
-        }
-
-        let mut output = input.clone();
-        D::F32Vec::transpose_square(d, D::F32Vec::make_array_slice_mut(&mut output), 1);
-
-        // Verify transpose: output[i*len+j] should equal input[j*len+i]
-        for i in 0..len {
-            for j in 0..len {
-                let expected = input[j * len + i];
-                let actual = output[i * len + j];
-                assert_eq!(
-                    actual, expected,
-                    "Mismatch at position ({}, {}): expected {}, got {}",
-                    i, j, expected, actual
-                );
-            }
-        }
-    }
-    test_all_instruction_sets!(test_transpose_square);
-
     fn test_store_interleaved_2<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let a: Vec<f32> = (0..len).map(|i| i as f32).collect();
@@ -3936,55 +3901,6 @@ mod test {
         });
     }
     test_all_instruction_sets!(test_i16_operations);
-
-    fn test_i16_transpose_square<D: SimdDescriptor>(d: D) {
-        let len = D::I16Vec::LEN;
-        // Test with stride = 1
-        let mut input = vec![0i16; len * len];
-        for (i, val) in input.iter_mut().enumerate() {
-            *val = i as i16;
-        }
-        let mut output = input.clone();
-        D::I16Vec::transpose_square(d, D::I16Vec::make_array_slice_mut(&mut output), 1);
-
-        for i in 0..len {
-            for j in 0..len {
-                let expected = input[j * len + i];
-                let actual = output[i * len + j];
-                assert_eq!(
-                    actual, expected,
-                    "Mismatch at position ({i}, {j}): expected {expected}, got {actual}"
-                );
-            }
-        }
-
-        // Test with stride > 1
-        let stride = 2;
-        let mut input_strided = vec![0i16; len * len * stride];
-        for i in 0..len {
-            for j in 0..len {
-                input_strided[(i * stride) * len + j] = (i * len + j) as i16;
-            }
-        }
-        let mut output_strided = input_strided.clone();
-        D::I16Vec::transpose_square(
-            d,
-            D::I16Vec::make_array_slice_mut(&mut output_strided),
-            stride,
-        );
-
-        for i in 0..len {
-            for j in 0..len {
-                let expected = input_strided[(j * stride) * len + i];
-                let actual = output_strided[(i * stride) * len + j];
-                assert_eq!(
-                    actual, expected,
-                    "Mismatch with stride at ({i}, {j}): expected {expected}, got {actual}"
-                );
-            }
-        }
-    }
-    test_all_instruction_sets!(test_i16_transpose_square);
 
     fn test_i16_store_interleaved_2<D: SimdDescriptor>(d: D) {
         let len = D::I16Vec::LEN;

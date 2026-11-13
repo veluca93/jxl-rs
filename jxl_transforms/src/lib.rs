@@ -3,10 +3,13 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+#![deny(unsafe_code)]
+
 mod idct2d;
 mod reinterpreting_dct2d;
 pub mod transform;
 pub mod transform_map;
+pub mod transpose;
 
 mod idct16;
 mod idct2;

@@ -5,6 +5,7 @@
 
 use jxl_simd::{F32SimdVec, SimdDescriptor};
 
+use crate::transpose::transpose_square_f32;
 use crate::*;
 
 #[inline(always)]
@@ -18,10 +19,10 @@ fn idct2d_2_2_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
         do_idct_2(d, &mut data[i..], chunks);
     }
     for i in 0..chunks {
-        D::F32Vec::transpose_square(d, &mut data[i * 2 + i..], chunks);
+        transpose_square_f32(d, &mut data[i * 2 + i..], chunks);
         for j in i + 1..chunks {
-            D::F32Vec::transpose_square(d, &mut data[j * 2 + i..], chunks);
-            D::F32Vec::transpose_square(d, &mut data[i * 2 + j..], chunks);
+            transpose_square_f32(d, &mut data[j * 2 + i..], chunks);
+            transpose_square_f32(d, &mut data[i * 2 + j..], chunks);
             for k in 0..D::F32Vec::LEN {
                 data.swap(i * 2 + j + k * chunks, j * 2 + i + k * chunks);
             }
@@ -41,10 +42,10 @@ fn idct2d_4_4_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
         do_idct_4(d, &mut data[i..], chunks);
     }
     for i in 0..chunks {
-        D::F32Vec::transpose_square(d, &mut data[i * 4 + i..], chunks);
+        transpose_square_f32(d, &mut data[i * 4 + i..], chunks);
         for j in i + 1..chunks {
-            D::F32Vec::transpose_square(d, &mut data[j * 4 + i..], chunks);
-            D::F32Vec::transpose_square(d, &mut data[i * 4 + j..], chunks);
+            transpose_square_f32(d, &mut data[j * 4 + i..], chunks);
+            transpose_square_f32(d, &mut data[i * 4 + j..], chunks);
             for k in 0..D::F32Vec::LEN {
                 data.swap(i * 4 + j + k * chunks, j * 4 + i + k * chunks);
             }
@@ -63,13 +64,13 @@ fn idct2d_4_8_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     let row_chunks = 4 / D::F32Vec::LEN;
     for i in 0..row_chunks {
         for j in 0..column_chunks {
-            D::F32Vec::transpose_square(d, &mut data[i * 8 + j..], column_chunks);
+            transpose_square_f32(d, &mut data[i * 8 + j..], column_chunks);
         }
         do_idct_8_rowblock(d, &mut data[i * 8..]);
     }
     for i in 0..column_chunks {
         for j in 0..row_chunks {
-            D::F32Vec::transpose_square(d, &mut data[j * 8 + i..], column_chunks);
+            transpose_square_f32(d, &mut data[j * 8 + i..], column_chunks);
         }
         do_idct_4(d, &mut data[i..], column_chunks);
     }
@@ -88,7 +89,7 @@ fn idct2d_8_4_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     }
     for i in 0..column_chunks {
         let tr_block = |data: &mut [<D::F32Vec as F32SimdVec>::UnderlyingArray], i, j, l| {
-            D::F32Vec::transpose_square(d, &mut data[i * 8 + j + l * column_chunks..], row_chunks)
+            transpose_square_f32(d, &mut data[i * 8 + j + l * column_chunks..], row_chunks)
         };
         (0..2).for_each(|l| tr_block(data, i, i, l));
         for j in i + 1..column_chunks {
@@ -118,10 +119,10 @@ fn idct2d_8_8_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
         do_idct_8(d, &mut data[i..], chunks);
     }
     for i in 0..chunks {
-        D::F32Vec::transpose_square(d, &mut data[i * 8 + i..], chunks);
+        transpose_square_f32(d, &mut data[i * 8 + i..], chunks);
         for j in i + 1..chunks {
-            D::F32Vec::transpose_square(d, &mut data[j * 8 + i..], chunks);
-            D::F32Vec::transpose_square(d, &mut data[i * 8 + j..], chunks);
+            transpose_square_f32(d, &mut data[j * 8 + i..], chunks);
+            transpose_square_f32(d, &mut data[i * 8 + j..], chunks);
             for k in 0..D::F32Vec::LEN {
                 data.swap(i * 8 + j + k * chunks, j * 8 + i + k * chunks);
             }
@@ -140,13 +141,13 @@ fn idct2d_8_16_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     let row_chunks = 8 / D::F32Vec::LEN;
     for i in 0..row_chunks {
         for j in 0..column_chunks {
-            D::F32Vec::transpose_square(d, &mut data[i * 16 + j..], column_chunks);
+            transpose_square_f32(d, &mut data[i * 16 + j..], column_chunks);
         }
         do_idct_16_rowblock(d, &mut data[i * 16..]);
     }
     for i in 0..column_chunks {
         for j in 0..row_chunks {
-            D::F32Vec::transpose_square(d, &mut data[j * 16 + i..], column_chunks);
+            transpose_square_f32(d, &mut data[j * 16 + i..], column_chunks);
         }
         do_idct_8(d, &mut data[i..], column_chunks);
     }
@@ -162,13 +163,13 @@ fn idct2d_8_32_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     let row_chunks = 8 / D::F32Vec::LEN;
     for i in 0..row_chunks {
         for j in 0..column_chunks {
-            D::F32Vec::transpose_square(d, &mut data[i * 32 + j..], column_chunks);
+            transpose_square_f32(d, &mut data[i * 32 + j..], column_chunks);
         }
         do_idct_32_rowblock(d, &mut data[i * 32..]);
     }
     for i in 0..column_chunks {
         for j in 0..row_chunks {
-            D::F32Vec::transpose_square(d, &mut data[j * 32 + i..], column_chunks);
+            transpose_square_f32(d, &mut data[j * 32 + i..], column_chunks);
         }
         do_idct_8(d, &mut data[i..], column_chunks);
     }
@@ -187,7 +188,7 @@ fn idct2d_16_8_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     }
     for i in 0..column_chunks {
         let tr_block = |data: &mut [<D::F32Vec as F32SimdVec>::UnderlyingArray], i, j, l| {
-            D::F32Vec::transpose_square(d, &mut data[i * 16 + j + l * column_chunks..], row_chunks)
+            transpose_square_f32(d, &mut data[i * 16 + j + l * column_chunks..], row_chunks)
         };
         (0..2).for_each(|l| tr_block(data, i, i, l));
         for j in i + 1..column_chunks {
@@ -217,10 +218,10 @@ fn idct2d_16_16_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
         do_idct_16(d, &mut data[i..], chunks);
     }
     for i in 0..chunks {
-        D::F32Vec::transpose_square(d, &mut data[i * 16 + i..], chunks);
+        transpose_square_f32(d, &mut data[i * 16 + i..], chunks);
         for j in i + 1..chunks {
-            D::F32Vec::transpose_square(d, &mut data[j * 16 + i..], chunks);
-            D::F32Vec::transpose_square(d, &mut data[i * 16 + j..], chunks);
+            transpose_square_f32(d, &mut data[j * 16 + i..], chunks);
+            transpose_square_f32(d, &mut data[i * 16 + j..], chunks);
             for k in 0..D::F32Vec::LEN {
                 data.swap(i * 16 + j + k * chunks, j * 16 + i + k * chunks);
             }
@@ -239,13 +240,13 @@ fn idct2d_16_32_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     let row_chunks = 16 / D::F32Vec::LEN;
     for i in 0..row_chunks {
         for j in 0..column_chunks {
-            D::F32Vec::transpose_square(d, &mut data[i * 32 + j..], column_chunks);
+            transpose_square_f32(d, &mut data[i * 32 + j..], column_chunks);
         }
         do_idct_32_rowblock(d, &mut data[i * 32..]);
     }
     for i in 0..column_chunks {
         for j in 0..row_chunks {
-            D::F32Vec::transpose_square(d, &mut data[j * 32 + i..], column_chunks);
+            transpose_square_f32(d, &mut data[j * 32 + i..], column_chunks);
         }
         do_idct_16(d, &mut data[i..], column_chunks);
     }
@@ -264,7 +265,7 @@ fn idct2d_32_8_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     }
     for i in 0..column_chunks {
         let tr_block = |data: &mut [<D::F32Vec as F32SimdVec>::UnderlyingArray], i, j, l| {
-            D::F32Vec::transpose_square(d, &mut data[i * 32 + j + l * column_chunks..], row_chunks)
+            transpose_square_f32(d, &mut data[i * 32 + j + l * column_chunks..], row_chunks)
         };
         (0..4).for_each(|l| tr_block(data, i, i, l));
         for j in i + 1..column_chunks {
@@ -296,7 +297,7 @@ fn idct2d_32_16_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
     }
     for i in 0..column_chunks {
         let tr_block = |data: &mut [<D::F32Vec as F32SimdVec>::UnderlyingArray], i, j, l| {
-            D::F32Vec::transpose_square(d, &mut data[i * 32 + j + l * column_chunks..], row_chunks)
+            transpose_square_f32(d, &mut data[i * 32 + j + l * column_chunks..], row_chunks)
         };
         (0..2).for_each(|l| tr_block(data, i, i, l));
         for j in i + 1..column_chunks {
@@ -326,10 +327,10 @@ fn idct2d_32_32_impl<D: SimdDescriptor>(d: D, data: &mut [f32]) {
         do_idct_32(d, &mut data[i..], chunks);
     }
     for i in 0..chunks {
-        D::F32Vec::transpose_square(d, &mut data[i * 32 + i..], chunks);
+        transpose_square_f32(d, &mut data[i * 32 + i..], chunks);
         for j in i + 1..chunks {
-            D::F32Vec::transpose_square(d, &mut data[j * 32 + i..], chunks);
-            D::F32Vec::transpose_square(d, &mut data[i * 32 + j..], chunks);
+            transpose_square_f32(d, &mut data[j * 32 + i..], chunks);
+            transpose_square_f32(d, &mut data[i * 32 + j..], chunks);
             for k in 0..D::F32Vec::LEN {
                 data.swap(i * 32 + j + k * chunks, j * 32 + i + k * chunks);
             }

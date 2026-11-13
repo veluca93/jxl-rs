@@ -546,40 +546,6 @@ impl F32SimdVec for F32VecSse42 {
             dest[i] = crate::f16::from_f32(tmp[i]).to_bits();
         }
     }
-
-    #[inline(always)]
-    fn transpose_square(d: Self::Descriptor, data: &mut [Self::UnderlyingArray], stride: usize) {
-        #[target_feature(enable = "sse4.2")]
-        #[inline]
-        fn transpose4x4f32(d: Sse42Descriptor, data: &mut [[f32; 4]], stride: usize) {
-            assert!(data.len() > stride * 3);
-
-            let p0 = F32VecSse42::load_array(d, &data[0]).0;
-            let p1 = F32VecSse42::load_array(d, &data[1 * stride]).0;
-            let p2 = F32VecSse42::load_array(d, &data[2 * stride]).0;
-            let p3 = F32VecSse42::load_array(d, &data[3 * stride]).0;
-
-            let q0 = _mm_unpacklo_ps(p0, p2);
-            let q1 = _mm_unpacklo_ps(p1, p3);
-            let q2 = _mm_unpackhi_ps(p0, p2);
-            let q3 = _mm_unpackhi_ps(p1, p3);
-
-            let r0 = _mm_unpacklo_ps(q0, q1);
-            let r1 = _mm_unpackhi_ps(q0, q1);
-            let r2 = _mm_unpacklo_ps(q2, q3);
-            let r3 = _mm_unpackhi_ps(q2, q3);
-
-            F32VecSse42(r0, d).store_array(&mut data[0]);
-            F32VecSse42(r1, d).store_array(&mut data[1 * stride]);
-            F32VecSse42(r2, d).store_array(&mut data[2 * stride]);
-            F32VecSse42(r3, d).store_array(&mut data[3 * stride]);
-        }
-
-        // SAFETY: the safety invariant on `d` guarantees sse42
-        unsafe {
-            transpose4x4f32(d, data, stride);
-        }
-    }
 }
 
 impl Add<F32VecSse42> for F32VecSse42 {
@@ -919,68 +885,6 @@ impl I16SimdVec for I16VecSse42 {
     }
 
     impl_i16_array_interface!();
-
-    #[inline(always)]
-    fn transpose_square(d: Self::Descriptor, data: &mut [Self::UnderlyingArray], stride: usize) {
-        #[target_feature(enable = "sse4.2")]
-        #[inline]
-        fn transpose8x8i16(d: Sse42Descriptor, data: &mut [[i16; 8]], stride: usize) {
-            assert!(data.len() > stride * 7);
-
-            let r0 = I16VecSse42::load_array(d, &data[0]).0;
-            let r1 = I16VecSse42::load_array(d, &data[1 * stride]).0;
-            let r2 = I16VecSse42::load_array(d, &data[2 * stride]).0;
-            let r3 = I16VecSse42::load_array(d, &data[3 * stride]).0;
-            let r4 = I16VecSse42::load_array(d, &data[4 * stride]).0;
-            let r5 = I16VecSse42::load_array(d, &data[5 * stride]).0;
-            let r6 = I16VecSse42::load_array(d, &data[6 * stride]).0;
-            let r7 = I16VecSse42::load_array(d, &data[7 * stride]).0;
-
-            // Stage 1: 16-bit unpack
-            let t0 = _mm_unpacklo_epi16(r0, r1);
-            let t1 = _mm_unpackhi_epi16(r0, r1);
-            let t2 = _mm_unpacklo_epi16(r2, r3);
-            let t3 = _mm_unpackhi_epi16(r2, r3);
-            let t4 = _mm_unpacklo_epi16(r4, r5);
-            let t5 = _mm_unpackhi_epi16(r4, r5);
-            let t6 = _mm_unpacklo_epi16(r6, r7);
-            let t7 = _mm_unpackhi_epi16(r6, r7);
-
-            // Stage 2: 32-bit unpack
-            let u0 = _mm_unpacklo_epi32(t0, t2);
-            let u1 = _mm_unpackhi_epi32(t0, t2);
-            let u2 = _mm_unpacklo_epi32(t1, t3);
-            let u3 = _mm_unpackhi_epi32(t1, t3);
-            let u4 = _mm_unpacklo_epi32(t4, t6);
-            let u5 = _mm_unpackhi_epi32(t4, t6);
-            let u6 = _mm_unpacklo_epi32(t5, t7);
-            let u7 = _mm_unpackhi_epi32(t5, t7);
-
-            // Stage 3: 64-bit unpack
-            let out0 = _mm_unpacklo_epi64(u0, u4);
-            let out1 = _mm_unpackhi_epi64(u0, u4);
-            let out2 = _mm_unpacklo_epi64(u1, u5);
-            let out3 = _mm_unpackhi_epi64(u1, u5);
-            let out4 = _mm_unpacklo_epi64(u2, u6);
-            let out5 = _mm_unpackhi_epi64(u2, u6);
-            let out6 = _mm_unpacklo_epi64(u3, u7);
-            let out7 = _mm_unpackhi_epi64(u3, u7);
-
-            I16VecSse42(out0, d).store_array(&mut data[0]);
-            I16VecSse42(out1, d).store_array(&mut data[1 * stride]);
-            I16VecSse42(out2, d).store_array(&mut data[2 * stride]);
-            I16VecSse42(out3, d).store_array(&mut data[3 * stride]);
-            I16VecSse42(out4, d).store_array(&mut data[4 * stride]);
-            I16VecSse42(out5, d).store_array(&mut data[5 * stride]);
-            I16VecSse42(out6, d).store_array(&mut data[6 * stride]);
-            I16VecSse42(out7, d).store_array(&mut data[7 * stride]);
-        }
-
-        // SAFETY: the safety invariant on `d` guarantees sse42
-        unsafe {
-            transpose8x8i16(d, data, stride);
-        }
-    }
 
     fn_sse42!(this: I16VecSse42, fn store_u8(dest: &mut [u8]) {
         let out = dest.first_chunk_mut::<8>().unwrap();

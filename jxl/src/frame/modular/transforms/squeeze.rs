@@ -4,9 +4,10 @@
 // license that can be found in the LICENSE file.
 
 use jxl_simd::{
-    F32SimdVec, I16SimdVec, I32SimdVec, SimdDescriptor, SimdMask, SimdMask16, U32SimdVec, shl, shr,
-    simd_function,
+    F32SimdVec, I16SimdVec, I16VecArray, I32SimdVec, SimdDescriptor, SimdMask, SimdMask16,
+    U32SimdVec, shl, shr, simd_function, simd_specialize,
 };
+use jxl_transforms::transpose::transpose_square_f32;
 
 use crate::error::{Error, Result};
 use crate::frame::modular::{ChannelInfo, ModularChannel, ModularStorage};
@@ -323,8 +324,8 @@ fn hsqueeze_impl<D: SimdDescriptor>(
                 avg.bitcast_to_f32().store_array(&mut buf_arr[2 * dy]);
                 res.bitcast_to_f32().store_array(&mut buf_arr[2 * dy + 1]);
             }
-            D::F32Vec::transpose_square(d, buf_arr, 2);
-            D::F32Vec::transpose_square(d, &mut buf_arr[1..], 2);
+            transpose_square_f32(d, buf_arr, 2);
+            transpose_square_f32(d, &mut buf_arr[1..], 2);
 
             for idx in 0..lanes {
                 let avg_next = D::F32Vec::load_array(d, &buf_arr[2 * idx]).bitcast_to_i32();
@@ -337,8 +338,8 @@ fn hsqueeze_impl<D: SimdDescriptor>(
                 prev_b = b;
             }
 
-            D::F32Vec::transpose_square(d, buf_arr, 1);
-            D::F32Vec::transpose_square(d, &mut buf_arr[lanes..], 1);
+            transpose_square_f32(d, buf_arr, 1);
+            transpose_square_f32(d, &mut buf_arr[lanes..], 1);
             for dy in 0..lanes {
                 let out_row = &mut out.row(y + dy)[2 * x - 2..][..2 * lanes];
                 for group in 0..2 {
@@ -388,8 +389,8 @@ fn hsqueeze_impl<D: SimdDescriptor>(
             }
 
             let buf_arr = D::F32Vec::make_array_slice_mut(&mut buf);
-            D::F32Vec::transpose_square(d, buf_arr, 2);
-            D::F32Vec::transpose_square(d, &mut buf_arr[1..], 2);
+            transpose_square_f32(d, buf_arr, 2);
+            transpose_square_f32(d, &mut buf_arr[1..], 2);
 
             for idx in 0..=remainder_count {
                 let avg_next = D::F32Vec::load_array(d, &buf_arr[2 * idx]).bitcast_to_i32();
@@ -404,8 +405,8 @@ fn hsqueeze_impl<D: SimdDescriptor>(
         }
 
         let buf_arr = D::F32Vec::make_array_slice_mut(&mut buf);
-        D::F32Vec::transpose_square(d, buf_arr, 1);
-        D::F32Vec::transpose_square(d, &mut buf_arr[lanes..], 1);
+        transpose_square_f32(d, buf_arr, 1);
+        transpose_square_f32(d, &mut buf_arr[lanes..], 1);
 
         let x_limit = 2 * (remainder_count + 1);
         for dy in 0..lanes {
@@ -568,8 +569,8 @@ fn hsqueeze_impl_i16<D: SimdDescriptor>(
                 avg.store_array(&mut buf_arr[2 * dy]);
                 res.store_array(&mut buf_arr[2 * dy + 1]);
             }
-            D::I16Vec::transpose_square(d, buf_arr, 2);
-            D::I16Vec::transpose_square(d, &mut buf_arr[1..], 2);
+            transpose_square_i16(d, buf_arr, 2);
+            transpose_square_i16(d, &mut buf_arr[1..], 2);
 
             for idx in 0..lanes {
                 let avg_next = D::I16Vec::load_array(d, &buf_arr[2 * idx]);
@@ -582,8 +583,8 @@ fn hsqueeze_impl_i16<D: SimdDescriptor>(
                 prev_b = b;
             }
 
-            D::I16Vec::transpose_square(d, buf_arr, 1);
-            D::I16Vec::transpose_square(d, &mut buf_arr[lanes..], 1);
+            transpose_square_i16(d, buf_arr, 1);
+            transpose_square_i16(d, &mut buf_arr[lanes..], 1);
             for dy in 0..lanes {
                 let out_row = &mut out.row(y + dy)[2 * x - 2..][..2 * lanes];
                 for group in 0..2 {
@@ -633,8 +634,8 @@ fn hsqueeze_impl_i16<D: SimdDescriptor>(
             }
 
             let buf_arr = D::I16Vec::make_array_slice_mut(&mut buf[..2 * lanes * lanes]);
-            D::I16Vec::transpose_square(d, buf_arr, 2);
-            D::I16Vec::transpose_square(d, &mut buf_arr[1..], 2);
+            transpose_square_i16(d, buf_arr, 2);
+            transpose_square_i16(d, &mut buf_arr[1..], 2);
 
             for idx in 0..=remainder_count {
                 let avg_next = D::I16Vec::load_array(d, &buf_arr[2 * idx]);
@@ -649,8 +650,8 @@ fn hsqueeze_impl_i16<D: SimdDescriptor>(
         }
 
         let buf_arr = D::I16Vec::make_array_slice_mut(&mut buf[..2 * lanes * lanes]);
-        D::I16Vec::transpose_square(d, buf_arr, 1);
-        D::I16Vec::transpose_square(d, &mut buf_arr[lanes..], 1);
+        transpose_square_i16(d, buf_arr, 1);
+        transpose_square_i16(d, &mut buf_arr[lanes..], 1);
 
         let x_limit = 2 * (remainder_count + 1);
         for dy in 0..lanes {
@@ -1337,4 +1338,419 @@ pub fn do_vsqueeze_step(
             buffers,
         );
     }
+}
+
+#[inline(always)]
+fn transpose_i16_pow2<D: SimdDescriptor, const N: usize, const N4: usize>(
+    d: D,
+    data: &mut [I16VecArray<D>],
+    stride: usize,
+) {
+    assert_eq!(N, D::I16Vec::LEN);
+    assert_eq!(N4, 4 * N);
+    assert!(data.len() > (N - 1) * stride);
+
+    let mut cur = [D::I16Vec::zero(d); N];
+    let mut nxt = [D::I16Vec::zero(d); N];
+    let mut tmp = [0i16; N4];
+    for i in 0..N {
+        cur[i] = D::I16Vec::load_array(d, &data[i * stride]);
+    }
+
+    let mut rem = N;
+    let q = N / 4;
+    while rem >= 4 {
+        for i in 0..q {
+            D::I16Vec::store_interleaved_4(
+                cur[i],
+                cur[i + q],
+                cur[i + 2 * q],
+                cur[i + 3 * q],
+                &mut tmp,
+            );
+            let tmp_arr = D::I16Vec::make_array_slice(&tmp);
+            for k in 0..4 {
+                nxt[4 * i + k] = D::I16Vec::load_array(d, &tmp_arr[k]);
+            }
+        }
+        cur.copy_from_slice(&nxt);
+        rem /= 4;
+    }
+    if rem == 2 {
+        let h = N / 2;
+        let tmp_half = &mut tmp[..2 * N];
+        for i in 0..h {
+            D::I16Vec::store_interleaved_2(cur[i], cur[i + h], tmp_half);
+            let tmp_arr = D::I16Vec::make_array_slice(tmp_half);
+            nxt[2 * i] = D::I16Vec::load_array(d, &tmp_arr[0]);
+            nxt[2 * i + 1] = D::I16Vec::load_array(d, &tmp_arr[1]);
+        }
+        cur.copy_from_slice(&nxt);
+    }
+
+    for i in 0..N {
+        cur[i].store_array(&mut data[i * stride]);
+    }
+}
+
+#[inline(always)]
+fn transpose_square_i16_fallback<D: SimdDescriptor>(
+    d: D,
+    data: &mut [I16VecArray<D>],
+    stride: usize,
+) {
+    match D::I16Vec::LEN {
+        0 | 1 => {}
+        2 => transpose_i16_pow2::<D, 2, 8>(d, data, stride),
+        4 => transpose_i16_pow2::<D, 4, 16>(d, data, stride),
+        8 => transpose_i16_pow2::<D, 8, 32>(d, data, stride),
+        16 => transpose_i16_pow2::<D, 16, 64>(d, data, stride),
+        32 => transpose_i16_pow2::<D, 32, 128>(d, data, stride),
+        64 => transpose_i16_pow2::<D, 64, 256>(d, data, stride),
+        n => panic!("unsupported I16Vec::LEN = {n}"),
+    }
+}
+
+#[inline(always)]
+fn transpose_square_i16<D: SimdDescriptor>(d: D, data: &mut [I16VecArray<D>], stride: usize) {
+    simd_specialize!(
+        fn(d: D, data: &mut [I16VecArray<D>], stride: usize) {
+            avx => {
+                use std::arch::x86_64::*;
+
+                use jxl_simd::I16VecAvx;
+
+                assert!(data.len() > stride * 15);
+
+                #[target_feature(enable = "avx2")]
+                #[inline]
+                fn transpose_8x8_inlane([r0, r1, r2, r3, r4, r5, r6, r7]: [__m256i; 8]) -> [__m256i; 8] {
+                    let t0 = _mm256_unpacklo_epi16(r0, r1);
+                    let t1 = _mm256_unpackhi_epi16(r0, r1);
+                    let t2 = _mm256_unpacklo_epi16(r2, r3);
+                    let t3 = _mm256_unpackhi_epi16(r2, r3);
+                    let t4 = _mm256_unpacklo_epi16(r4, r5);
+                    let t5 = _mm256_unpackhi_epi16(r4, r5);
+                    let t6 = _mm256_unpacklo_epi16(r6, r7);
+                    let t7 = _mm256_unpackhi_epi16(r6, r7);
+
+                    let u0 = _mm256_unpacklo_epi32(t0, t2);
+                    let u1 = _mm256_unpackhi_epi32(t0, t2);
+                    let u2 = _mm256_unpacklo_epi32(t1, t3);
+                    let u3 = _mm256_unpackhi_epi32(t1, t3);
+                    let u4 = _mm256_unpacklo_epi32(t4, t6);
+                    let u5 = _mm256_unpackhi_epi32(t4, t6);
+                    let u6 = _mm256_unpacklo_epi32(t5, t7);
+                    let u7 = _mm256_unpackhi_epi32(t5, t7);
+
+                    let s0 = _mm256_unpacklo_epi64(u0, u4);
+                    let s1 = _mm256_unpackhi_epi64(u0, u4);
+                    let s2 = _mm256_unpacklo_epi64(u1, u5);
+                    let s3 = _mm256_unpackhi_epi64(u1, u5);
+                    let s4 = _mm256_unpacklo_epi64(u2, u6);
+                    let s5 = _mm256_unpackhi_epi64(u2, u6);
+                    let s6 = _mm256_unpacklo_epi64(u3, u7);
+                    let s7 = _mm256_unpackhi_epi64(u3, u7);
+
+                    [s0, s1, s2, s3, s4, s5, s6, s7]
+                }
+
+                let top = transpose_8x8_inlane(std::array::from_fn(|i| {
+                    I16VecAvx::load_array(d, &data[i * stride]).raw()
+                }));
+                let bot = transpose_8x8_inlane(std::array::from_fn(|i| {
+                    I16VecAvx::load_array(d, &data[(8 + i) * stride]).raw()
+                }));
+
+                for k in 0..8 {
+                    I16VecAvx::from_raw(d, _mm256_permute2x128_si256::<0x20>(top[k], bot[k]))
+                        .store_array(&mut data[k * stride]);
+                    I16VecAvx::from_raw(d, _mm256_permute2x128_si256::<0x31>(top[k], bot[k]))
+                        .store_array(&mut data[(8 + k) * stride]);
+                }
+            }
+            avx512 => {
+                use std::arch::x86_64::*;
+
+                use jxl_simd::I16VecAvx512;
+
+                assert!(data.len() > stride * 31);
+
+                #[target_feature(enable = "avx512f,avx512bw")]
+                #[inline]
+                fn transpose_8x8_inlane([r0, r1, r2, r3, r4, r5, r6, r7]: [__m512i; 8]) -> [__m512i; 8] {
+                    let t0 = _mm512_unpacklo_epi16(r0, r1);
+                    let t1 = _mm512_unpackhi_epi16(r0, r1);
+                    let t2 = _mm512_unpacklo_epi16(r2, r3);
+                    let t3 = _mm512_unpackhi_epi16(r2, r3);
+                    let t4 = _mm512_unpacklo_epi16(r4, r5);
+                    let t5 = _mm512_unpackhi_epi16(r4, r5);
+                    let t6 = _mm512_unpacklo_epi16(r6, r7);
+                    let t7 = _mm512_unpackhi_epi16(r6, r7);
+
+                    let u0 = _mm512_unpacklo_epi32(t0, t2);
+                    let u1 = _mm512_unpackhi_epi32(t0, t2);
+                    let u2 = _mm512_unpacklo_epi32(t1, t3);
+                    let u3 = _mm512_unpackhi_epi32(t1, t3);
+                    let u4 = _mm512_unpacklo_epi32(t4, t6);
+                    let u5 = _mm512_unpackhi_epi32(t4, t6);
+                    let u6 = _mm512_unpacklo_epi32(t5, t7);
+                    let u7 = _mm512_unpackhi_epi32(t5, t7);
+
+                    let s0 = _mm512_unpacklo_epi64(u0, u4);
+                    let s1 = _mm512_unpackhi_epi64(u0, u4);
+                    let s2 = _mm512_unpacklo_epi64(u1, u5);
+                    let s3 = _mm512_unpackhi_epi64(u1, u5);
+                    let s4 = _mm512_unpacklo_epi64(u2, u6);
+                    let s5 = _mm512_unpackhi_epi64(u2, u6);
+                    let s6 = _mm512_unpacklo_epi64(u3, u7);
+                    let s7 = _mm512_unpackhi_epi64(u3, u7);
+
+                    [s0, s1, s2, s3, s4, s5, s6, s7]
+                }
+
+                #[target_feature(enable = "avx512f,avx512bw")]
+                #[inline]
+                fn transpose_4x4_128(
+                    v0: __m512i,
+                    v1: __m512i,
+                    v2: __m512i,
+                    v3: __m512i,
+                ) -> (__m512i, __m512i, __m512i, __m512i) {
+                    let t0 = _mm512_shuffle_i64x2::<0x44>(v0, v1);
+                    let t1 = _mm512_shuffle_i64x2::<0xEE>(v0, v1);
+                    let t2 = _mm512_shuffle_i64x2::<0x44>(v2, v3);
+                    let t3 = _mm512_shuffle_i64x2::<0xEE>(v2, v3);
+                    (
+                        _mm512_shuffle_i64x2::<0x88>(t0, t2),
+                        _mm512_shuffle_i64x2::<0xDD>(t0, t2),
+                        _mm512_shuffle_i64x2::<0x88>(t1, t3),
+                        _mm512_shuffle_i64x2::<0xDD>(t1, t3),
+                    )
+                }
+
+                let g0 = transpose_8x8_inlane(std::array::from_fn(|i| {
+                    I16VecAvx512::load_array(d, &data[i * stride]).raw()
+                }));
+                let g1 = transpose_8x8_inlane(std::array::from_fn(|i| {
+                    I16VecAvx512::load_array(d, &data[(8 + i) * stride]).raw()
+                }));
+                let g2 = transpose_8x8_inlane(std::array::from_fn(|i| {
+                    I16VecAvx512::load_array(d, &data[(16 + i) * stride]).raw()
+                }));
+                let g3 = transpose_8x8_inlane(std::array::from_fn(|i| {
+                    I16VecAvx512::load_array(d, &data[(24 + i) * stride]).raw()
+                }));
+
+                for k in 0..8 {
+                    let (out0, out1, out2, out3) = transpose_4x4_128(g0[k], g1[k], g2[k], g3[k]);
+                    I16VecAvx512::from_raw(d, out0).store_array(&mut data[k * stride]);
+                    I16VecAvx512::from_raw(d, out1).store_array(&mut data[(8 + k) * stride]);
+                    I16VecAvx512::from_raw(d, out2).store_array(&mut data[(16 + k) * stride]);
+                    I16VecAvx512::from_raw(d, out3).store_array(&mut data[(24 + k) * stride]);
+                }
+            }
+            neon => {
+                use std::arch::aarch64::*;
+
+                use jxl_simd::I16VecNeon;
+
+                assert!(data.len() > stride * 7);
+
+                let r0 = I16VecNeon::load_array(d, &data[0]).raw();
+                let r1 = I16VecNeon::load_array(d, &data[stride]).raw();
+                let r2 = I16VecNeon::load_array(d, &data[2 * stride]).raw();
+                let r3 = I16VecNeon::load_array(d, &data[3 * stride]).raw();
+                let r4 = I16VecNeon::load_array(d, &data[4 * stride]).raw();
+                let r5 = I16VecNeon::load_array(d, &data[5 * stride]).raw();
+                let r6 = I16VecNeon::load_array(d, &data[6 * stride]).raw();
+                let r7 = I16VecNeon::load_array(d, &data[7 * stride]).raw();
+
+                // Stage 1: 16-bit zip
+                let t0 = vzip1q_s16(r0, r1);
+                let t1 = vzip2q_s16(r0, r1);
+                let t2 = vzip1q_s16(r2, r3);
+                let t3 = vzip2q_s16(r2, r3);
+                let t4 = vzip1q_s16(r4, r5);
+                let t5 = vzip2q_s16(r4, r5);
+                let t6 = vzip1q_s16(r6, r7);
+                let t7 = vzip2q_s16(r6, r7);
+
+                // Stage 2: 32-bit zip
+                let u0 = vreinterpretq_s16_s32(vzip1q_s32(
+                    vreinterpretq_s32_s16(t0),
+                    vreinterpretq_s32_s16(t2),
+                ));
+                let u1 = vreinterpretq_s16_s32(vzip2q_s32(
+                    vreinterpretq_s32_s16(t0),
+                    vreinterpretq_s32_s16(t2),
+                ));
+                let u2 = vreinterpretq_s16_s32(vzip1q_s32(
+                    vreinterpretq_s32_s16(t1),
+                    vreinterpretq_s32_s16(t3),
+                ));
+                let u3 = vreinterpretq_s16_s32(vzip2q_s32(
+                    vreinterpretq_s32_s16(t1),
+                    vreinterpretq_s32_s16(t3),
+                ));
+                let u4 = vreinterpretq_s16_s32(vzip1q_s32(
+                    vreinterpretq_s32_s16(t4),
+                    vreinterpretq_s32_s16(t6),
+                ));
+                let u5 = vreinterpretq_s16_s32(vzip2q_s32(
+                    vreinterpretq_s32_s16(t4),
+                    vreinterpretq_s32_s16(t6),
+                ));
+                let u6 = vreinterpretq_s16_s32(vzip1q_s32(
+                    vreinterpretq_s32_s16(t5),
+                    vreinterpretq_s32_s16(t7),
+                ));
+                let u7 = vreinterpretq_s16_s32(vzip2q_s32(
+                    vreinterpretq_s32_s16(t5),
+                    vreinterpretq_s32_s16(t7),
+                ));
+
+                // Stage 3: 64-bit zip
+                let out0 = vreinterpretq_s16_s64(vzip1q_s64(
+                    vreinterpretq_s64_s16(u0),
+                    vreinterpretq_s64_s16(u4),
+                ));
+                let out1 = vreinterpretq_s16_s64(vzip2q_s64(
+                    vreinterpretq_s64_s16(u0),
+                    vreinterpretq_s64_s16(u4),
+                ));
+                let out2 = vreinterpretq_s16_s64(vzip1q_s64(
+                    vreinterpretq_s64_s16(u1),
+                    vreinterpretq_s64_s16(u5),
+                ));
+                let out3 = vreinterpretq_s16_s64(vzip2q_s64(
+                    vreinterpretq_s64_s16(u1),
+                    vreinterpretq_s64_s16(u5),
+                ));
+                let out4 = vreinterpretq_s16_s64(vzip1q_s64(
+                    vreinterpretq_s64_s16(u2),
+                    vreinterpretq_s64_s16(u6),
+                ));
+                let out5 = vreinterpretq_s16_s64(vzip2q_s64(
+                    vreinterpretq_s64_s16(u2),
+                    vreinterpretq_s64_s16(u6),
+                ));
+                let out6 = vreinterpretq_s16_s64(vzip1q_s64(
+                    vreinterpretq_s64_s16(u3),
+                    vreinterpretq_s64_s16(u7),
+                ));
+                let out7 = vreinterpretq_s16_s64(vzip2q_s64(
+                    vreinterpretq_s64_s16(u3),
+                    vreinterpretq_s64_s16(u7),
+                ));
+
+                I16VecNeon::from_raw(d, out0).store_array(&mut data[0]);
+                I16VecNeon::from_raw(d, out1).store_array(&mut data[stride]);
+                I16VecNeon::from_raw(d, out2).store_array(&mut data[2 * stride]);
+                I16VecNeon::from_raw(d, out3).store_array(&mut data[3 * stride]);
+                I16VecNeon::from_raw(d, out4).store_array(&mut data[4 * stride]);
+                I16VecNeon::from_raw(d, out5).store_array(&mut data[5 * stride]);
+                I16VecNeon::from_raw(d, out6).store_array(&mut data[6 * stride]);
+                I16VecNeon::from_raw(d, out7).store_array(&mut data[7 * stride]);
+            }
+            v128 => {
+                assert!(data.len() > 7 * stride);
+
+                let r: [D::I16Vec; 8] =
+                    std::array::from_fn(|i| D::I16Vec::load_array(d, &data[i * stride]));
+                let mut mid = [D::I16Vec::zero(d); 8];
+                let mut tmp = [[0i16; 8]; 4];
+
+                D::I16Vec::store_interleaved_4(
+                    r[0],
+                    r[2],
+                    r[4],
+                    r[6],
+                    tmp.as_flattened_mut(),
+                );
+                for k in 0..4 {
+                    mid[k] = D::I16Vec::load_array(d, &tmp[k]);
+                }
+
+                D::I16Vec::store_interleaved_4(
+                    r[1],
+                    r[3],
+                    r[5],
+                    r[7],
+                    tmp.as_flattened_mut(),
+                );
+                for k in 0..4 {
+                    mid[4 + k] = D::I16Vec::load_array(d, &tmp[k]);
+                }
+
+                let mut tmp2 = [[0i16; 8]; 2];
+                for i in 0..4 {
+                    D::I16Vec::store_interleaved_2(
+                        mid[i],
+                        mid[i + 4],
+                        tmp2.as_flattened_mut(),
+                    );
+                    D::I16Vec::load_array(d, &tmp2[0]).store_array(&mut data[2 * i * stride]);
+                    D::I16Vec::load_array(d, &tmp2[1]).store_array(&mut data[(2 * i + 1) * stride]);
+                }
+            }
+            _ => transpose_square_i16_fallback(d, data, stride),
+        }
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use jxl_simd::{I16SimdVec, SimdDescriptor, test_all_instruction_sets};
+
+    use super::{transpose_square_i16, transpose_square_i16_fallback};
+
+    fn check_transpose_i16_with<D: SimdDescriptor>(
+        d: D,
+        f: fn(D, &mut [<D::I16Vec as I16SimdVec>::UnderlyingArray], usize),
+    ) {
+        let len = D::I16Vec::LEN;
+        let input: Vec<i16> = (0..len * len).map(|i| i as i16).collect();
+        let mut output = input.clone();
+        f(d, D::I16Vec::make_array_slice_mut(&mut output), 1);
+
+        for i in 0..len {
+            for j in 0..len {
+                assert_eq!(output[i * len + j], input[j * len + i]);
+            }
+        }
+
+        let stride = 2;
+        let mut input_strided = vec![0i16; len * len * stride];
+        for i in 0..len {
+            for j in 0..len {
+                input_strided[(i * stride) * len + j] = (i * len + j) as i16;
+            }
+        }
+        let mut output_strided = input_strided.clone();
+        f(
+            d,
+            D::I16Vec::make_array_slice_mut(&mut output_strided),
+            stride,
+        );
+
+        for i in 0..len {
+            for j in 0..len {
+                assert_eq!(
+                    output_strided[(i * stride) * len + j],
+                    input_strided[(j * stride) * len + i]
+                );
+            }
+        }
+    }
+
+    fn test_i16_transpose_square<D: SimdDescriptor>(d: D) {
+        check_transpose_i16_with(d, transpose_square_i16);
+    }
+    test_all_instruction_sets!(test_i16_transpose_square);
+
+    fn test_i16_transpose_square_fallback<D: SimdDescriptor>(d: D) {
+        check_transpose_i16_with(d, transpose_square_i16_fallback);
+    }
+    test_all_instruction_sets!(test_i16_transpose_square_fallback);
 }

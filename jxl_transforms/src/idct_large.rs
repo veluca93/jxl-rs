@@ -13,6 +13,7 @@ use std::f32::consts::SQRT_2;
 use jxl_simd::{F32SimdVec, SimdDescriptor};
 
 use crate::idct_32;
+use crate::transpose::transpose_square_f32;
 
 const WC_WEIGHTS_64: [f32; 32] = [
     0.500150636020651,
@@ -403,10 +404,10 @@ fn idct2d_square<D: SimdDescriptor>(
     // Step 2: do column-DCTs on groups of K columns, transposing KxK blocks and
     // swapping them in their final place as we do so.
     for i in 0..chunks {
-        D::F32Vec::transpose_square(d, &mut data[i * n + i..], chunks);
+        transpose_square_f32(d, &mut data[i * n + i..], chunks);
         for j in i + 1..chunks {
-            D::F32Vec::transpose_square(d, &mut data[j * n + i..], chunks);
-            D::F32Vec::transpose_square(d, &mut data[i * n + j..], chunks);
+            transpose_square_f32(d, &mut data[j * n + i..], chunks);
+            transpose_square_f32(d, &mut data[i * n + j..], chunks);
             for k in 0..D::F32Vec::LEN {
                 data.swap(i * n + j + k * chunks, j * n + i + k * chunks);
             }
@@ -434,7 +435,7 @@ fn idct2d_wide<D: SimdDescriptor>(
     // Step 1: do rowblock-DCTs on the first K rows, transposing KxK blocks first.
     for i in 0..row_chunks {
         for j in 0..column_chunks {
-            D::F32Vec::transpose_square(d, &mut data[i * c + j..], column_chunks);
+            transpose_square_f32(d, &mut data[i * c + j..], column_chunks);
         }
         d.call(
             #[inline(always)]
@@ -444,7 +445,7 @@ fn idct2d_wide<D: SimdDescriptor>(
     // Step 2: do column-DCTs on groups of K columns, transposing KxK blocks back.
     for i in 0..column_chunks {
         for j in 0..row_chunks {
-            D::F32Vec::transpose_square(d, &mut data[j * c + i..], column_chunks);
+            transpose_square_f32(d, &mut data[j * c + i..], column_chunks);
         }
         d.call(
             #[inline(always)]
@@ -477,7 +478,7 @@ fn idct2d_thin<D: SimdDescriptor>(
     // Step 2: Incrementally transpose each square sub-block of the matrix, then do a column-IDCT which also completes the transpose.
     for i in 0..column_chunks {
         let tr_block = |data: &mut [<D::F32Vec as F32SimdVec>::UnderlyingArray], i, j, l| {
-            D::F32Vec::transpose_square(d, &mut data[i * r + j + l * column_chunks..], row_chunks)
+            transpose_square_f32(d, &mut data[i * r + j + l * column_chunks..], row_chunks)
         };
 
         (0..2).for_each(|l| tr_block(data, i, i, l));
