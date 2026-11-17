@@ -5,8 +5,8 @@
 
 use crate::{
     ComparableElement, Emu128Descriptor, F32Vec, FloatElement, I16Vec, I32Vec, IntElement,
-    MaskWidth, MulElement, SignedElement, SimdDescriptor, SimdElement, SimdMaskVec as SimdMask,
-    SimdVec, U8Vec, U64Vec, W8, W16, W32, W64, simd_test,
+    MaskWidth, MulElement, SignedElement, SimdDescriptor, SimdElement, SimdMask, SimdVec, U8Vec,
+    U64Vec, W8, W16, W32, W64, simd_test,
 };
 
 struct Rng(u64);

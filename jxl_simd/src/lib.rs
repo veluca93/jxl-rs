@@ -23,7 +23,6 @@ mod aarch64;
 #[cfg(target_arch = "wasm32")]
 mod wasm32;
 
-mod compat;
 mod emu128;
 pub mod float16;
 mod generic_ops;
@@ -31,10 +30,6 @@ mod sealed;
 
 #[cfg(all(target_arch = "aarch64", feature = "neon"))]
 pub use aarch64::NeonDescriptor;
-pub use compat::{
-    F32SimdVec, I16SimdVec, I32SimdVec, ScalarDescriptor, SimdMask, SimdMask16, U8SimdVec,
-    U16SimdVec, U32SimdVec, U64SimdVec,
-};
 pub use emu128::Emu128Descriptor;
 pub use float16::f16;
 pub use jxl_simd_macros::{simd_dispatch, simd_test};
@@ -334,14 +329,7 @@ pub trait SimdDescriptor128: SimdDescriptor {}
 
 /// Zero-sized capability token describing a SIMD instruction set and vector width.
 pub trait SimdDescriptor:
-    sealed::DescriptorSealed
-    + compat::SimdDescriptorCompat
-    + Sized
-    + Copy
-    + Debug
-    + Send
-    + Sync
-    + 'static
+    sealed::DescriptorSealed + Sized + Copy + Debug + Send + Sync + 'static
 {
     /// Width of a SIMD register in bytes.
     const BYTES: usize;
@@ -428,7 +416,7 @@ pub struct SimdVec<T: SimdElement, D: SimdDescriptor>(pub(crate) T::Raw<D>, pub(
 
 /// Generic SIMD mask of lane width `W` for descriptor `D`.
 #[derive(Clone, Copy, Debug)]
-pub struct SimdMaskVec<W: MaskWidth, D: SimdDescriptor>(pub(crate) W::Raw<D>, pub(crate) D);
+pub struct SimdMask<W: MaskWidth, D: SimdDescriptor>(pub(crate) W::Raw<D>, pub(crate) D);
 
 /// Prepared 8-entry BF16 lookup table for fast approximate lookups.
 #[derive(Clone, Copy, Debug)]
@@ -449,11 +437,11 @@ pub type U16VecArray<D> = SimdVecArray<u16, D>;
 pub type I32VecArray<D> = SimdVecArray<i32, D>;
 pub type U32VecArray<D> = SimdVecArray<u32, D>;
 pub type U64VecArray<D> = SimdVecArray<u64, D>;
-pub type Mask8<D> = SimdMaskVec<W8, D>;
-pub type Mask16<D> = SimdMaskVec<W16, D>;
-pub type Mask32<D> = SimdMaskVec<W32, D>;
-pub type Mask64<D> = SimdMaskVec<W64, D>;
-pub type Mask<D> = SimdMaskVec<W32, D>;
+pub type Mask8<D> = SimdMask<W8, D>;
+pub type Mask16<D> = SimdMask<W16, D>;
+pub type Mask32<D> = SimdMask<W32, D>;
+pub type Mask64<D> = SimdMask<W64, D>;
+pub type Mask<D> = SimdMask<W32, D>;
 
 /// Shifts each integer lane left by a compile-time constant amount.
 #[macro_export]
@@ -471,7 +459,7 @@ macro_rules! shr {
     };
 }
 
-// Generic operator implementations over `SimdVec` and `SimdMaskVec`.
+// Generic operator implementations over `SimdVec` and `SimdMask`.
 
 impl<T: ArithElement, D: SimdDescriptor> Add for SimdVec<T, D> {
     type Output = Self;
@@ -594,62 +582,62 @@ impl<T: IntElement, D: SimdDescriptor> Not for SimdVec<T, D> {
     }
 }
 
-impl<W: MaskWidth, D: SimdDescriptor> BitAnd for SimdMaskVec<W, D> {
+impl<W: MaskWidth, D: SimdDescriptor> BitAnd for SimdMask<W, D> {
     type Output = Self;
     #[inline(always)]
     fn bitand(self, rhs: Self) -> Self {
-        SimdMaskVec(W::mask_and(self.1, self.0, rhs.0), self.1)
+        SimdMask(W::mask_and(self.1, self.0, rhs.0), self.1)
     }
 }
 
-impl<W: MaskWidth, D: SimdDescriptor> BitAndAssign for SimdMaskVec<W, D> {
+impl<W: MaskWidth, D: SimdDescriptor> BitAndAssign for SimdMask<W, D> {
     #[inline(always)]
     fn bitand_assign(&mut self, rhs: Self) {
         self.0 = W::mask_and(self.1, self.0, rhs.0);
     }
 }
 
-impl<W: MaskWidth, D: SimdDescriptor> BitOr for SimdMaskVec<W, D> {
+impl<W: MaskWidth, D: SimdDescriptor> BitOr for SimdMask<W, D> {
     type Output = Self;
     #[inline(always)]
     fn bitor(self, rhs: Self) -> Self {
-        SimdMaskVec(W::mask_or(self.1, self.0, rhs.0), self.1)
+        SimdMask(W::mask_or(self.1, self.0, rhs.0), self.1)
     }
 }
 
-impl<W: MaskWidth, D: SimdDescriptor> BitOrAssign for SimdMaskVec<W, D> {
+impl<W: MaskWidth, D: SimdDescriptor> BitOrAssign for SimdMask<W, D> {
     #[inline(always)]
     fn bitor_assign(&mut self, rhs: Self) {
         self.0 = W::mask_or(self.1, self.0, rhs.0);
     }
 }
 
-impl<W: MaskWidth, D: SimdDescriptor> BitXor for SimdMaskVec<W, D> {
+impl<W: MaskWidth, D: SimdDescriptor> BitXor for SimdMask<W, D> {
     type Output = Self;
     #[inline(always)]
     fn bitxor(self, rhs: Self) -> Self {
-        SimdMaskVec(W::mask_xor(self.1, self.0, rhs.0), self.1)
+        SimdMask(W::mask_xor(self.1, self.0, rhs.0), self.1)
     }
 }
 
-impl<W: MaskWidth, D: SimdDescriptor> BitXorAssign for SimdMaskVec<W, D> {
+impl<W: MaskWidth, D: SimdDescriptor> BitXorAssign for SimdMask<W, D> {
     #[inline(always)]
     fn bitxor_assign(&mut self, rhs: Self) {
         self.0 = W::mask_xor(self.1, self.0, rhs.0);
     }
 }
 
-impl<W: MaskWidth, D: SimdDescriptor> Not for SimdMaskVec<W, D> {
+impl<W: MaskWidth, D: SimdDescriptor> Not for SimdMask<W, D> {
     type Output = Self;
     #[inline(always)]
     fn not(self) -> Self {
-        SimdMaskVec(W::mask_not(self.1, self.0), self.1)
+        SimdMask(W::mask_not(self.1, self.0), self.1)
     }
 }
 
-// Generic methods on `SimdMaskVec`.
+// Generic methods on `SimdMask`.
 
-impl<W: MaskWidth, D: SimdDescriptor> SimdMaskVec<W, D> {
+impl<W: MaskWidth, D: SimdDescriptor> SimdMask<W, D> {
     #[allow(dead_code)]
     #[inline(always)]
     pub(crate) fn from_raw(d: D, raw: W::Raw<D>) -> Self {
@@ -870,21 +858,21 @@ impl<T: SimdElement, D: SimdDescriptor> SimdVec<T, D> {
 
 impl<T: ComparableElement, D: SimdDescriptor> SimdVec<T, D> {
     #[inline(always)]
-    pub fn eq(self, other: Self) -> SimdMaskVec<T::Mask, D> {
-        SimdMaskVec(
+    pub fn eq(self, other: Self) -> SimdMask<T::Mask, D> {
+        SimdMask(
             <T as sealed::ComparableElement>::eq(self.1, self.0, other.0),
             self.1,
         )
     }
 
     #[inline(always)]
-    pub fn gt(self, other: Self) -> SimdMaskVec<T::Mask, D> {
-        SimdMaskVec(T::gt(self.1, self.0, other.0), self.1)
+    pub fn gt(self, other: Self) -> SimdMask<T::Mask, D> {
+        SimdMask(T::gt(self.1, self.0, other.0), self.1)
     }
 
     #[inline(always)]
-    pub fn eq_zero(self) -> SimdMaskVec<T::Mask, D> {
-        SimdMaskVec(T::eq_zero(self.1, self.0), self.1)
+    pub fn eq_zero(self) -> SimdMask<T::Mask, D> {
+        SimdMask(T::eq_zero(self.1, self.0), self.1)
     }
 
     #[inline(always)]
@@ -905,8 +893,8 @@ impl<T: SignedElement, D: SimdDescriptor> SimdVec<T, D> {
     }
 
     #[inline(always)]
-    pub fn lt_zero(self) -> SimdMaskVec<T::Mask, D> {
-        SimdMaskVec(T::lt_zero(self.1, self.0), self.1)
+    pub fn lt_zero(self) -> SimdMask<T::Mask, D> {
+        SimdMask(T::lt_zero(self.1, self.0), self.1)
     }
 }
 
