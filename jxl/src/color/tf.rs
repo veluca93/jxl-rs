@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use jxl_simd::{F32SimdVec, SimdDescriptor, SimdMask};
+use jxl_simd::{F32Vec, SimdDescriptor};
 
 use crate::headers::color_encoding::CustomTransferFunction;
 use crate::util::eval_rational_poly_simd;
@@ -11,7 +11,7 @@ use crate::util::eval_rational_poly_simd;
 /// Converts a single SIMD vector of linear samples to sRGB transfer curve.
 // Max error ~5e-7
 #[inline(always)]
-pub fn linear_to_srgb_simd_vec<D: SimdDescriptor>(d: D, x: D::F32Vec) -> D::F32Vec {
+pub fn linear_to_srgb_simd_vec<D: SimdDescriptor>(d: D, x: F32Vec<D>) -> F32Vec<D> {
     #[allow(clippy::excessive_precision)]
     const P: [f32; 5] = [
         -5.135152395e-4,
@@ -31,10 +31,10 @@ pub fn linear_to_srgb_simd_vec<D: SimdDescriptor>(d: D, x: D::F32Vec) -> D::F32V
     ];
 
     let a = x.abs();
-    D::F32Vec::splat(d, 0.0031308)
+    F32Vec::splat(d, 0.0031308)
         .gt(a)
-        .if_then_else_f32(
-            a * D::F32Vec::splat(d, 12.92),
+        .if_then_else(
+            a * F32Vec::splat(d, 12.92),
             eval_rational_poly_simd(d, a.sqrt(), P, Q),
         )
         .copysign(x)
@@ -43,7 +43,7 @@ pub fn linear_to_srgb_simd_vec<D: SimdDescriptor>(d: D, x: D::F32Vec) -> D::F32V
 /// Converts a single SIMD vector of linear samples to BT.709 transfer curve.
 // Max error ~3e-7
 #[inline(always)]
-pub fn linear_to_bt709_simd_vec<D: SimdDescriptor>(d: D, x: D::F32Vec) -> D::F32Vec {
+pub fn linear_to_bt709_simd_vec<D: SimdDescriptor>(d: D, x: F32Vec<D>) -> F32Vec<D> {
     // Coefficients for rational polynomial P(y)/Q(y) where y = sqrt(x)
     // Approximates 1.099 * y^0.9 - 0.099 on [sqrt(0.018), 1]
     #[allow(clippy::excessive_precision)]
@@ -65,10 +65,10 @@ pub fn linear_to_bt709_simd_vec<D: SimdDescriptor>(d: D, x: D::F32Vec) -> D::F32
     ];
 
     let a = x.abs();
-    D::F32Vec::splat(d, 0.018)
+    F32Vec::splat(d, 0.018)
         .gt(a)
-        .if_then_else_f32(
-            a * D::F32Vec::splat(d, 4.5),
+        .if_then_else(
+            a * F32Vec::splat(d, 4.5),
             eval_rational_poly_simd(d, a.sqrt(), P, Q),
         )
         .copysign(x)
@@ -120,9 +120,9 @@ const PQ_EOTF_Q: [f32; 5] = [
 #[inline(always)]
 pub fn pq_to_linear_simd_vec<D: SimdDescriptor>(
     d: D,
-    y_mult: D::F32Vec,
-    s: D::F32Vec,
-) -> D::F32Vec {
+    y_mult: F32Vec<D>,
+    s: F32Vec<D>,
+) -> F32Vec<D> {
     let a = s.abs();
     // a + a * a
     let x = a.mul_add(a, a);
@@ -146,10 +146,10 @@ const PQ_INV_EOTF_Q_SMALL: [f32; 5] =
 #[inline(always)]
 pub fn linear_to_pq_simd_vec<D: SimdDescriptor>(
     d: D,
-    y_mult: D::F32Vec,
-    threshold: D::F32Vec,
-    s: D::F32Vec,
-) -> D::F32Vec {
+    y_mult: F32Vec<D>,
+    threshold: F32Vec<D>,
+    s: F32Vec<D>,
+) -> F32Vec<D> {
     let a = s.abs();
     let a_scaled = a * y_mult;
     let a_1_4 = a_scaled.sqrt().sqrt();
@@ -157,11 +157,11 @@ pub fn linear_to_pq_simd_vec<D: SimdDescriptor>(
     // Use small polynomial for a < 1e-4, regular polynomial otherwise
     let y_small = eval_rational_poly_simd(d, a_1_4, PQ_INV_EOTF_P_SMALL, PQ_INV_EOTF_Q_SMALL);
     let y_large = eval_rational_poly_simd(d, a_1_4, PQ_INV_EOTF_P, PQ_INV_EOTF_Q);
-    let y = threshold.gt(a).if_then_else_f32(y_small, y_large);
+    let y = threshold.gt(a).if_then_else(y_small, y_large);
 
     y.copysign(s)
-        .max(D::F32Vec::splat(d, 0.0))
-        .min(D::F32Vec::splat(d, 1.0))
+        .max(F32Vec::splat(d, 0.0))
+        .min(F32Vec::splat(d, 1.0))
 }
 
 const HLG_A: f64 = 0.17883277;
@@ -171,15 +171,15 @@ const HLG_C: f64 = 0.5599107295;
 #[inline(always)]
 fn hlg_ootf_inner_vec<D: SimdDescriptor>(
     d: D,
-    exp: D::F32Vec,
-    [lr, lg, lb]: [D::F32Vec; 3],
-    [r, g, b]: [D::F32Vec; 3],
-) -> [D::F32Vec; 3] {
+    exp: F32Vec<D>,
+    [lr, lg, lb]: [F32Vec<D>; 3],
+    [r, g, b]: [F32Vec<D>; 3],
+) -> [F32Vec<D>; 3] {
     let mixed = r.mul_add(lr, g.mul_add(lg, b * lb));
     let mult = crate::util::fast_powf_simd(d, mixed, exp);
-    let mult = D::F32Vec::splat(d, 0.1)
+    let mult = F32Vec::splat(d, 0.1)
         .gt(exp.abs())
-        .if_then_else_f32(D::F32Vec::splat(d, 1.0), mult);
+        .if_then_else(F32Vec::splat(d, 1.0), mult);
     [r * mult, g * mult, b * mult]
 }
 
@@ -191,38 +191,35 @@ pub fn hlg_system_gamma(intensity_display: f32) -> f32 {
 #[inline(always)]
 pub fn hlg_display_to_scene_vec<D: SimdDescriptor>(
     d: D,
-    system_gamma: D::F32Vec,
-    luminance_rgb: [D::F32Vec; 3],
-    samples_rgb: [D::F32Vec; 3],
-) -> [D::F32Vec; 3] {
-    let one_sub_gamma = D::F32Vec::splat(d, 1.0) - system_gamma;
+    system_gamma: F32Vec<D>,
+    luminance_rgb: [F32Vec<D>; 3],
+    samples_rgb: [F32Vec<D>; 3],
+) -> [F32Vec<D>; 3] {
+    let one_sub_gamma = F32Vec::splat(d, 1.0) - system_gamma;
     hlg_ootf_inner_vec(d, one_sub_gamma / system_gamma, luminance_rgb, samples_rgb)
 }
 
 #[inline(always)]
-pub fn scene_to_hlg_vec<D: SimdDescriptor>(d: D, s: D::F32Vec) -> D::F32Vec {
+pub fn scene_to_hlg_vec<D: SimdDescriptor>(d: D, s: F32Vec<D>) -> F32Vec<D> {
     let a = s.abs();
-    let y_small = (D::F32Vec::splat(d, 3.0) * a).sqrt();
+    let y_small = (F32Vec::splat(d, 3.0) * a).sqrt();
     let y_large = {
         let log = crate::util::fast_log2f_simd(
             d,
-            a.mul_add(
-                D::F32Vec::splat(d, 12.0),
-                D::F32Vec::splat(d, -HLG_B as f32),
-            ),
+            a.mul_add(F32Vec::splat(d, 12.0), F32Vec::splat(d, -HLG_B as f32)),
         );
         // log2 x = ln x / ln 2, therefore ln x = (ln 2)(log2 x)
         log.mul_add(
-            D::F32Vec::splat(d, (HLG_A * std::f64::consts::LN_2) as f32),
-            D::F32Vec::splat(d, HLG_C as f32),
+            F32Vec::splat(d, (HLG_A * std::f64::consts::LN_2) as f32),
+            F32Vec::splat(d, HLG_C as f32),
         )
     };
-    let a_threshold = D::F32Vec::splat(d, 1.0 / 12.0);
+    let a_threshold = F32Vec::splat(d, 1.0 / 12.0);
     a.gt(a_threshold)
-        .if_then_else_f32(y_large, y_small)
+        .if_then_else(y_large, y_small)
         .copysign(s)
-        .max(D::F32Vec::splat(d, -0.074))
-        .min(D::F32Vec::splat(d, 1.1))
+        .max(F32Vec::splat(d, -0.074))
+        .min(F32Vec::splat(d, 1.1))
 }
 
 /// Converts HLG signal to scene-referred linear sample.
@@ -346,23 +343,23 @@ mod test {
 
     #[inline(always)]
     fn bt709_to_linear_simd<D: SimdDescriptor>(d: D, xsize: usize, samples: &mut [f32]) {
-        let threshold = D::F32Vec::splat(d, 0.081);
-        let inv_4_5 = D::F32Vec::splat(d, 1.0 / 4.5);
-        let scale = D::F32Vec::splat(d, 1.0 / 1.099);
-        let offset = D::F32Vec::splat(d, 0.099 / 1.099);
-        let exp = D::F32Vec::splat(d, 1.0 / 0.45);
+        let threshold = F32Vec::splat(d, 0.081);
+        let inv_4_5 = F32Vec::splat(d, 1.0 / 4.5);
+        let scale = F32Vec::splat(d, 1.0 / 1.099);
+        let offset = F32Vec::splat(d, 0.099 / 1.099);
+        let exp = F32Vec::splat(d, 1.0 / 0.45);
 
         for vec in samples
-            .chunks_exact_mut(D::F32Vec::LEN)
-            .take(xsize.div_ceil(D::F32Vec::LEN))
+            .chunks_exact_mut(F32Vec::<D>::LEN)
+            .take(xsize.div_ceil(F32Vec::<D>::LEN))
         {
-            let x = D::F32Vec::load(d, vec);
+            let x = F32Vec::load(d, vec);
             let a = x.abs();
             let linear_part = a * inv_4_5;
             let gamma_part = crate::util::fast_powf_simd(d, a.mul_add(scale, offset), exp);
             threshold
                 .gt(a)
-                .if_then_else_f32(linear_part, gamma_part)
+                .if_then_else(linear_part, gamma_part)
                 .copysign(x)
                 .store(vec);
         }
@@ -477,9 +474,10 @@ mod test {
             let samples = arb_samples(u)?;
             let mut output = samples.clone();
 
-            let d = jxl_simd::ScalarDescriptor::new().unwrap();
-            for s in &mut output {
-                *s = linear_to_srgb_simd_vec(d, *s);
+            let d = jxl_simd::Emu128Descriptor::new().unwrap();
+            for chunk in output.chunks_mut(4) {
+                let v = jxl_simd::F32Vec::load_partial(d, chunk);
+                linear_to_srgb_simd_vec(d, v).store_partial(chunk);
             }
             srgb_to_linear(&mut output);
             assert_close!(all, &output, &samples, 2e-6);
@@ -493,9 +491,10 @@ mod test {
             let samples = arb_samples(u)?;
             let mut output = samples.clone();
 
-            let d = jxl_simd::ScalarDescriptor::new().unwrap();
-            for s in &mut output {
-                *s = linear_to_bt709_simd_vec(d, *s);
+            let d = jxl_simd::Emu128Descriptor::new().unwrap();
+            for chunk in output.chunks_mut(4) {
+                let v = jxl_simd::F32Vec::load_partial(d, chunk);
+                linear_to_bt709_simd_vec(d, v).store_partial(chunk);
             }
             bt709_to_linear(&mut output);
             assert_close!(all, &output, &samples, 5e-6);
@@ -510,9 +509,10 @@ mod test {
             let mut simd = samples.clone();
 
             linear_to_srgb_naive(&mut samples);
-            let d = jxl_simd::ScalarDescriptor::new().unwrap();
-            for s in &mut simd {
-                *s = linear_to_srgb_simd_vec(d, *s);
+            let d = jxl_simd::Emu128Descriptor::new().unwrap();
+            for chunk in simd.chunks_mut(4) {
+                let v = jxl_simd::F32Vec::load_partial(d, chunk);
+                linear_to_srgb_simd_vec(d, v).store_partial(chunk);
             }
             assert_close!(all, &samples, &simd, 1e-6);
             Ok(())
@@ -526,9 +526,10 @@ mod test {
             let mut simd = samples.clone();
 
             linear_to_bt709_naive(&mut samples);
-            let d = jxl_simd::ScalarDescriptor::new().unwrap();
-            for s in &mut simd {
-                *s = linear_to_bt709_simd_vec(d, *s);
+            let d = jxl_simd::Emu128Descriptor::new().unwrap();
+            for chunk in simd.chunks_mut(4) {
+                let v = jxl_simd::F32Vec::load_partial(d, chunk);
+                linear_to_bt709_simd_vec(d, v).store_partial(chunk);
             }
             assert_close!(all, &samples, &simd, 1e-6);
             Ok(())
@@ -541,9 +542,11 @@ mod test {
             let mut samples = arb_samples(u)?;
             let mut simd = samples.clone();
             let xsize = samples.len();
+            simd.resize(xsize.next_multiple_of(4), 0.0);
 
             bt709_to_linear(&mut samples);
-            bt709_to_linear_simd(jxl_simd::ScalarDescriptor::new().unwrap(), xsize, &mut simd);
+            bt709_to_linear_simd(jxl_simd::Emu128Descriptor::new().unwrap(), xsize, &mut simd);
+            simd.truncate(xsize);
             assert_close!(all, &samples, &simd, 1e-5);
             Ok(())
         });
@@ -557,12 +560,13 @@ mod test {
             let mut simd = samples.clone();
 
             pq_to_linear_precise(intensity_target, &mut samples);
-            let d = jxl_simd::ScalarDescriptor::new().unwrap();
-            let y_mult = jxl_simd::F32SimdVec::splat(d, 10000.0 / intensity_target);
-            for s in &mut simd {
-                *s = pq_to_linear_simd_vec(d, y_mult, *s);
+            let d = jxl_simd::Emu128Descriptor::new().unwrap();
+            let y_mult = jxl_simd::F32Vec::splat(d, 10000.0 / intensity_target);
+            for chunk in simd.chunks_mut(4) {
+                let v = jxl_simd::F32Vec::load_partial(d, chunk);
+                pq_to_linear_simd_vec(d, y_mult, v).store_partial(chunk);
             }
-            // Up to 3.1e-6 with ScalarDescriptor's unfused mul_add.
+            // Up to 3.1e-6 with Emu128Descriptor's unfused mul_add.
             assert_close!(all, &samples, &simd, 3.2e-6);
             Ok(())
         });
@@ -576,11 +580,12 @@ mod test {
             let mut simd = samples.clone();
 
             linear_to_pq_precise(intensity_target, &mut samples);
-            let d = jxl_simd::ScalarDescriptor::new().unwrap();
-            let y_mult = jxl_simd::F32SimdVec::splat(d, intensity_target * 10000f32.recip());
-            let threshold = jxl_simd::F32SimdVec::splat(d, 1e-4);
-            for s in &mut simd {
-                *s = linear_to_pq_simd_vec(d, y_mult, threshold, *s);
+            let d = jxl_simd::Emu128Descriptor::new().unwrap();
+            let y_mult = jxl_simd::F32Vec::splat(d, intensity_target * 10000f32.recip());
+            let threshold = jxl_simd::F32Vec::splat(d, 1e-4);
+            for chunk in simd.chunks_mut(4) {
+                let v = jxl_simd::F32Vec::load_partial(d, chunk);
+                linear_to_pq_simd_vec(d, y_mult, threshold, v).store_partial(chunk);
             }
             // Error seems to increase at intensity_target < 10000
             assert_close!(all, &samples, &simd, 8e-7);
@@ -591,7 +596,7 @@ mod test {
     #[test]
     fn hlg_ootf_simd_arb() {
         arbtest::arbtest(|u| {
-            let d = jxl_simd::ScalarDescriptor::new().unwrap();
+            let d = jxl_simd::Emu128Descriptor::new().unwrap();
 
             let intensity_target = u.int_in_range(900..=1100)? as f32;
 
@@ -605,7 +610,13 @@ mod test {
             let b = u.int_in_range(0u32..=(1 << 24))? as f32 / (1 << 24) as f32;
 
             let system_gamma = hlg_system_gamma(intensity_target);
-            let simd = hlg_display_to_scene_vec(d, system_gamma, luminance_rgb, [r, g, b]);
+            let simd = hlg_display_to_scene_vec(
+                d,
+                jxl_simd::F32Vec::splat(d, system_gamma),
+                luminance_rgb.map(|v| jxl_simd::F32Vec::splat(d, v)),
+                [r, g, b].map(|v| jxl_simd::F32Vec::splat(d, v)),
+            )
+            .map(|v| v.extract_lane0());
 
             let precise = hlg_display_to_scene_precise(intensity_target, luminance_rgb, [r, g, b]);
             assert_close!(all, &simd, &precise, 7.2e-7);
@@ -617,14 +628,15 @@ mod test {
     #[test]
     fn scene_to_hlg_simd_arb() {
         arbtest::arbtest(|u| {
-            let d = jxl_simd::ScalarDescriptor::new().unwrap();
+            let d = jxl_simd::Emu128Descriptor::new().unwrap();
 
             let mut samples = arb_samples(u)?;
             let mut precise = samples.clone();
 
             scene_to_hlg_precise(&mut precise);
-            for s in &mut samples {
-                *s = scene_to_hlg_vec(d, *s);
+            for chunk in samples.chunks_mut(4) {
+                let v = jxl_simd::F32Vec::load_partial(d, chunk);
+                scene_to_hlg_vec(d, v).store_partial(chunk);
             }
             assert_close!(all, &samples, &precise, 5e-7);
             Ok(())

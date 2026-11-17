@@ -7,7 +7,7 @@ use std::f32::consts::{FRAC_1_SQRT_2, PI, SQRT_2};
 use std::iter::{self, zip};
 use std::ops;
 
-use jxl_simd::{F32SimdVec, SimdDescriptor, simd_dispatch};
+use jxl_simd::{F32Vec, SimdDescriptor, simd_dispatch};
 
 use crate::bit_reader::BitReader;
 use crate::entropy_coding::decode::{Histograms, SymbolReader, unpack_signed};
@@ -543,22 +543,22 @@ fn draw_segment_inner<D: SimdDescriptor>(
 ) {
     let (x_start, x_end) = x_range;
     let (row_x0, y) = row_pos;
-    let len = D::F32Vec::LEN;
+    let len = F32Vec::<D>::LEN;
 
-    let inv_sigma = D::F32Vec::splat(d, segment.inv_sigma);
-    let half = D::F32Vec::splat(d, 0.5);
-    let one_over_2s2 = D::F32Vec::splat(d, 0.353_553_38);
-    let sigma_over_4_times_intensity = D::F32Vec::splat(d, segment.sigma_over_4_times_intensity);
-    let center_x = D::F32Vec::splat(d, segment.center_x);
-    let center_y = D::F32Vec::splat(d, segment.center_y);
-    let dy = D::F32Vec::splat(d, y as f32) - center_y;
+    let inv_sigma = F32Vec::splat(d, segment.inv_sigma);
+    let half = F32Vec::splat(d, 0.5);
+    let one_over_2s2 = F32Vec::splat(d, 0.353_553_38);
+    let sigma_over_4_times_intensity = F32Vec::splat(d, segment.sigma_over_4_times_intensity);
+    let center_x = F32Vec::splat(d, segment.center_x);
+    let center_y = F32Vec::splat(d, segment.center_y);
+    let dy = F32Vec::splat(d, y as f32) - center_y;
     let dy2 = dy * dy;
 
     let mut x_base_arr = [0.0f32; 16];
     for (i, val) in x_base_arr.iter_mut().enumerate() {
         *val = i as f32;
     }
-    let vx_base = D::F32Vec::load(d, &x_base_arr);
+    let vx_base = F32Vec::load(d, &x_base_arr);
 
     let start_offset = x_start - row_x0;
     let end_offset = x_end - row_x0;
@@ -569,38 +569,38 @@ fn draw_segment_inner<D: SimdDescriptor>(
     let mut it1 = r1[start_offset..end_offset].chunks_exact_mut(len);
     let mut it2 = r2[start_offset..end_offset].chunks_exact_mut(len);
 
-    let cm0 = D::F32Vec::splat(d, segment.color[0]);
-    let cm1 = D::F32Vec::splat(d, segment.color[1]);
-    let cm2 = D::F32Vec::splat(d, segment.color[2]);
+    let cm0 = F32Vec::splat(d, segment.color[0]);
+    let cm1 = F32Vec::splat(d, segment.color[1]);
+    let cm2 = F32Vec::splat(d, segment.color[2]);
 
     let num_chunks = (end_offset - start_offset) / len;
     let mut x = x_start;
     // chunks + remainder
     for iter in 0..=num_chunks {
-        let vx = D::F32Vec::splat(d, x as f32) + vx_base;
+        let vx = F32Vec::splat(d, x as f32) + vx_base;
         let dx = vx - center_x;
         let sqd = dx.mul_add(dx, dy2);
         let distance = sqd.sqrt();
 
         let arg1 = distance.mul_add(half, one_over_2s2) * inv_sigma;
-        let arg2 = distance.mul_add(half, D::F32Vec::splat(d, -0.353_553_38)) * inv_sigma;
+        let arg2 = distance.mul_add(half, F32Vec::splat(d, -0.353_553_38)) * inv_sigma;
         let one_dimensional_factor = fast_erff_simd(d, arg1) - fast_erff_simd(d, arg2);
         let local_intensity =
             sigma_over_4_times_intensity * one_dimensional_factor * one_dimensional_factor;
 
         if iter < num_chunks {
-            let mul_accum = |cm: D::F32Vec, data: &mut [f32]| {
-                cm.mul_add(local_intensity, D::F32Vec::load(d, data))
+            let mul_accum = |cm: F32Vec<D>, data: &mut [f32]| {
+                cm.mul_add(local_intensity, F32Vec::load(d, data))
                     .store(data)
             };
             mul_accum(cm0, it0.next().unwrap());
             mul_accum(cm1, it1.next().unwrap());
             mul_accum(cm2, it2.next().unwrap());
         } else {
-            let mul_accum = |cm: D::F32Vec, data: &mut [f32]| {
+            let mul_accum = |cm: F32Vec<D>, data: &mut [f32]| {
                 let mut full_data = [0.0; 16];
                 full_data[..data.len()].copy_from_slice(data);
-                cm.mul_add(local_intensity, D::F32Vec::load(d, &full_data))
+                cm.mul_add(local_intensity, F32Vec::load(d, &full_data))
                     .store(&mut full_data);
                 data.copy_from_slice(&full_data[..data.len()]);
             };

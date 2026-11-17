@@ -6,7 +6,7 @@
 use std::borrow::Cow;
 use std::fmt;
 
-use jxl_simd::{F32SimdVec, SimdDescriptor, SimdMask, U8SimdVec, simd_dispatch};
+use jxl_simd::{F32Vec, SimdDescriptor, U8Vec, simd_dispatch};
 
 use crate::bit_reader::BitReader;
 use crate::color::tf::{
@@ -1915,18 +1915,18 @@ fn create_hdr_clut_simd<D: SimdDescriptor>(
                 let t = eval_hdr_m_curve(u, PQ_M_CURVE_TOE);
                 (y_max * t) / (1.0 + m * (1.0 - t))
             });
-            let zero = D::F32Vec::zero(d);
-            let one = D::F32Vec::splat(d, 1.0);
+            let zero = F32Vec::zero(d);
+            let one = F32Vec::splat(d, 1.0);
             let pq_of_intensity_target =
-                linear_to_pq_simd_vec(d, one, zero, D::F32Vec::splat(d, y_max));
+                linear_to_pq_simd_vec(d, one, zero, F32Vec::splat(d, y_max));
             let inv_pq_of_intensity_target = one / pq_of_intensity_target;
             // PQ(250 nits)
-            let max_lum = D::F32Vec::splat(d, 0.602_559_15) / pq_of_intensity_target;
-            let ks = max_lum.mul_add(D::F32Vec::splat(d, 1.5), D::F32Vec::splat(d, -0.5));
+            let max_lum = F32Vec::splat(d, 0.602_559_15) / pq_of_intensity_target;
+            let ks = max_lum.mul_add(F32Vec::splat(d, 1.5), F32Vec::splat(d, -0.5));
             // BT.2408's spline is MAX_LUM - SPLINE_K (1 - q)^3, as KS = 1.5 MAX_LUM - 0.5.
-            let spline_k = D::F32Vec::splat(d, 4.0)
-                / (D::F32Vec::splat(d, 27.0) * (one - max_lum) * (one - max_lum));
-            let scale = D::F32Vec::splat(d, 10000.0 / 250.0);
+            let spline_k = F32Vec::splat(d, 4.0)
+                / (F32Vec::splat(d, 27.0) * (one - max_lum) * (one - max_lum));
+            let scale = F32Vec::splat(d, 10000.0 / 250.0);
             append_hdr_clut(d, &eotf_lut, luminances, PQ_M_CURVE_TOE, tags, {
                 #[inline(always)]
                 |y| {
@@ -1938,7 +1938,7 @@ fn create_hdr_clut_simd<D: SimdDescriptor>(
                     // The spline rises from KS to MAX_LUM, so lin is within (0, 1).
                     let lin = pq_to_linear_simd_vec(d, scale, spline * pq_of_intensity_target);
                     // The curve is the identity below the knee.
-                    ks.gt(q).if_then_else_f32(scale, lin / y)
+                    ks.gt(q).if_then_else(scale, lin / y)
                 }
             });
         }
@@ -1949,7 +1949,7 @@ fn create_hdr_clut_simd<D: SimdDescriptor>(
                 let t = eval_hdr_m_curve(u, 0.0);
                 t.powf(1.0 / hlg_gamma)
             });
-            let hlg_exp = D::F32Vec::splat(d, hlg_gamma - 1.0);
+            let hlg_exp = F32Vec::splat(d, hlg_gamma - 1.0);
             append_hdr_clut(d, &eotf_lut, luminances, 0.0, tags, {
                 #[inline(always)]
                 |y| fast_powf_simd(d, y, hlg_exp)
@@ -1969,92 +1969,106 @@ fn append_hdr_clut<D: SimdDescriptor>(
     luminances: [f32; 3],
     m_toe_d: f32,
     tags: &mut Vec<u8>,
-    tone_map: impl Fn(D::F32Vec) -> D::F32Vec,
+    tone_map: impl Fn(F32Vec<D>) -> F32Vec<D>,
 ) {
     const POINTS: usize = HDR_LUT_DIM * HDR_LUT_DIM * HDR_LUT_DIM;
     // Steps run over BATCH vectors at a time, so the CPU overlaps their long dependency chains.
     const BATCH: usize = 4;
     // Rows a vector of up to 16 lanes can span: 2 at 17 grid points, 3 at 9.
     const ROWS: usize = 1 + 15usize.div_ceil(HDR_LUT_DIM);
-    const { assert!(D::F32Vec::LEN <= 16) }
-    const { assert!((BATCH * D::F32Vec::LEN).is_multiple_of(D::U8Vec::LEN)) }
-    let len = D::F32Vec::LEN;
-    let zero = D::F32Vec::zero(d);
-    let one = D::F32Vec::splat(d, 1.0);
-    let [lum_r, lum_g, lum_b] = luminances.map(|v| D::F32Vec::splat(d, v));
-    let inv_a = D::F32Vec::splat(d, 1.0 + m_toe_d);
-    let neg_d = D::F32Vec::splat(d, -m_toe_d);
+    const { assert!(F32Vec::<D>::LEN <= 16) }
+    const { assert!((BATCH * F32Vec::<D>::LEN).is_multiple_of(U8Vec::<D>::LEN)) }
+    let len = F32Vec::<D>::LEN;
+    let zero = F32Vec::zero(d);
+    let one = F32Vec::splat(d, 1.0);
+    let [lum_r, lum_g, lum_b] = [
+        F32Vec::splat(d, luminances[0]),
+        F32Vec::splat(d, luminances[1]),
+        F32Vec::splat(d, luminances[2]),
+    ];
+    let inv_a = F32Vec::splat(d, 1.0 + m_toe_d);
+    let neg_d = F32Vec::splat(d, -m_toe_d);
     let c_slope = 4.0 * m_toe_d / ((1.0 + m_toe_d) * (1.0 + m_toe_d));
-    let yd = D::F32Vec::splat(d, c_slope * m_toe_d);
-    let inv_c = D::F32Vec::splat(d, if c_slope > 0.0 { 1.0 / c_slope } else { 0.0 });
-    let scale_255 = D::F32Vec::splat(d, 255.0);
+    let yd = F32Vec::splat(d, c_slope * m_toe_d);
+    let inv_c = F32Vec::splat(d, if c_slope > 0.0 { 1.0 / c_slope } else { 0.0 });
+    let scale_255 = F32Vec::splat(d, 255.0);
     // Repeated per row, so a vector of consecutive b can load from any start b.
     let grid: [f32; ROWS * HDR_LUT_DIM] = std::array::from_fn(|i| eotf_lut[i % HDR_LUT_DIM]);
     let row_offset: [f32; ROWS * HDR_LUT_DIM] = std::array::from_fn(|i| (i / HDR_LUT_DIM) as f32);
-    let splat_rg =
-        |rg: usize| [rg / HDR_LUT_DIM, rg % HDR_LUT_DIM].map(|i| D::F32Vec::splat(d, grid[i]));
+    let splat_rg = |rg: usize| {
+        [
+            F32Vec::splat(d, grid[rg / HDR_LUT_DIM]),
+            F32Vec::splat(d, grid[rg % HDR_LUT_DIM]),
+        ]
+    };
 
     // Lanes are consecutive points in the CLUT (b fastest); the last batch is partly padding.
     let start = tags.len();
     tags.resize(start + 3 * POINTS.next_multiple_of(BATCH * len), 0);
     for (batch, out) in tags[start..].chunks_exact_mut(3 * BATCH * len).enumerate() {
-        let rgb: [[D::F32Vec; 3]; BATCH] = std::array::from_fn(|v| {
+        let mut rgb = [[zero; 3]; BATCH];
+        for (v, slot) in rgb.iter_mut().enumerate() {
             let point = (batch * BATCH + v) * len;
             let (rg, b) = (point / HDR_LUT_DIM, point % HDR_LUT_DIM);
-            let [[r0, g0], [r1, g1]] = [rg, rg + 1].map(splat_rg);
-            let offset = D::F32Vec::load(d, &row_offset[b..]);
+            let [r0, g0] = splat_rg(rg);
+            let [r1, g1] = splat_rg(rg + 1);
+            let offset = F32Vec::load(d, &row_offset[b..]);
             let next = offset.gt(zero);
-            // Grids under 15 points only; fold, as an empty `for` changes the code at 17.
-            let [r, g] = (2..ROWS).fold(
-                [next.if_then_else_f32(r1, r0), next.if_then_else_f32(g1, g0)],
-                |[r, g], k| {
-                    let next = offset.gt(D::F32Vec::splat(d, (k - 1) as f32));
+            let mut r = next.if_then_else(r1, r0);
+            let mut g = next.if_then_else(g1, g0);
+            if ROWS > 2 {
+                let mut k = 2;
+                while k < ROWS {
+                    let next = offset.gt(F32Vec::splat(d, (k - 1) as f32));
                     let [rk, gk] = splat_rg(rg + k);
-                    [next.if_then_else_f32(rk, r), next.if_then_else_f32(gk, g)]
-                },
-            );
-            [r, g, D::F32Vec::load(d, &grid[b..])]
-        });
+                    r = next.if_then_else(rk, r);
+                    g = next.if_then_else(gk, g);
+                    k += 1;
+                }
+            }
+            *slot = [r, g, F32Vec::load(d, &grid[b..])];
+        }
 
-        let lum = rgb.map(|[r, g, b]| r.mul_add(lum_r, g.mul_add(lum_g, b * lum_b)));
-        let mult = lum.map(&tone_map);
+        let mut lum = [zero; BATCH];
+        for (slot, &[r, g, b]) in lum.iter_mut().zip(&rgb) {
+            *slot = r.mul_add(lum_r, g.mul_add(lum_g, b * lum_b));
+        }
+        let mut mult = [zero; BATCH];
+        for (slot, &l) in mult.iter_mut().zip(&lum) {
+            *slot = tone_map(l);
+        }
 
-        // Gamut map (desaturate out-of-gamut > 1.0 channels with preserve_saturation = 0.3)
-        let rgb: [_; BATCH] = std::array::from_fn(|v| {
-            let rgb = rgb[v].map(|c| c * mult[v]);
-            let lum = lum[v] * mult[v];
-            let max_clr = rgb[0].max(rgb[1]).max(rgb[2]);
-            let gray_mix = (D::F32Vec::splat(d, 0.7) * (max_clr - one) / (max_clr - lum))
+        // Gamut map (desaturate out-of-gamut > 1.0 channels with preserve_saturation = 0.3),
+        // normalize, encode with the inverse M-curve (8-bit per channel), then interleave.
+        let mut encoded = [[0u8; BATCH * 16]; 3];
+        for (v, ((&[r, g, b], &l), &m)) in rgb.iter().zip(&lum).zip(&mult).enumerate() {
+            let (r, g, b, l) = (r * m, g * m, b * m, l * m);
+            let max_clr = r.max(g).max(b);
+            let gray_mix = (F32Vec::splat(d, 0.7) * (max_clr - one) / (max_clr - l))
                 .max(zero)
                 .min(one);
-            let gray_mix = max_clr.gt(one).if_then_else_f32(gray_mix, zero);
-            rgb.map(|c| gray_mix.mul_add(lum - c, c))
-        });
-        // 1 for points within the gamut.
-        let rgb = rgb.map(|rgb| {
-            let norm = one / rgb[0].max(rgb[1]).max(rgb[2]).max(one);
-            rgb.map(|c| c * norm)
-        });
-
-        // Encode with the inverse M-curve (8-bit per channel), then interleave.
-        let mut encoded = [[0u8; BATCH * 16]; 3];
-        for (v, channels) in rgb.into_iter().enumerate() {
-            for (c, buf) in channels.into_iter().zip(&mut encoded) {
+            let gray_mix = max_clr.gt(one).if_then_else(gray_mix, zero);
+            let r = gray_mix.mul_add(l - r, r);
+            let g = gray_mix.mul_add(l - g, g);
+            let b = gray_mix.mul_add(l - b, b);
+            let norm = one / r.max(g).max(b).max(one);
+            for (c, buf) in [r * norm, g * norm, b * norm].into_iter().zip(&mut encoded) {
                 let c = c.max(zero);
                 let v_pow = c.sqrt().mul_add(inv_a, neg_d);
                 let v_lin = c * inv_c;
-                let u = c.gt(yd).if_then_else_f32(v_pow, v_lin);
+                let u = c.gt(yd).if_then_else(v_pow, v_lin);
                 (u * scale_255)
                     .max(zero)
                     .min(scale_255)
                     .round_store_u8(&mut buf[v * len..]);
             }
         }
-        for (i, chunk) in out.chunks_exact_mut(3 * D::U8Vec::LEN).enumerate() {
-            let [r, g, b] = encoded
-                .each_ref()
-                .map(|c| D::U8Vec::load(d, &c[i * D::U8Vec::LEN..]));
-            D::U8Vec::store_interleaved_3(r, g, b, chunk);
+        for (i, chunk) in out.chunks_exact_mut(3 * U8Vec::<D>::LEN).enumerate() {
+            let off = i * U8Vec::<D>::LEN;
+            let r = U8Vec::load(d, &encoded[0][off..]);
+            let g = U8Vec::load(d, &encoded[1][off..]);
+            let b = U8Vec::load(d, &encoded[2][off..]);
+            U8Vec::store_interleaved_3(r, g, b, chunk);
         }
     }
     tags.truncate(start + 3 * POINTS);
@@ -2094,7 +2108,7 @@ fn create_icc_noop_btoa_tag(tags: &mut Vec<u8>) -> Result<(), Error> {
 
 #[cfg(test)]
 mod test {
-    use jxl_simd::simd_test;
+    use jxl_simd::{Emu128Descriptor, simd_test};
 
     use super::*;
 
@@ -2212,7 +2226,7 @@ mod test {
         let (wx, wy) = JxlWhitePoint::D65.to_xy_coords();
         let to_xyz = primaries_to_xyz(rx, ry, gx, gy, bx, by, wx, wy).unwrap();
         let luminances = to_xyz[1].map(|v| v as f32);
-        let scalar_d = jxl_simd::ScalarDescriptor::new().unwrap();
+        let scalar_d = Emu128Descriptor::new().unwrap();
         let [pq, hlg] = [JxlTransferFunction::PQ, JxlTransferFunction::HLG].map(|tf| {
             let (mut clut, mut scalar) = (Vec::new(), Vec::new());
             create_hdr_clut_simd(d, 10000.0, &tf, luminances, &mut clut).unwrap();

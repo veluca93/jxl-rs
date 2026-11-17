@@ -7,7 +7,7 @@
 
 use std::f32::consts::{PI, SQRT_2};
 
-use jxl_simd::{F32SimdVec, I32SimdVec, ScalarDescriptor, SimdDescriptor, SimdMask, shl, shr};
+use jxl_simd::{Emu128Descriptor, F32Vec, I32Vec, SimdDescriptor, shl, shr};
 
 use super::eval_rational_poly_simd;
 
@@ -62,18 +62,18 @@ pub fn fast_erff(x: f32) -> f32 {
 }
 
 #[inline(always)]
-pub fn fast_erff_simd<D: SimdDescriptor>(d: D, x: D::F32Vec) -> D::F32Vec {
+pub fn fast_erff_simd<D: SimdDescriptor>(d: D, x: F32Vec<D>) -> F32Vec<D> {
     let absx = x.abs();
     let denom1 = absx.mul_add(
-        D::F32Vec::splat(d, 7.77394369e-02),
-        D::F32Vec::splat(d, 2.05260015e-04),
+        F32Vec::splat(d, 7.77394369e-02),
+        F32Vec::splat(d, 2.05260015e-04),
     );
-    let denom2 = denom1.mul_add(absx, D::F32Vec::splat(d, 2.32120216e-01));
-    let denom3 = denom2.mul_add(absx, D::F32Vec::splat(d, 2.77820801e-01));
-    let denom4 = denom3.mul_add(absx, D::F32Vec::splat(d, 1.0));
+    let denom2 = denom1.mul_add(absx, F32Vec::splat(d, 2.32120216e-01));
+    let denom3 = denom2.mul_add(absx, F32Vec::splat(d, 2.77820801e-01));
+    let denom4 = denom3.mul_add(absx, F32Vec::splat(d, 1.0));
     let denom5 = denom4 * denom4;
-    let inv_denom5 = D::F32Vec::splat(d, 1.0) / denom5;
-    let result = D::F32Vec::splat(d, 1.0) - inv_denom5 * inv_denom5;
+    let inv_denom5 = F32Vec::splat(d, 1.0) / denom5;
+    let result = F32Vec::splat(d, 1.0) - inv_denom5 * inv_denom5;
     result.copysign(x)
 }
 
@@ -96,20 +96,20 @@ pub fn fast_pow2f(x: f32) -> f32 {
 }
 
 #[inline(always)]
-pub fn fast_pow2f_simd<D: SimdDescriptor>(d: D, x: D::F32Vec) -> D::F32Vec {
+pub fn fast_pow2f_simd<D: SimdDescriptor>(d: D, x: F32Vec<D>) -> F32Vec<D> {
     let x_floor = x.floor();
-    let exp = shl!(x_floor.as_i32() + D::I32Vec::splat(d, 127), 23).bitcast_to_f32();
+    let exp = shl!(x_floor.as_i32() + I32Vec::splat(d, 127), 23).bitcast::<f32>();
     let frac = x - x_floor;
 
-    let num = frac + D::F32Vec::splat(d, POW2F_NUMER_COEFFS[0]);
-    let num = num.mul_add(frac, D::F32Vec::splat(d, POW2F_NUMER_COEFFS[1]));
-    let num = num.mul_add(frac, D::F32Vec::splat(d, POW2F_NUMER_COEFFS[2]));
+    let num = frac + F32Vec::splat(d, POW2F_NUMER_COEFFS[0]);
+    let num = num.mul_add(frac, F32Vec::splat(d, POW2F_NUMER_COEFFS[1]));
+    let num = num.mul_add(frac, F32Vec::splat(d, POW2F_NUMER_COEFFS[2]));
     let num = num * exp;
 
-    let den = D::F32Vec::splat(d, POW2F_DENOM_COEFFS[0])
-        .mul_add(frac, D::F32Vec::splat(d, POW2F_DENOM_COEFFS[1]));
-    let den = den.mul_add(frac, D::F32Vec::splat(d, POW2F_DENOM_COEFFS[2]));
-    let den = den.mul_add(frac, D::F32Vec::splat(d, POW2F_DENOM_COEFFS[3]));
+    let den = F32Vec::splat(d, POW2F_DENOM_COEFFS[0])
+        .mul_add(frac, F32Vec::splat(d, POW2F_DENOM_COEFFS[1]));
+    let den = den.mul_add(frac, F32Vec::splat(d, POW2F_DENOM_COEFFS[2]));
+    let den = den.mul_add(frac, F32Vec::splat(d, POW2F_DENOM_COEFFS[3]));
 
     num / den
 }
@@ -126,20 +126,20 @@ const LOG2F_Q: [f32; 3] = [
 ];
 
 #[inline(always)]
-pub fn fast_log2f_simd<D: SimdDescriptor>(d: D, x: D::F32Vec) -> D::F32Vec {
-    let x_bits = x.bitcast_to_i32();
-    let exp_bits = x_bits - D::I32Vec::splat(d, 0x3f2aaaab);
+pub fn fast_log2f_simd<D: SimdDescriptor>(d: D, x: F32Vec<D>) -> F32Vec<D> {
+    let x_bits = x.bitcast::<i32>();
+    let exp_bits = x_bits - I32Vec::splat(d, 0x3f2aaaab);
     let exp_shifted = shr!(exp_bits, 23);
-    let mantissa = (x_bits - shl!(exp_shifted, 23)).bitcast_to_f32();
+    let mantissa = (x_bits - shl!(exp_shifted, 23)).bitcast::<f32>();
     let exp_val = exp_shifted.as_f32();
 
-    let x = mantissa - D::F32Vec::splat(d, 1.0);
+    let x = mantissa - F32Vec::splat(d, 1.0);
     eval_rational_poly_simd(d, x, LOG2F_P, LOG2F_Q) + exp_val
 }
 
 // Max relative error: ~3e-5
 #[inline(always)]
-pub fn fast_powf_simd<D: SimdDescriptor>(d: D, base: D::F32Vec, exp: D::F32Vec) -> D::F32Vec {
+pub fn fast_powf_simd<D: SimdDescriptor>(d: D, base: F32Vec<D>, exp: F32Vec<D>) -> F32Vec<D> {
     fast_pow2f_simd(d, fast_log2f_simd(d, base) * exp)
 }
 
@@ -164,14 +164,15 @@ const JINC_WINDOWED_SQ_Q: [f32; 5] = [
 /// Max absolute error < 6e-8.
 #[inline(always)]
 pub fn fast_jinc_windowed_sq(r2: f32) -> f32 {
-    fast_jinc_windowed_sq_simd(ScalarDescriptor::new().unwrap(), r2)
+    let d = Emu128Descriptor::new().unwrap();
+    fast_jinc_windowed_sq_simd(d, F32Vec::splat(d, r2)).extract_lane0()
 }
 
 #[inline(always)]
-pub fn fast_jinc_windowed_sq_simd<D: SimdDescriptor>(d: D, r2: D::F32Vec) -> D::F32Vec {
+pub fn fast_jinc_windowed_sq_simd<D: SimdDescriptor>(d: D, r2: F32Vec<D>) -> F32Vec<D> {
     let poly = eval_rational_poly_simd(d, r2, JINC_WINDOWED_SQ_P, JINC_WINDOWED_SQ_Q);
-    let mask = D::F32Vec::splat(d, 6.25).gt(r2);
-    mask.if_then_else_f32(poly, D::F32Vec::zero(d))
+    let mask = F32Vec::splat(d, 6.25).gt(r2);
+    mask.if_then_else(poly, F32Vec::zero(d))
 }
 
 #[cfg(test)]
@@ -242,7 +243,9 @@ mod test {
             let exp = u.int_in_range(-(1i32 << 22)..=1 << 22)? as f32 / (1 << 20) as f32;
 
             let expected = base.powf(exp);
-            let actual = fast_powf_simd(ScalarDescriptor::new().unwrap(), base, exp);
+            let d = Emu128Descriptor::new().unwrap();
+            let actual =
+                fast_powf_simd(d, F32Vec::splat(d, base), F32Vec::splat(d, exp)).extract_lane0();
             let abs_error = (actual - expected).abs();
             let rel_error = abs_error / expected;
             assert!(
@@ -306,14 +309,14 @@ mod test {
 
     #[simd_test]
     fn fast_jinc_windowed_sq_simd_arb<D: SimdDescriptor>(d: D) {
-        let lanes = D::F32Vec::LEN;
+        let lanes = F32Vec::<D>::LEN;
         let mut input = vec![0.0f32; lanes];
         let mut output = vec![0.0f32; lanes];
         arbtest::arbtest(|u| {
             for v in &mut input {
                 *v = (u.int_in_range(0..=(1i32 << 24))? as f64 / (1 << 24) as f64 * 10.0) as f32;
             }
-            let vec = D::F32Vec::load(d, &input);
+            let vec = F32Vec::load(d, &input);
             fast_jinc_windowed_sq_simd(d, vec).store(&mut output);
             for i in 0..lanes {
                 let expected = jinc_windowed_sq(input[i] as f64);

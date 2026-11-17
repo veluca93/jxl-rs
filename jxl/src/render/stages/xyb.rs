@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use jxl_simd::{F32SimdVec, SimdDescriptor, simd_dispatch};
+use jxl_simd::{F32Vec, SimdDescriptor, simd_dispatch};
 
 use crate::api::{
     JxlColorEncoding, JxlPrimaries, JxlTransferFunction, JxlWhitePoint, adapt_to_xyz_d50,
@@ -202,14 +202,14 @@ fn process_xyb<D: SimdDescriptor>(
     row_x: &mut [f32],
     row_y: &mut [f32],
     row_b: &mut [f32],
-    apply_tf: impl Fn([D::F32Vec; 3]) -> [D::F32Vec; 3],
+    apply_tf: impl Fn([F32Vec<D>; 3]) -> [F32Vec<D>; 3],
 ) {
-    let mat = params.mat.map(|x| D::F32Vec::splat(d, x));
-    let bias_cbrt = params.bias_cbrt.map(|x| D::F32Vec::splat(d, x));
-    let scaled_bias = params.scaled_bias.map(|x| D::F32Vec::splat(d, x));
-    let intensity_scale = D::F32Vec::splat(d, params.intensity_scale);
+    let mat = params.mat.map(|x| F32Vec::splat(d, x));
+    let bias_cbrt = params.bias_cbrt.map(|x| F32Vec::splat(d, x));
+    let scaled_bias = params.scaled_bias.map(|x| F32Vec::splat(d, x));
+    let intensity_scale = F32Vec::splat(d, params.intensity_scale);
 
-    let vlen = D::F32Vec::LEN;
+    let vlen = F32Vec::<D>::LEN;
     let iter = row_x
         .chunks_exact_mut(vlen)
         .zip(row_y.chunks_exact_mut(vlen))
@@ -217,9 +217,9 @@ fn process_xyb<D: SimdDescriptor>(
         .take(xsize.div_ceil(vlen));
 
     for ((xm, ym), bm) in iter {
-        let x = D::F32Vec::load(d, xm);
-        let y = D::F32Vec::load(d, ym);
-        let b = D::F32Vec::load(d, bm);
+        let x = F32Vec::load(d, xm);
+        let y = F32Vec::load(d, ym);
+        let b = F32Vec::load(d, bm);
 
         // Mix and apply bias
         let l = y + x - bias_cbrt[0];
@@ -286,8 +286,8 @@ fn xyb_color_convert_process<D: SimdDescriptor>(
             });
         }
         TransferFunction::Pq { intensity_target } => {
-            let y_mult = D::F32Vec::splat(d, intensity_target * 10000f32.recip());
-            let threshold = D::F32Vec::splat(d, 1e-4);
+            let y_mult = F32Vec::splat(d, intensity_target * 10000f32.recip());
+            let threshold = F32Vec::splat(d, 1e-4);
             process_xyb(d, params, xsize, x, y, b, {
                 #[inline(always)]
                 |[r, g, b]| {
@@ -306,7 +306,7 @@ fn xyb_color_convert_process<D: SimdDescriptor>(
             });
         }
         TransferFunction::Gamma(g) => {
-            let g_vec = D::F32Vec::splat(d, *g);
+            let g_vec = F32Vec::splat(d, *g);
             process_xyb(d, params, xsize, x, y, b, {
                 #[inline(always)]
                 |[r, g, b]| {
@@ -322,8 +322,8 @@ fn xyb_color_convert_process<D: SimdDescriptor>(
             intensity_target,
             luminance_rgb,
         } => {
-            let system_gamma = D::F32Vec::splat(d, tf::hlg_system_gamma(*intensity_target));
-            let luminance_rgb = luminance_rgb.map(|v| D::F32Vec::splat(d, v));
+            let system_gamma = F32Vec::splat(d, tf::hlg_system_gamma(*intensity_target));
+            let luminance_rgb = luminance_rgb.map(|v| F32Vec::splat(d, v));
             process_xyb(d, params, xsize, x, y, b, {
                 #[inline(always)]
                 |arr| {
@@ -368,7 +368,7 @@ impl RenderPipelineInPlaceStage for XybColorConvertStage {
 
 #[cfg(test)]
 mod test {
-    use jxl_simd::{ScalarDescriptor, SimdDescriptor, simd_test};
+    use jxl_simd::{Emu128Descriptor, SimdDescriptor, simd_test};
     use test_log::test;
 
     use super::*;
@@ -579,7 +579,7 @@ mod test {
 
             xyb_color_convert_process(d, &params, &tf, xsize, &mut row_x, &mut row_y, &mut row_b);
             xyb_color_convert_process(
-                ScalarDescriptor::new().unwrap(),
+                Emu128Descriptor::new().unwrap(),
                 &params,
                 &tf,
                 xsize,

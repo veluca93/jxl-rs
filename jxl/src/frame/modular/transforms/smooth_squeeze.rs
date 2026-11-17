@@ -5,7 +5,7 @@
 
 use std::sync::OnceLock;
 
-use jxl_simd::{F32SimdVec, I32SimdVec, SimdDescriptor, simd_dispatch};
+use jxl_simd::{F32Vec, I32Vec, SimdDescriptor, simd_dispatch};
 
 use super::step::TiledChannelView;
 use crate::frame::modular::ModularStorage;
@@ -43,27 +43,27 @@ fn compute_row_kernel<D: SimdDescriptor>(
     const IOTA: [f32; 16] = [
         0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
     ];
-    const { assert!(D::F32Vec::LEN <= 16) };
-    let lanes = D::F32Vec::LEN;
+    const { assert!(F32Vec::<D>::LEN <= 16) };
+    let lanes = F32Vec::<D>::LEN;
     let inv_fx = 1.0 / (fx as f32);
     let num_chunks = num_weights.div_ceil(lanes);
 
-    let idx_vec = D::F32Vec::load(d, &IOTA[..lanes]);
+    let idx_vec = F32Vec::load(d, &IOTA[..lanes]);
 
     for chunk_idx in 0..num_chunks {
         let ox_base = chunk_idx * lanes;
-        let ox_vec = D::F32Vec::splat(d, ox_base as f32) + idx_vec;
-        let delta_x_vec = (ox_vec + D::F32Vec::splat(d, 0.5)) * D::F32Vec::splat(d, inv_fx)
-            - D::F32Vec::splat(d, 0.5);
+        let ox_vec = F32Vec::splat(d, ox_base as f32) + idx_vec;
+        let delta_x_vec =
+            (ox_vec + F32Vec::splat(d, 0.5)) * F32Vec::splat(d, inv_fx) - F32Vec::splat(d, 0.5);
 
-        let mut subk_weights = [D::F32Vec::zero(d); 25];
-        let mut sum_vec = D::F32Vec::zero(d);
+        let mut subk_weights = [F32Vec::zero(d); 25];
+        let mut sum_vec = F32Vec::zero(d);
 
         for ty in 0..5 {
             let py = (ty as f32 - 2.0) - delta_y;
-            let py2_vec = D::F32Vec::splat(d, py * py);
+            let py2_vec = F32Vec::splat(d, py * py);
             for tx in 0..5 {
-                let px_vec = D::F32Vec::splat(d, tx as f32 - 2.0) - delta_x_vec;
+                let px_vec = F32Vec::splat(d, tx as f32 - 2.0) - delta_x_vec;
                 let r2_vec = px_vec.mul_add(px_vec, py2_vec);
                 let w_vec = fast_jinc_windowed_sq_simd(d, r2_vec);
                 subk_weights[ty * 5 + tx] = w_vec;
@@ -71,7 +71,7 @@ fn compute_row_kernel<D: SimdDescriptor>(
             }
         }
 
-        let inv_sum_vec = D::F32Vec::splat(d, 1.0) / sum_vec;
+        let inv_sum_vec = F32Vec::splat(d, 1.0) / sum_vec;
         let chunk_offset = chunk_idx * 25 * lanes;
         for (tap, w_vec) in subk_weights.iter().enumerate() {
             let norm_w = *w_vec * inv_sum_vec;
@@ -129,23 +129,23 @@ impl SmoothUpsampleScratch {
 
 fn make_float<D: SimdDescriptor>(d: D, inp: &[i32], out: &mut [f32]) {
     for (i, o) in inp
-        .chunks_exact(D::I32Vec::LEN)
-        .zip(out.chunks_exact_mut(D::F32Vec::LEN))
+        .chunks_exact(I32Vec::<D>::LEN)
+        .zip(out.chunks_exact_mut(F32Vec::<D>::LEN))
     {
-        D::I32Vec::load(d, i).as_f32().store(o);
+        I32Vec::load(d, i).as_f32().store(o);
     }
 }
 
 #[inline(always)]
 fn store_interleaved_f32<D: SimdDescriptor, const FX: usize>(
-    out: &[D::F32Vec; FX],
+    out: &[F32Vec<D>; FX],
     dest: &mut [f32],
 ) {
     match FX {
         1 => out[0].store(dest),
-        2 => D::F32Vec::store_interleaved_2(out[0], out[1], dest),
-        4 => D::F32Vec::store_interleaved_4(out[0], out[1], out[2], out[3], dest),
-        8 => D::F32Vec::store_interleaved_8(
+        2 => F32Vec::store_interleaved_2(out[0], out[1], dest),
+        4 => F32Vec::store_interleaved_4(out[0], out[1], out[2], out[3], dest),
+        8 => F32Vec::store_interleaved_8(
             out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], dest,
         ),
         _ => unreachable!(),
@@ -160,20 +160,20 @@ fn process_row<D: SimdDescriptor, const FX: usize>(
     buffer: &[Vec<f32>; 5],
     row_float: &mut [f32],
 ) {
-    let lanes = D::F32Vec::LEN;
+    let lanes = F32Vec::<D>::LEN;
     let num_chunks = in_xs.div_ceil(lanes);
 
     for chunk_idx in 0..num_chunks {
         let ix = chunk_idx * lanes;
-        let mut out = [D::F32Vec::zero(d); FX];
+        let mut out = [F32Vec::zero(d); FX];
 
         for ty in 0..5 {
             let row = &buffer[ty][ix..];
             for tx in 0..5 {
-                let v = D::F32Vec::load(d, &row[tx..]);
+                let v = F32Vec::load(d, &row[tx..]);
                 for (ox, out_vec) in out.iter_mut().enumerate() {
                     let w = weights[ox][ty * 5 + tx];
-                    *out_vec = v.mul_add(D::F32Vec::splat(d, w), *out_vec);
+                    *out_vec = v.mul_add(F32Vec::splat(d, w), *out_vec);
                 }
             }
         }
@@ -191,16 +191,16 @@ fn process_row_large<D: SimdDescriptor>(
     buffer: &[Vec<f32>; 5],
     row_float: &mut [f32],
 ) {
-    let lanes = D::F32Vec::LEN;
+    let lanes = F32Vec::<D>::LEN;
     let in_xs = xs.div_ceil(fx);
 
     for ix in 0..in_xs {
         let base_x = ix * fx;
-        let mut c = [D::F32Vec::zero(d); 25];
+        let mut c = [F32Vec::zero(d); 25];
         for ty in 0..5 {
             let row = &buffer[ty][ix..];
             for tx in 0..5 {
-                c[ty * 5 + tx] = D::F32Vec::splat(d, row[tx]);
+                c[ty * 5 + tx] = F32Vec::splat(d, row[tx]);
             }
         }
 
@@ -209,9 +209,9 @@ fn process_row_large<D: SimdDescriptor>(
         for ox_chunk in 0..num_chunks {
             let ox_base = ox_chunk * lanes;
             let chunk_offset = ox_chunk * 25 * lanes;
-            let mut out_vec = D::F32Vec::zero(d);
+            let mut out_vec = F32Vec::zero(d);
             for tap in 0..25 {
-                let w_vec = D::F32Vec::load(d, &kernel_storage[chunk_offset + tap * lanes..]);
+                let w_vec = F32Vec::load(d, &kernel_storage[chunk_offset + tap * lanes..]);
                 out_vec = c[tap].mul_add(w_vec, out_vec);
             }
             out_vec.store(&mut row_float[base_x + ox_base..]);
@@ -229,20 +229,20 @@ fn dither_round_and_store<D: SimdDescriptor>(
     row_float: &[f32],
     output_row: &mut [i32],
 ) {
-    const { assert!(D::F32Vec::LEN <= 16) };
-    let lanes = D::F32Vec::LEN;
-    let half = D::F32Vec::splat(d, 0.5);
+    const { assert!(F32Vec::<D>::LEN <= 16) };
+    let lanes = F32Vec::<D>::LEN;
+    let half = F32Vec::splat(d, 0.5);
     let num_chunks = xs.div_ceil(lanes);
 
     for chunk_idx in 0..num_chunks {
         let x = chunk_idx * lanes;
         let cur_len = (xs - x).min(lanes);
-        let val = D::F32Vec::load(d, &row_float[x..]);
+        let val = F32Vec::load(d, &row_float[x..]);
         let dither_val = if dither {
             let dither_x = (x0 + x) % 32;
-            D::F32Vec::load(d, &DITHER_TABLE[dither_y][dither_x..])
+            F32Vec::load(d, &DITHER_TABLE[dither_y][dither_x..])
         } else {
-            D::F32Vec::zero(d)
+            F32Vec::zero(d)
         };
         let dithered = val + dither_val;
         let rounded = (dithered + half.copysign(dithered)).as_i32();
@@ -257,9 +257,9 @@ fn dither_round_and_store<D: SimdDescriptor>(
     }
 }
 
+#[simd_dispatch(smooth_upsample)]
 #[allow(clippy::too_many_arguments)]
-#[inline(always)]
-fn smooth_upsample_simd_impl<D: SimdDescriptor>(
+pub(super) fn smooth_upsample_simd_impl<D: SimdDescriptor>(
     d: D,
     input: &TiledChannelView<'_>,
     shift_diff: (usize, usize),
@@ -275,7 +275,7 @@ fn smooth_upsample_simd_impl<D: SimdDescriptor>(
     let (xs, ys) = (rect.size.0, rect.size.1);
     let (in_xs, in_ys) = (xs.div_ceil(fx), ys.div_ceil(fy));
     let (col_offset, row_offset) = (x0 / fx, y0 / fy);
-    let lanes = D::I32Vec::LEN;
+    let lanes = I32Vec::<D>::LEN;
 
     if in_xs == 0 || in_ys == 0 {
         return;
@@ -405,21 +405,6 @@ fn smooth_upsample_simd_impl<D: SimdDescriptor>(
     }
 }
 
-#[simd_dispatch(smooth_upsample)]
-#[allow(clippy::too_many_arguments)]
-pub(super) fn smooth_upsample_dispatch<D: SimdDescriptor>(
-    d: D,
-    input: &TiledChannelView<'_>,
-    shift_diff: (usize, usize),
-    dither: bool,
-    rect: Rect,
-    output: &mut OwnedRawImage,
-    storage: ModularStorage,
-    scratch: &mut SmoothUpsampleScratch,
-) {
-    smooth_upsample_simd_impl(d, input, shift_diff, dither, rect, output, storage, scratch);
-}
-
 #[cfg(test)]
 mod tests {
     use jxl_simd::simd_test;
@@ -485,7 +470,7 @@ mod tests {
 
     #[simd_test]
     fn test_compute_row_kernel_simd_equivalent<D: SimdDescriptor>(d: D) {
-        let lanes = D::F32Vec::LEN;
+        let lanes = F32Vec::<D>::LEN;
         for fx in [8, 15, 16, 32, 64] {
             for num_weights in [1usize, 3, 7, 8, 15, 16, fx] {
                 if num_weights > fx {
@@ -520,7 +505,7 @@ mod tests {
 
     #[simd_test]
     fn test_process_row_large_constant<D: SimdDescriptor>(d: D) {
-        let lanes = D::F32Vec::LEN;
+        let lanes = F32Vec::<D>::LEN;
         for fx in [16, 32, 64] {
             for xs in [1usize, 3, 7, 15, 16, 20, 32, 50, 64, 100] {
                 let in_xs = xs.div_ceil(fx);
