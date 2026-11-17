@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use jxl_simd::{F32SimdVec, I32SimdVec, SimdDescriptor, SimdMask, simd_dispatch};
+use jxl_simd::{F32Vec, I32Vec, SimdDescriptor, simd_dispatch};
 use jxl_transforms::transform::*;
 use jxl_transforms::transform_map::*;
 use num_traits::Float;
@@ -102,26 +102,26 @@ fn predict_num_nonzeros(nzeros_row: &[u8; 32], bx: usize, by: usize) -> usize {
 #[inline(always)]
 fn adjust_quant_bias<D: SimdDescriptor>(
     d: D,
-    quant_i: D::I32Vec,
+    quant_i: I32Vec<D>,
     bias_c: f32,
     bias_num: f32,
-) -> D::F32Vec {
+) -> F32Vec<D> {
     let quant = quant_i.as_f32();
-    let adjusted = quant - D::F32Vec::splat(d, bias_num) / quant;
-    D::I32Vec::splat(d, 2)
+    let adjusted = quant - F32Vec::splat(d, bias_num) / quant;
+    I32Vec::splat(d, 2)
         .gt(quant_i.abs())
-        .if_then_else_f32(quant_i.as_f32() * D::F32Vec::splat(d, bias_c), adjusted)
+        .if_then_else(quant_i.as_f32() * F32Vec::splat(d, bias_c), adjusted)
 }
 
 pub trait CoeffStorage: Sized {
-    fn load_simd<D: SimdDescriptor>(slice: &[Self], d: D, offset: usize) -> D::I32Vec;
+    fn load_simd<D: SimdDescriptor>(slice: &[Self], d: D, offset: usize) -> I32Vec<D>;
     fn add_coeff(&mut self, val: i32);
 }
 
 impl CoeffStorage for i32 {
     #[inline(always)]
-    fn load_simd<D: SimdDescriptor>(slice: &[i32], d: D, offset: usize) -> D::I32Vec {
-        D::I32Vec::load(d, &slice[offset..])
+    fn load_simd<D: SimdDescriptor>(slice: &[i32], d: D, offset: usize) -> I32Vec<D> {
+        I32Vec::load(d, &slice[offset..])
     }
     #[inline(always)]
     fn add_coeff(&mut self, val: i32) {
@@ -131,8 +131,8 @@ impl CoeffStorage for i32 {
 
 impl CoeffStorage for i16 {
     #[inline(always)]
-    fn load_simd<D: SimdDescriptor>(slice: &[i16], d: D, offset: usize) -> D::I32Vec {
-        D::I32Vec::load_from_i16(d, &slice[offset..])
+    fn load_simd<D: SimdDescriptor>(slice: &[i16], d: D, offset: usize) -> I32Vec<D> {
+        I32Vec::load_from_i16(d, &slice[offset..])
     }
     #[inline(always)]
     fn add_coeff(&mut self, val: i32) {
@@ -363,21 +363,21 @@ fn dequant_channel<D: SimdDescriptor, S: CoeffStorage>(
     cfl: Option<(f32, &[f32])>,
     block_c: &mut [f32],
 ) {
-    let dm_mul = D::F32Vec::splat(d, scaled_dequant);
+    let dm_mul = F32Vec::splat(d, scaled_dequant);
     if let Some((cc_mul, block_y)) = cfl {
-        let cc_vec = D::F32Vec::splat(d, cc_mul);
-        for k in (0..dequant_matrix.len()).step_by(D::F32Vec::LEN) {
-            let mul = D::F32Vec::load(d, &dequant_matrix[k..]) * dm_mul;
+        let cc_vec = F32Vec::splat(d, cc_mul);
+        for k in (0..dequant_matrix.len()).step_by(F32Vec::<D>::LEN) {
+            let mul = F32Vec::load(d, &dequant_matrix[k..]) * dm_mul;
             let quantized = S::load_simd(qblock_c, d, k);
             let dequant_c = adjust_quant_bias(d, quantized, bias_c, bias_num) * mul;
-            let dequant_y = D::F32Vec::load(d, &block_y[k..]);
+            let dequant_y = F32Vec::load(d, &block_y[k..]);
             cc_vec
                 .mul_add(dequant_y, dequant_c)
                 .store(&mut block_c[k..]);
         }
     } else {
-        for k in (0..dequant_matrix.len()).step_by(D::F32Vec::LEN) {
-            let mul = D::F32Vec::load(d, &dequant_matrix[k..]) * dm_mul;
+        for k in (0..dequant_matrix.len()).step_by(F32Vec::<D>::LEN) {
+            let mul = F32Vec::load(d, &dequant_matrix[k..]) * dm_mul;
             let quantized = S::load_simd(qblock_c, d, k);
             let dequant = adjust_quant_bias(d, quantized, bias_c, bias_num) * mul;
             dequant.store(&mut block_c[k..]);
@@ -432,9 +432,9 @@ fn dequant_block_impl<D: SimdDescriptor, S: CoeffStorage>(
         let has_cfl = nz[1] > 0 && cc_mul != 0.0;
         if nz[c] == 0 {
             if has_cfl {
-                let cc_vec = D::F32Vec::splat(d, cc_mul);
-                for k in (0..size).step_by(D::F32Vec::LEN) {
-                    (D::F32Vec::load(d, &block_y[k..]) * cc_vec).store(&mut block_c[k..]);
+                let cc_vec = F32Vec::splat(d, cc_mul);
+                for k in (0..size).step_by(F32Vec::<D>::LEN) {
+                    (F32Vec::load(d, &block_y[k..]) * cc_vec).store(&mut block_c[k..]);
                 }
             } else {
                 block_c[..size].fill(0.0);
@@ -477,7 +477,7 @@ fn dequant_block<D: SimdDescriptor>(
     let scaled_dequant_y = inv_global_scale / (quant as f32);
     let matrices = dequant_matrices.matrix(hf_type, 0);
 
-    assert!(BLOCK_SIZE.is_multiple_of(D::F32Vec::LEN));
+    assert!(BLOCK_SIZE.is_multiple_of(F32Vec::<D>::LEN));
     match coeffs {
         CoeffsMut::I32(qb) => {
             let qb_refs = [&qb[0][..], &qb[1][..], &qb[2][..]];
@@ -546,8 +546,8 @@ fn copy_block_rows<const W: usize>(
     }
 }
 
+#[simd_dispatch(dequant_and_transform_to_pixels_dispatch)]
 #[allow(clippy::too_many_arguments)]
-#[inline(always)]
 fn dequant_and_transform_to_pixels<D: SimdDescriptor>(
     d: D,
     quant_biases: &[f32; 4],
@@ -667,66 +667,6 @@ fn dequant_and_transform_to_pixels<D: SimdDescriptor>(
         }
     }
     Ok(())
-}
-
-#[simd_dispatch(dequant_and_transform_to_pixels_dispatch)]
-#[allow(clippy::too_many_arguments)]
-fn dequant_and_transform_to_pixels_fwd<D: SimdDescriptor>(
-    d: D,
-    quant_biases: &[f32; 4],
-    x_dm_multiplier: f32,
-    b_dm_multiplier: f32,
-    pixels: &mut [Image<f32>; 3],
-    scratch: &mut [f32],
-    inv_global_scale: f32,
-    transform_buffer: &mut [Vec<f32>; 3],
-    hshift: [usize; 3],
-    vshift: [usize; 3],
-    by: usize,
-    sby: [usize; 3],
-    bx: usize,
-    sbx: [usize; 3],
-    x_cc_mul: f32,
-    b_cc_mul: f32,
-    raw_quant: u32,
-    lf_rects: &[ImageRect<f32>; 3],
-    transform_type: HfTransformType,
-    block_rect: Rect,
-    num_blocks: usize,
-    num_coeffs: usize,
-    coeffs: &CoeffsMut,
-    offset: usize,
-    dequant_matrices: &DequantMatrices,
-    nz: [usize; 3],
-) -> Result<(), Error> {
-    dequant_and_transform_to_pixels(
-        d,
-        quant_biases,
-        x_dm_multiplier,
-        b_dm_multiplier,
-        pixels,
-        scratch,
-        inv_global_scale,
-        transform_buffer,
-        hshift,
-        vshift,
-        by,
-        sby,
-        bx,
-        sbx,
-        x_cc_mul,
-        b_cc_mul,
-        raw_quant,
-        lf_rects,
-        transform_type,
-        block_rect,
-        num_blocks,
-        num_coeffs,
-        coeffs,
-        offset,
-        dequant_matrices,
-        nz,
-    )
 }
 
 struct PassInfo<'a, 'b> {
@@ -1127,7 +1067,7 @@ mod test {
         let q_i32 = [&coeffs_i32_0[..], &coeffs_i32_1[..], &coeffs_i32_2[..]];
         let q_i16 = [&coeffs_i16_0[..], &coeffs_i16_1[..], &coeffs_i16_2[..]];
 
-        let d = jxl_simd::ScalarDescriptor::new().unwrap();
+        let d = jxl_simd::Emu128Descriptor::new().unwrap();
         let dequant_matrices = vec![1.0f32; 3 * 64];
         let biases = [0.5, 0.5, 0.5, 0.5];
 

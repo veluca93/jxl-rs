@@ -154,8 +154,8 @@ fn upsample_lf_group(
     Ok(())
 }
 
-#[inline(always)]
-fn render_noise_subregion_channel_simd_impl<D: SimdDescriptor>(
+#[simd_dispatch(render_noise_subregion_channel_dispatch)]
+fn render_noise_subregion_channel_simd<D: SimdDescriptor>(
     d: D,
     rng: &mut Xorshift128Plus,
     buf: &mut Image<u16>,
@@ -176,19 +176,6 @@ fn render_noise_subregion_channel_simd_impl<D: SimdDescriptor>(
             rem.copy_from_slice(&temp[..rem.len()]);
         }
     }
-}
-
-#[simd_dispatch(render_noise_subregion_channel_dispatch)]
-fn render_noise_subregion_channel_simd<D: SimdDescriptor>(
-    d: D,
-    rng: &mut Xorshift128Plus,
-    buf: &mut Image<u16>,
-    sub_x0: usize,
-    sub_y0: usize,
-    sub_xsize: usize,
-    sub_ysize: usize,
-) {
-    render_noise_subregion_channel_simd_impl(d, rng, buf, sub_x0, sub_y0, sub_xsize, sub_ysize);
 }
 
 impl Frame {
