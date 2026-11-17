@@ -7,12 +7,28 @@ use super::row_buffers::RowBuffer;
 use crate::api::{Endianness, JxlDataFormat};
 use crate::error::Result;
 use crate::headers::Orientation;
-use crate::image::Rect;
+use crate::image::{ImageDataType, Rect};
 use crate::render::buffer_splitter::OutputChannelRef;
 use crate::render::save::{SaveChannelType, SaveStage};
 use crate::util::ChannelVec;
 
 mod identity;
+
+fn convert_int_to_u8<T: ImageDataType + identity::IntToU8Sample>(
+    in_buf: &RowBuffer,
+    frame_y: usize,
+    s_buf: &mut RowBuffer,
+    conv_start: usize,
+    conv_len: usize,
+    in_bd: u8,
+    out_bd: u8,
+) {
+    let max = (1i32 << out_bd) - 1;
+    let scale = max / ((1i32 << in_bd) - 1);
+    let src = &in_buf.get_row::<T>(frame_y)[RowBuffer::x0_offset::<T>() + conv_start..];
+    let dst = &mut s_buf.get_row_mut::<u8>(0)[RowBuffer::x0_offset::<u8>() + conv_start..];
+    identity::int_to_u8::<T>(src, dst, scale, max, conv_len);
+}
 
 // Placeholder slow implementation.
 impl SaveStage {
@@ -140,13 +156,9 @@ impl SaveStage {
                     SaveChannelType::I16 { bit_depth: in_bd },
                     JxlDataFormat::U8 { bit_depth: out_bd },
                 ) => {
-                    let max = (1i32 << out_bd) - 1;
-                    let scale = max / ((1i32 << in_bd) - 1);
-                    let src = &in_buf.get_row::<i16>(frame_y)
-                        [RowBuffer::x0_offset::<i16>() + conv_start..];
-                    let dst = &mut s_buf.get_row_mut::<u8>(0)
-                        [RowBuffer::x0_offset::<u8>() + conv_start..];
-                    identity::i16_to_u8(src, dst, scale, max, conv_len);
+                    convert_int_to_u8::<i16>(
+                        in_buf, frame_y, s_buf, conv_start, conv_len, in_bd, out_bd,
+                    );
                 }
                 (SaveChannelType::I16 { bit_depth: in_bd }, JxlDataFormat::F16 { .. }) => {
                     let scale = 1.0 / ((1u64 << in_bd) - 1) as f32;
@@ -160,13 +172,9 @@ impl SaveStage {
                     SaveChannelType::I32 { bit_depth: in_bd },
                     JxlDataFormat::U8 { bit_depth: out_bd },
                 ) => {
-                    let max = (1i32 << out_bd) - 1;
-                    let scale = max / ((1i32 << in_bd) - 1);
-                    let src = &in_buf.get_row::<i32>(frame_y)
-                        [RowBuffer::x0_offset::<i32>() + conv_start..];
-                    let dst = &mut s_buf.get_row_mut::<u8>(0)
-                        [RowBuffer::x0_offset::<u8>() + conv_start..];
-                    identity::i32_to_u8(src, dst, scale, max, conv_len);
+                    convert_int_to_u8::<i32>(
+                        in_buf, frame_y, s_buf, conv_start, conv_len, in_bd, out_bd,
+                    );
                 }
                 _ => unreachable!(),
             }

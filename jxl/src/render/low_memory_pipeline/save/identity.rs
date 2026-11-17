@@ -5,7 +5,9 @@
 
 use std::ops::Range;
 
-use jxl_simd::{F32Vec, I16Vec, I32Vec, SimdDescriptor, U8Vec, U16Vec, simd_dispatch};
+use jxl_simd::{
+    F32Vec, I32Vec, IntElement, SimdDescriptor, SimdElement, SimdVec, U8Vec, U16Vec, simd_dispatch,
+};
 
 use crate::api::{Endianness, JxlDataFormat};
 use crate::image::ImageDataType;
@@ -92,31 +94,59 @@ pub(super) fn f32_to_f16_simd<D: SimdDescriptor>(
     }
 }
 
-#[simd_dispatch(i16_to_u8)]
+pub(super) trait IntToU8Sample: IntElement {
+    fn from_i32(v: i32) -> Self;
+    fn store_u8<D: SimdDescriptor>(v: SimdVec<Self, D>, dest: &mut [u8]);
+}
+
+impl IntToU8Sample for i16 {
+    #[inline(always)]
+    fn from_i32(v: i32) -> Self {
+        v as i16
+    }
+
+    #[inline(always)]
+    fn store_u8<D: SimdDescriptor>(v: SimdVec<Self, D>, dest: &mut [u8]) {
+        v.store_u8(dest);
+    }
+}
+
+impl IntToU8Sample for i32 {
+    #[inline(always)]
+    fn from_i32(v: i32) -> Self {
+        v
+    }
+
+    #[inline(always)]
+    fn store_u8<D: SimdDescriptor>(v: SimdVec<Self, D>, dest: &mut [u8]) {
+        v.store_u8(dest);
+    }
+}
+
+#[simd_dispatch(int_to_u8)]
 #[inline(always)]
-pub(super) fn i16_to_u8_simd<D: SimdDescriptor>(
+pub(super) fn int_to_u8_simd<T: IntToU8Sample, D: SimdDescriptor>(
     d: D,
-    input: &[i16],
+    input: &[T],
     output: &mut [u8],
     scale: i32,
     max: i32,
     xsize: usize,
 ) {
-    let simd_width = I16Vec::<D>::LEN;
-    let scale = I16Vec::splat(d, scale as i16);
-    let max = I16Vec::splat(d, max as i16);
-    let zero = I16Vec::splat(d, 0);
+    let simd_width = SimdVec::<T, D>::LEN;
+    let scale = SimdVec::splat(d, T::from_i32(scale));
+    let max = SimdVec::splat(d, T::from_i32(max));
+    let zero = SimdVec::<T, D>::zero(d);
 
     for (input_chunk, output_chunk) in input
         .chunks_exact(simd_width)
         .zip(output.chunks_exact_mut(simd_width))
         .take(xsize.div_ceil(simd_width))
     {
-        let val = I16Vec::load(d, input_chunk);
+        let val = SimdVec::load(d, input_chunk);
         let scaled = val * scale;
-        let zeroclip = scaled.lt_zero().if_then_else(zero, scaled);
-        let clip = scaled.gt(max).if_then_else(max, zeroclip);
-        clip.store_u8(output_chunk);
+        let clamped = scaled.max(zero).min(max);
+        T::store_u8(clamped, output_chunk);
     }
 }
 
@@ -141,34 +171,6 @@ pub(super) fn i16_to_f16_simd<D: SimdDescriptor>(
     }
 }
 
-#[simd_dispatch(i32_to_u8)]
-#[inline(always)]
-pub(super) fn i32_to_u8_simd<D: SimdDescriptor>(
-    d: D,
-    input: &[i32],
-    output: &mut [u8],
-    scale: i32,
-    max: i32,
-    xsize: usize,
-) {
-    let simd_width = F32Vec::<D>::LEN;
-    let scale = I32Vec::splat(d, scale);
-    let max = I32Vec::splat(d, max);
-    let zero = I32Vec::splat(d, 0);
-
-    for (input_chunk, output_chunk) in input
-        .chunks_exact(simd_width)
-        .zip(output.chunks_exact_mut(simd_width))
-        .take(xsize.div_ceil(simd_width))
-    {
-        let val = I32Vec::load(d, input_chunk);
-        let scaled = val * scale;
-        let zeroclip = scaled.lt_zero().if_then_else(zero, scaled);
-        let clip = scaled.gt(max).if_then_else(max, zeroclip);
-        clip.store_u8(output_chunk);
-    }
-}
-
 #[inline(always)]
 fn load_f32_as_u8<D: SimdDescriptor>(
     d: D,
@@ -187,7 +189,7 @@ fn load_f32_as_u8<D: SimdDescriptor>(
 fn load_i16_as_u8<D: SimdDescriptor>(d: D, src: &[i16], scale: i32, max: i32) -> U8Vec<D> {
     let len = U8Vec::<D>::LEN;
     let mut buf = [0u8; 64];
-    i16_to_u8_simd(d, src, &mut buf[..len], scale, max, len);
+    int_to_u8_simd::<i16, D>(d, src, &mut buf[..len], scale, max, len);
     U8Vec::load(d, &buf[..len])
 }
 
@@ -208,8 +210,8 @@ fn load_i16_as_f16<D: SimdDescriptor>(d: D, src: &[i16], scale: f32) -> U16Vec<D
 }
 
 macro_rules! run_simd_chunks {
-    ($out:expr, $ty:ty, $vec_type:ident, $cnt:expr, |$n_var:ident, $out_chunk:ident| $body:block) => {{
-        let len = $vec_type::<D>::LEN;
+    ($out:expr, $ty:ty, $cnt:expr, |$n_var:ident, $out_chunk:ident| $body:block) => {{
+        let len = SimdVec::<$ty, D>::LEN;
         let step = {
             #[inline(always)]
             |$n_var: usize, $out_chunk: &mut [$ty]| $body
@@ -224,55 +226,42 @@ macro_rules! run_simd_chunks {
 
         let rem = chunks.into_remainder();
         if !rem.is_empty() {
-            let mut tail = [<$ty>::default(); 64 / std::mem::size_of::<$ty>() * $cnt];
+            const { assert!(SimdVec::<$ty, D>::LEN <= 64) };
+            let mut tail = [<$ty>::default(); 64 * $cnt];
             step(n, &mut tail[..len * $cnt]);
             rem.copy_from_slice(&tail[..rem.len()]);
         }
     }};
 }
 
-macro_rules! define_store_interleaved {
-    ($fn_name:ident, $impl_name:ident, $ty:ty, $vec_type:ident) => {
-        #[simd_dispatch($fn_name)]
-        fn $impl_name<D: SimdDescriptor>(d: D, inputs: &[&[$ty]], out: &mut [$ty]) {
-            match inputs.len() {
-                2 => run_simd_chunks!(out, $ty, $vec_type, 2, |n, out_chunk| {
-                    let a = $vec_type::load(d, &inputs[0][n..]);
-                    let b = $vec_type::load(d, &inputs[1][n..]);
-                    $vec_type::store_interleaved_2(a, b, out_chunk);
-                }),
-                3 => run_simd_chunks!(out, $ty, $vec_type, 3, |n, out_chunk| {
-                    let a = $vec_type::load(d, &inputs[0][n..]);
-                    let b = $vec_type::load(d, &inputs[1][n..]);
-                    let c = $vec_type::load(d, &inputs[2][n..]);
-                    $vec_type::store_interleaved_3(a, b, c, out_chunk);
-                }),
-                4 => run_simd_chunks!(out, $ty, $vec_type, 4, |n, out_chunk| {
-                    let a = $vec_type::load(d, &inputs[0][n..]);
-                    let b = $vec_type::load(d, &inputs[1][n..]);
-                    let c = $vec_type::load(d, &inputs[2][n..]);
-                    let e = $vec_type::load(d, &inputs[3][n..]);
-                    $vec_type::store_interleaved_4(a, b, c, e, out_chunk);
-                }),
-                _ => unreachable!(),
-            }
-        }
-    };
+#[simd_dispatch(store_interleaved)]
+fn store_interleaved_impl<T: SimdElement + Default, D: SimdDescriptor>(
+    d: D,
+    inputs: &[&[T]],
+    out: &mut [T],
+) {
+    match inputs.len() {
+        2 => run_simd_chunks!(out, T, 2, |n, out_chunk| {
+            let a = SimdVec::load(d, &inputs[0][n..]);
+            let b = SimdVec::load(d, &inputs[1][n..]);
+            SimdVec::store_interleaved_2(a, b, out_chunk);
+        }),
+        3 => run_simd_chunks!(out, T, 3, |n, out_chunk| {
+            let a = SimdVec::load(d, &inputs[0][n..]);
+            let b = SimdVec::load(d, &inputs[1][n..]);
+            let c = SimdVec::load(d, &inputs[2][n..]);
+            SimdVec::store_interleaved_3(a, b, c, out_chunk);
+        }),
+        4 => run_simd_chunks!(out, T, 4, |n, out_chunk| {
+            let a = SimdVec::load(d, &inputs[0][n..]);
+            let b = SimdVec::load(d, &inputs[1][n..]);
+            let c = SimdVec::load(d, &inputs[2][n..]);
+            let e = SimdVec::load(d, &inputs[3][n..]);
+            SimdVec::store_interleaved_4(a, b, c, e, out_chunk);
+        }),
+        _ => unreachable!(),
+    }
 }
-
-define_store_interleaved!(
-    store_interleaved_f32,
-    store_interleaved_impl_f32,
-    f32,
-    F32Vec
-);
-define_store_interleaved!(store_interleaved_u8, store_interleaved_impl_u8, u8, U8Vec);
-define_store_interleaved!(
-    store_interleaved_u16,
-    store_interleaved_impl_u16,
-    u16,
-    U16Vec
-);
 
 #[derive(Clone, Copy)]
 enum AlphaU8<'a> {
@@ -304,7 +293,7 @@ fn store_f32_to_u8_interleaved_impl<D: SimdDescriptor>(
     let max_f32 = max as f32;
     let max_i32 = max as i32;
     match alpha {
-        AlphaU8::None => run_simd_chunks!(out, u8, U8Vec, 3, |n, out_chunk| {
+        AlphaU8::None => run_simd_chunks!(out, u8, 3, |n, out_chunk| {
             let p = (pos.0 + n, pos.1);
             let vr = load_f32_as_u8(d, &r[n..], max_f32, p, channels[0]);
             let vg = load_f32_as_u8(d, &g[n..], max_f32, p, channels[1]);
@@ -313,7 +302,7 @@ fn store_f32_to_u8_interleaved_impl<D: SimdDescriptor>(
         }),
         AlphaU8::Opaque => {
             let va = U8Vec::splat(d, max);
-            run_simd_chunks!(out, u8, U8Vec, 4, |n, out_chunk| {
+            run_simd_chunks!(out, u8, 4, |n, out_chunk| {
                 let p = (pos.0 + n, pos.1);
                 let vr = load_f32_as_u8(d, &r[n..], max_f32, p, channels[0]);
                 let vg = load_f32_as_u8(d, &g[n..], max_f32, p, channels[1]);
@@ -322,7 +311,7 @@ fn store_f32_to_u8_interleaved_impl<D: SimdDescriptor>(
             });
         }
         AlphaU8::I16(a, a_scale) => {
-            run_simd_chunks!(out, u8, U8Vec, 4, |n, out_chunk| {
+            run_simd_chunks!(out, u8, 4, |n, out_chunk| {
                 let p = (pos.0 + n, pos.1);
                 let vr = load_f32_as_u8(d, &r[n..], max_f32, p, channels[0]);
                 let vg = load_f32_as_u8(d, &g[n..], max_f32, p, channels[1]);
@@ -344,7 +333,7 @@ fn store_f32_to_f16_interleaved_impl<D: SimdDescriptor>(
     out: &mut [u16],
 ) {
     match alpha {
-        AlphaF16::None => run_simd_chunks!(out, u16, U16Vec, 3, |n, out_chunk| {
+        AlphaF16::None => run_simd_chunks!(out, u16, 3, |n, out_chunk| {
             let vr = load_f32_as_f16(d, &r[n..]);
             let vg = load_f32_as_f16(d, &g[n..]);
             let vb = load_f32_as_f16(d, &b[n..]);
@@ -352,7 +341,7 @@ fn store_f32_to_f16_interleaved_impl<D: SimdDescriptor>(
         }),
         AlphaF16::Opaque => {
             let va = U16Vec::splat(d, 0x3c00);
-            run_simd_chunks!(out, u16, U16Vec, 4, |n, out_chunk| {
+            run_simd_chunks!(out, u16, 4, |n, out_chunk| {
                 let vr = load_f32_as_f16(d, &r[n..]);
                 let vg = load_f32_as_f16(d, &g[n..]);
                 let vb = load_f32_as_f16(d, &b[n..]);
@@ -360,7 +349,7 @@ fn store_f32_to_f16_interleaved_impl<D: SimdDescriptor>(
             });
         }
         AlphaF16::I16(a, a_scale) => {
-            run_simd_chunks!(out, u16, U16Vec, 4, |n, out_chunk| {
+            run_simd_chunks!(out, u16, 4, |n, out_chunk| {
                 let vr = load_f32_as_f16(d, &r[n..]);
                 let vg = load_f32_as_f16(d, &g[n..]);
                 let vb = load_f32_as_f16(d, &b[n..]);
@@ -383,7 +372,7 @@ fn store_i16_to_u8_interleaved_impl<D: SimdDescriptor>(
 ) {
     let max_i32 = max as i32;
     match alpha {
-        AlphaU8::None => run_simd_chunks!(out, u8, U8Vec, 3, |n, out_chunk| {
+        AlphaU8::None => run_simd_chunks!(out, u8, 3, |n, out_chunk| {
             let vr = load_i16_as_u8(d, &r.0[n..], r.1, max_i32);
             let vg = load_i16_as_u8(d, &g.0[n..], g.1, max_i32);
             let vb = load_i16_as_u8(d, &b.0[n..], b.1, max_i32);
@@ -391,7 +380,7 @@ fn store_i16_to_u8_interleaved_impl<D: SimdDescriptor>(
         }),
         AlphaU8::Opaque => {
             let va = U8Vec::splat(d, max);
-            run_simd_chunks!(out, u8, U8Vec, 4, |n, out_chunk| {
+            run_simd_chunks!(out, u8, 4, |n, out_chunk| {
                 let vr = load_i16_as_u8(d, &r.0[n..], r.1, max_i32);
                 let vg = load_i16_as_u8(d, &g.0[n..], g.1, max_i32);
                 let vb = load_i16_as_u8(d, &b.0[n..], b.1, max_i32);
@@ -399,7 +388,7 @@ fn store_i16_to_u8_interleaved_impl<D: SimdDescriptor>(
             });
         }
         AlphaU8::I16(a, a_scale) => {
-            run_simd_chunks!(out, u8, U8Vec, 4, |n, out_chunk| {
+            run_simd_chunks!(out, u8, 4, |n, out_chunk| {
                 let vr = load_i16_as_u8(d, &r.0[n..], r.1, max_i32);
                 let vg = load_i16_as_u8(d, &g.0[n..], g.1, max_i32);
                 let vb = load_i16_as_u8(d, &b.0[n..], b.1, max_i32);
@@ -524,6 +513,29 @@ pub(super) fn store_fused(
     }
 }
 
+fn store_interleaved_rows<T: ImageDataType + SimdElement>(
+    input_buf: &[&RowBuffer],
+    input_y: usize,
+    byte_start: usize,
+    output_buf: &mut [u8],
+) -> bool {
+    if output_buf
+        .as_mut_ptr()
+        .align_offset(std::mem::align_of::<T>())
+        != 0
+    {
+        return false;
+    }
+    let output = T::cast_slice_mut(output_buf);
+    let start = byte_start / std::mem::size_of::<T>();
+    let mut slices = [&[] as &[T]; 4];
+    for (i, buf) in input_buf.iter().enumerate() {
+        slices[i] = &buf.get_row::<T>(input_y)[start..];
+    }
+    store_interleaved::<T>(&slices[..input_buf.len()], output);
+    true
+}
+
 pub(super) fn store(
     input_buf: &[&RowBuffer],
     input_y: usize,
@@ -554,44 +566,14 @@ pub(super) fn store(
             output_buf.copy_from_slice(input_buf);
             true
         }
-        (channels, 1, true) if (2..=4).contains(&channels) => {
-            let start_u8 = byte_start;
-            let mut slices = [&[] as &[u8]; 4];
-            for (i, buf) in input_buf.iter().enumerate() {
-                slices[i] = &buf.get_row::<u8>(input_y)[start_u8..];
-            }
-            store_interleaved_u8(&slices[..channels], output_buf);
-            true
+        (2..=4, 1, true) => {
+            store_interleaved_rows::<u8>(input_buf, input_y, byte_start, output_buf)
         }
-        (channels, 2, true) if (2..=4).contains(&channels) => {
-            let ptr = output_buf.as_mut_ptr();
-            if ptr.align_offset(std::mem::align_of::<u16>()) == 0 {
-                let output_u16 = u16::cast_slice_mut(output_buf);
-                let start_u16 = byte_start / 2;
-                let mut slices = [&[] as &[u16]; 4];
-                for (i, buf) in input_buf.iter().enumerate() {
-                    slices[i] = &buf.get_row::<u16>(input_y)[start_u16..];
-                }
-                store_interleaved_u16(&slices[..channels], output_u16);
-                true
-            } else {
-                false
-            }
+        (2..=4, 2, true) => {
+            store_interleaved_rows::<u16>(input_buf, input_y, byte_start, output_buf)
         }
-        (channels, 4, true) if (2..=4).contains(&channels) => {
-            let ptr = output_buf.as_mut_ptr();
-            if ptr.align_offset(std::mem::align_of::<f32>()) == 0 {
-                let output_f32 = f32::cast_slice_mut(output_buf);
-                let start_f32 = byte_start / 4;
-                let mut slices = [&[] as &[f32]; 4];
-                for (i, buf) in input_buf.iter().enumerate() {
-                    slices[i] = &buf.get_row::<f32>(input_y)[start_f32..];
-                }
-                store_interleaved_f32(&slices[..channels], output_f32);
-                true
-            } else {
-                false
-            }
+        (2..=4, 4, true) => {
+            store_interleaved_rows::<f32>(input_buf, input_y, byte_start, output_buf)
         }
         _ => false,
     }
