@@ -3,10 +3,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use jxl_simd::{
-    F32SimdVec, I16SimdVec, I32SimdVec, SimdDescriptor, SimdMask, SimdMask16, U32SimdVec, shl, shr,
-    simd_dispatch,
-};
+use jxl_simd::{I16Vec, I32Vec, SimdDescriptor, shl, shr, simd_dispatch};
+use jxl_transforms::transpose::{transpose_in_place, transpose_in_place_strided};
 
 use crate::error::{Error, Result};
 use crate::frame::modular::{ChannelInfo, ModularChannel, ModularStorage};
@@ -113,10 +111,10 @@ pub fn default_squeeze(data_channel_info: &[(usize, ChannelInfo)]) -> Vec<Squeez
 #[inline(always)]
 fn smooth_tendency_impl<D: SimdDescriptor>(
     d: D,
-    a: D::I32Vec,
-    b: D::I32Vec,
-    c: D::I32Vec,
-) -> D::I32Vec {
+    a: I32Vec<D>,
+    b: I32Vec<D>,
+    c: I32Vec<D>,
+) -> I32Vec<D> {
     let a_b = a - b;
     let b_c = b - c;
     let a_c = a - c;
@@ -127,32 +125,32 @@ fn smooth_tendency_impl<D: SimdDescriptor>(
     let skip = a_b.eq_zero().andnot(non_monotonic);
     let skip = b_c.eq_zero().andnot(skip);
 
-    let abs_a_b_3 = abs_a_b.mul_wide_take_high(D::I32Vec::splat(d, 0x55555556));
+    let abs_a_b_3 = abs_a_b.mul_wide_take_high(I32Vec::splat(d, 0x55555556));
 
-    let x = shr!(D::I32Vec::splat(d, 2) + abs_a_c + abs_a_b_3, 2);
+    let x = shr!(I32Vec::splat(d, 2) + abs_a_c + abs_a_b_3, 2);
 
-    let abs_a_b_2_add_x = shl!(abs_a_b, 1) + (x & D::I32Vec::splat(d, 1));
+    let abs_a_b_2_add_x = shl!(abs_a_b, 1) + (x & I32Vec::splat(d, 1));
     let x = x
         .gt(abs_a_b_2_add_x)
-        .if_then_else_i32(shl!(abs_a_b, 1) + D::I32Vec::splat(d, 1), x);
+        .if_then_else(shl!(abs_a_b, 1) + I32Vec::splat(d, 1), x);
 
     let abs_b_c_2 = shl!(abs_b_c, 1);
-    let x = (x + (x & D::I32Vec::splat(d, 1)))
+    let x = (x + (x & I32Vec::splat(d, 1)))
         .gt(abs_b_c_2)
-        .if_then_else_i32(abs_b_c_2, x);
+        .if_then_else(abs_b_c_2, x);
 
     let need_neg = a_c.lt_zero();
-    let x = skip.maskz_i32(x);
-    need_neg.if_then_else_i32(-x, x)
+    let x = skip.if_then_zero_else(x);
+    need_neg.if_then_else(-x, x)
 }
 
 #[inline(always)]
 fn smooth_tendency_impl_i16<D: SimdDescriptor>(
     d: D,
-    a: D::I16Vec,
-    b: D::I16Vec,
-    c: D::I16Vec,
-) -> D::I16Vec {
+    a: I16Vec<D>,
+    b: I16Vec<D>,
+    c: I16Vec<D>,
+) -> I16Vec<D> {
     let a_b = a - b;
     let b_c = b - c;
     let a_c = a - c;
@@ -163,30 +161,30 @@ fn smooth_tendency_impl_i16<D: SimdDescriptor>(
     let skip = a_b.eq_zero().andnot(non_monotonic);
     let skip = b_c.eq_zero().andnot(skip);
 
-    let abs_a_b_3 = abs_a_b.mul_wide_take_high(D::I16Vec::splat(d, 0x5556));
+    let abs_a_b_3 = abs_a_b.mul_wide_take_high(I16Vec::splat(d, 0x5556));
 
     let x = shr!(abs_a_c, 2)
         + shr!(
-            D::I16Vec::splat(d, 2) + abs_a_b_3 + (abs_a_c & D::I16Vec::splat(d, 3)),
+            I16Vec::splat(d, 2) + abs_a_b_3 + (abs_a_c & I16Vec::splat(d, 3)),
             2
         );
 
-    let limit = D::I16Vec::splat(d, 16383);
-    let safe_abs_a_b = abs_a_b.gt(limit).if_then_else_i16(limit, abs_a_b);
-    let abs_a_b_2_add_x = shl!(safe_abs_a_b, 1) + (x & D::I16Vec::splat(d, 1));
+    let limit = I16Vec::splat(d, 16383);
+    let safe_abs_a_b = abs_a_b.gt(limit).if_then_else(limit, abs_a_b);
+    let abs_a_b_2_add_x = shl!(safe_abs_a_b, 1) + (x & I16Vec::splat(d, 1));
     let x = x
         .gt(abs_a_b_2_add_x)
-        .if_then_else_i16(shl!(safe_abs_a_b, 1) + D::I16Vec::splat(d, 1), x);
+        .if_then_else(shl!(safe_abs_a_b, 1) + I16Vec::splat(d, 1), x);
 
-    let safe_abs_b_c = abs_b_c.gt(limit).if_then_else_i16(limit, abs_b_c);
+    let safe_abs_b_c = abs_b_c.gt(limit).if_then_else(limit, abs_b_c);
     let abs_b_c_2 = shl!(safe_abs_b_c, 1);
-    let x = (x + (x & D::I16Vec::splat(d, 1)))
+    let x = (x + (x & I16Vec::splat(d, 1)))
         .gt(abs_b_c_2)
-        .if_then_else_i16(abs_b_c_2, x);
+        .if_then_else(abs_b_c_2, x);
 
     let need_neg = a_c.lt_zero();
-    let x = skip.maskz_i16(x);
-    need_neg.if_then_else_i16(-x, x)
+    let x = skip.if_then_zero_else(x);
+    need_neg.if_then_else(-x, x)
 }
 
 #[inline(always)]
@@ -219,14 +217,14 @@ fn smooth_tendency_scalar(b: i64, a: i64, n: i64) -> i64 {
 #[inline(always)]
 fn unsqueeze_impl<D: SimdDescriptor>(
     d: D,
-    avg: D::I32Vec,
-    res: D::I32Vec,
-    next_avg: D::I32Vec,
-    prev: D::I32Vec,
-) -> (D::I32Vec, D::I32Vec) {
+    avg: I32Vec<D>,
+    res: I32Vec<D>,
+    next_avg: I32Vec<D>,
+    prev: I32Vec<D>,
+) -> (I32Vec<D>, I32Vec<D>) {
     let tendency = smooth_tendency_impl(d, prev, avg, next_avg);
     let diff = res + tendency;
-    let sign = shr!(diff.bitcast_to_u32(), 31).bitcast_to_i32();
+    let sign = shr!(diff.bitcast::<u32>(), 31).bitcast::<i32>();
     let diff_2 = shr!(diff + sign, 1);
     let a = avg + diff_2;
     let b = a - diff;
@@ -236,11 +234,11 @@ fn unsqueeze_impl<D: SimdDescriptor>(
 #[inline(always)]
 fn unsqueeze_impl_i16<D: SimdDescriptor>(
     d: D,
-    avg: D::I16Vec,
-    res: D::I16Vec,
-    next_avg: D::I16Vec,
-    prev: D::I16Vec,
-) -> (D::I16Vec, D::I16Vec) {
+    avg: I16Vec<D>,
+    res: I16Vec<D>,
+    next_avg: I16Vec<D>,
+    prev: I16Vec<D>,
+) -> (I16Vec<D>, I16Vec<D>) {
     let tendency = smooth_tendency_impl_i16(d, prev, avg, next_avg);
     let diff = res + tendency;
     let sign = shr!(diff, 15);
@@ -270,15 +268,15 @@ fn hsqueeze_impl<D: SimdDescriptor>(
     out: &mut ImageRectMut<'_, i32>,
 ) {
     const {
-        assert!(D::I32Vec::LEN <= 16);
-        assert!(D::I32Vec::LEN.is_power_of_two());
+        assert!(I32Vec::<D>::LEN <= 16);
+        assert!(I32Vec::<D>::LEN.is_power_of_two());
     }
 
-    let lanes = D::I32Vec::LEN;
+    let lanes = I32Vec::<D>::LEN;
     assert_eq!(y_start % lanes, 0);
 
     let (w, h) = in_res.size();
-    if lanes == 1 {
+    if D::IS_EMULATED {
         return hsqueeze_scalar(y_start, in_avg, in_res, in_next_avg, out_prev, out);
     }
 
@@ -291,58 +289,57 @@ fn hsqueeze_impl<D: SimdDescriptor>(
     let mask = !(lanes - 1);
     let y_limit = if w >= lanes { h & mask } else { y_start };
 
-    let mut buf = [0f32; 512];
+    let mut buf = [0i32; 512];
+    let tile = lanes * lanes;
     for y in (y_start..y_limit).step_by(lanes) {
         for dy in 0..lanes {
-            buf[dy] = f32::from_bits(in_avg.row(y + dy)[0] as u32);
-            buf[lanes + dy] = f32::from_bits(in_res.row(y + dy)[0] as u32);
+            buf[dy] = in_avg.row(y + dy)[0];
+            buf[lanes + dy] = in_res.row(y + dy)[0];
         }
-        let mut avg_first = D::F32Vec::load(d, &buf).bitcast_to_i32();
-        let mut res_first = D::F32Vec::load(d, &buf[lanes..]).bitcast_to_i32();
+        let mut avg_first = I32Vec::load(d, &buf);
+        let mut res_first = I32Vec::load(d, &buf[lanes..]);
 
         let mut prev_b = match out_prev {
             None => avg_first,
             Some(lr) => {
                 for (dy, out) in buf[..lanes].iter_mut().enumerate() {
-                    *out = f32::from_bits(lr.row(y + dy)[3] as u32);
+                    *out = lr.row(y + dy)[3];
                 }
-                D::F32Vec::load(d, &buf).bitcast_to_i32()
+                I32Vec::load(d, &buf)
             }
         };
 
         let remainder_start = ((w - 1) & mask) + 1;
         let remainder_count = w - remainder_start;
         for x in (1..remainder_start).step_by(lanes) {
-            let buf_arr = D::F32Vec::make_array_slice_mut(&mut buf);
-
             for dy in 0..lanes {
                 let avg_row = &in_avg.row(y + dy)[x..][..lanes];
                 let res_row = &in_res.row(y + dy)[x..][..lanes];
-                let avg = D::I32Vec::load(d, avg_row);
-                let res = D::I32Vec::load(d, res_row);
-                avg.bitcast_to_f32().store_array(&mut buf_arr[2 * dy]);
-                res.bitcast_to_f32().store_array(&mut buf_arr[2 * dy + 1]);
+                let avg = I32Vec::load(d, avg_row);
+                let res = I32Vec::load(d, res_row);
+                avg.store(&mut buf[2 * dy * lanes..]);
+                res.store(&mut buf[(2 * dy + 1) * lanes..]);
             }
-            D::F32Vec::transpose_square(d, buf_arr, 2);
-            D::F32Vec::transpose_square(d, &mut buf_arr[1..], 2);
+            transpose_in_place_strided(d, &mut buf[..2 * tile], lanes, 2 * lanes);
+            transpose_in_place_strided(d, &mut buf[lanes..2 * tile], lanes, 2 * lanes);
 
             for idx in 0..lanes {
-                let avg_next = D::F32Vec::load_array(d, &buf_arr[2 * idx]).bitcast_to_i32();
-                let res_next = D::F32Vec::load_array(d, &buf_arr[2 * idx + 1]).bitcast_to_i32();
+                let avg_next = I32Vec::load(d, &buf[2 * idx * lanes..]);
+                let res_next = I32Vec::load(d, &buf[(2 * idx + 1) * lanes..]);
                 let (a, b) = unsqueeze_impl(d, avg_first, res_first, avg_next, prev_b);
-                a.bitcast_to_f32().store_array(&mut buf_arr[2 * idx]);
-                b.bitcast_to_f32().store_array(&mut buf_arr[2 * idx + 1]);
+                a.store(&mut buf[2 * idx * lanes..]);
+                b.store(&mut buf[(2 * idx + 1) * lanes..]);
                 avg_first = avg_next;
                 res_first = res_next;
                 prev_b = b;
             }
 
-            D::F32Vec::transpose_square(d, buf_arr, 1);
-            D::F32Vec::transpose_square(d, &mut buf_arr[lanes..], 1);
+            transpose_in_place(d, &mut buf[..tile], lanes);
+            transpose_in_place(d, &mut buf[tile..2 * tile], lanes);
             for dy in 0..lanes {
                 let out_row = &mut out.row(y + dy)[2 * x - 2..][..2 * lanes];
                 for group in 0..2 {
-                    let v = D::F32Vec::load_array(d, &buf_arr[dy + group * lanes]).bitcast_to_i32();
+                    let v = I32Vec::load(d, &buf[(dy + group * lanes) * lanes..]);
                     v.store(&mut out_row[group * lanes..]);
                 }
             }
@@ -353,59 +350,56 @@ fn hsqueeze_impl<D: SimdDescriptor>(
         if remainder_count == 0 {
             let avg_last = if has_tail || has_next_in_avg {
                 for (idx, out) in buf[..lanes].iter_mut().enumerate() {
-                    *out = f32::from_bits(in_avg.row(y + idx)[w] as u32);
+                    *out = in_avg.row(y + idx)[w];
                 }
-                D::F32Vec::load(d, &buf).bitcast_to_i32()
+                I32Vec::load(d, &buf)
             } else if let Some(lr) = in_next_avg {
                 for (idx, out) in buf[..lanes].iter_mut().enumerate() {
-                    *out = f32::from_bits(lr.row(y + idx)[0] as u32);
+                    *out = lr.row(y + idx)[0];
                 }
-                D::F32Vec::load(d, &buf).bitcast_to_i32()
+                I32Vec::load(d, &buf)
             } else {
                 avg_first
             };
 
-            let buf_arr = D::F32Vec::make_array_slice_mut(&mut buf);
             let (a, b) = unsqueeze_impl(d, avg_first, res_first, avg_last, prev_b);
-            a.bitcast_to_f32().store_array(&mut buf_arr[0]);
-            b.bitcast_to_f32().store_array(&mut buf_arr[1]);
+            a.store(&mut buf);
+            b.store(&mut buf[lanes..]);
         } else {
             for dy in 0..lanes {
                 let avg_row = in_avg.row(y + dy);
                 let res_row = in_res.row(y + dy);
                 for dx in 0..remainder_count {
-                    buf[dx + lanes * 2 * dy] = f32::from_bits(avg_row[x + dx] as u32);
-                    buf[dx + lanes * (2 * dy + 1)] = f32::from_bits(res_row[x + dx] as u32);
+                    buf[dx + lanes * 2 * dy] = avg_row[x + dx];
+                    buf[dx + lanes * (2 * dy + 1)] = res_row[x + dx];
                 }
 
                 buf[remainder_count + lanes * 2 * dy] = if has_tail || has_next_in_avg {
-                    f32::from_bits(avg_row[w] as u32)
+                    avg_row[w]
                 } else if let Some(lr) = in_next_avg {
-                    f32::from_bits(lr.row(y + dy)[0] as u32)
+                    lr.row(y + dy)[0]
                 } else {
                     buf[remainder_count - 1 + lanes * 2 * dy]
                 };
             }
 
-            let buf_arr = D::F32Vec::make_array_slice_mut(&mut buf);
-            D::F32Vec::transpose_square(d, buf_arr, 2);
-            D::F32Vec::transpose_square(d, &mut buf_arr[1..], 2);
+            transpose_in_place_strided(d, &mut buf[..2 * tile], lanes, 2 * lanes);
+            transpose_in_place_strided(d, &mut buf[lanes..2 * tile], lanes, 2 * lanes);
 
             for idx in 0..=remainder_count {
-                let avg_next = D::F32Vec::load_array(d, &buf_arr[2 * idx]).bitcast_to_i32();
-                let res_next = D::F32Vec::load_array(d, &buf_arr[2 * idx + 1]).bitcast_to_i32();
+                let avg_next = I32Vec::load(d, &buf[2 * idx * lanes..]);
+                let res_next = I32Vec::load(d, &buf[(2 * idx + 1) * lanes..]);
                 let (a, b) = unsqueeze_impl(d, avg_first, res_first, avg_next, prev_b);
-                a.bitcast_to_f32().store_array(&mut buf_arr[2 * idx]);
-                b.bitcast_to_f32().store_array(&mut buf_arr[2 * idx + 1]);
+                a.store(&mut buf[2 * idx * lanes..]);
+                b.store(&mut buf[(2 * idx + 1) * lanes..]);
                 avg_first = avg_next;
                 res_first = res_next;
                 prev_b = b;
             }
         }
 
-        let buf_arr = D::F32Vec::make_array_slice_mut(&mut buf);
-        D::F32Vec::transpose_square(d, buf_arr, 1);
-        D::F32Vec::transpose_square(d, &mut buf_arr[lanes..], 1);
+        transpose_in_place(d, &mut buf[..tile], lanes);
+        transpose_in_place(d, &mut buf[tile..2 * tile], lanes);
 
         let x_limit = 2 * (remainder_count + 1);
         for dy in 0..lanes {
@@ -413,7 +407,7 @@ fn hsqueeze_impl<D: SimdDescriptor>(
             for (dx, out) in out_row[..x_limit].iter_mut().enumerate() {
                 let group = dx / lanes;
                 let group_x = dx % lanes;
-                *out = buf[(dy + group * lanes) * lanes + group_x].to_bits() as i32;
+                *out = buf[(dy + group * lanes) * lanes + group_x];
             }
         }
 
@@ -516,15 +510,15 @@ fn hsqueeze_impl_i16<D: SimdDescriptor>(
     buf: &mut [i16; 2048],
 ) {
     const {
-        assert!(D::I16Vec::LEN <= 32);
-        assert!(D::I16Vec::LEN.is_power_of_two());
+        assert!(I16Vec::<D>::LEN <= 32);
+        assert!(I16Vec::<D>::LEN.is_power_of_two());
     }
 
-    let lanes = D::I16Vec::LEN;
+    let lanes = I16Vec::<D>::LEN;
     assert_eq!(y_start % lanes, 0);
 
     let (w, h) = in_res.size();
-    if lanes == 1 {
+    if D::IS_EMULATED {
         return hsqueeze_scalar_i16(y_start, in_avg, in_res, in_next_avg, out_prev, out);
     }
 
@@ -537,13 +531,14 @@ fn hsqueeze_impl_i16<D: SimdDescriptor>(
     let mask = !(lanes - 1);
     let y_limit = if w >= lanes { h & mask } else { y_start };
 
+    let tile = lanes * lanes;
     for y in (y_start..y_limit).step_by(lanes) {
         for dy in 0..lanes {
             buf[dy] = in_avg.row(y + dy)[0];
             buf[lanes + dy] = in_res.row(y + dy)[0];
         }
-        let mut avg_first = D::I16Vec::load(d, buf);
-        let mut res_first = D::I16Vec::load(d, &buf[lanes..]);
+        let mut avg_first = I16Vec::load(d, buf);
+        let mut res_first = I16Vec::load(d, &buf[lanes..]);
 
         let mut prev_b = match out_prev {
             None => avg_first,
@@ -551,43 +546,41 @@ fn hsqueeze_impl_i16<D: SimdDescriptor>(
                 for (dy, out) in buf[..lanes].iter_mut().enumerate() {
                     *out = lr.row(y + dy)[3];
                 }
-                D::I16Vec::load(d, buf)
+                I16Vec::load(d, buf)
             }
         };
 
         let remainder_start = ((w - 1) & mask) + 1;
         let remainder_count = w - remainder_start;
         for x in (1..remainder_start).step_by(lanes) {
-            let buf_arr = D::I16Vec::make_array_slice_mut(&mut buf[..2 * lanes * lanes]);
-
             for dy in 0..lanes {
                 let avg_row = &in_avg.row(y + dy)[x..][..lanes];
                 let res_row = &in_res.row(y + dy)[x..][..lanes];
-                let avg = D::I16Vec::load(d, avg_row);
-                let res = D::I16Vec::load(d, res_row);
-                avg.store_array(&mut buf_arr[2 * dy]);
-                res.store_array(&mut buf_arr[2 * dy + 1]);
+                let avg = I16Vec::load(d, avg_row);
+                let res = I16Vec::load(d, res_row);
+                avg.store(&mut buf[2 * dy * lanes..]);
+                res.store(&mut buf[(2 * dy + 1) * lanes..]);
             }
-            D::I16Vec::transpose_square(d, buf_arr, 2);
-            D::I16Vec::transpose_square(d, &mut buf_arr[1..], 2);
+            transpose_in_place_strided(d, &mut buf[..2 * tile], lanes, 2 * lanes);
+            transpose_in_place_strided(d, &mut buf[lanes..2 * tile], lanes, 2 * lanes);
 
             for idx in 0..lanes {
-                let avg_next = D::I16Vec::load_array(d, &buf_arr[2 * idx]);
-                let res_next = D::I16Vec::load_array(d, &buf_arr[2 * idx + 1]);
+                let avg_next = I16Vec::load(d, &buf[2 * idx * lanes..]);
+                let res_next = I16Vec::load(d, &buf[(2 * idx + 1) * lanes..]);
                 let (a, b) = unsqueeze_impl_i16(d, avg_first, res_first, avg_next, prev_b);
-                a.store_array(&mut buf_arr[2 * idx]);
-                b.store_array(&mut buf_arr[2 * idx + 1]);
+                a.store(&mut buf[2 * idx * lanes..]);
+                b.store(&mut buf[(2 * idx + 1) * lanes..]);
                 avg_first = avg_next;
                 res_first = res_next;
                 prev_b = b;
             }
 
-            D::I16Vec::transpose_square(d, buf_arr, 1);
-            D::I16Vec::transpose_square(d, &mut buf_arr[lanes..], 1);
+            transpose_in_place(d, &mut buf[..tile], lanes);
+            transpose_in_place(d, &mut buf[tile..2 * tile], lanes);
             for dy in 0..lanes {
                 let out_row = &mut out.row(y + dy)[2 * x - 2..][..2 * lanes];
                 for group in 0..2 {
-                    let v = D::I16Vec::load_array(d, &buf_arr[dy + group * lanes]);
+                    let v = I16Vec::load(d, &buf[(dy + group * lanes) * lanes..]);
                     v.store(&mut out_row[group * lanes..]);
                 }
             }
@@ -600,20 +593,19 @@ fn hsqueeze_impl_i16<D: SimdDescriptor>(
                 for (idx, out) in buf[..lanes].iter_mut().enumerate() {
                     *out = in_avg.row(y + idx)[w];
                 }
-                D::I16Vec::load(d, buf)
+                I16Vec::load(d, buf)
             } else if let Some(lr) = in_next_avg {
                 for (idx, out) in buf[..lanes].iter_mut().enumerate() {
                     *out = lr.row(y + idx)[0];
                 }
-                D::I16Vec::load(d, buf)
+                I16Vec::load(d, buf)
             } else {
                 avg_first
             };
 
-            let buf_arr = D::I16Vec::make_array_slice_mut(&mut buf[..2 * lanes * lanes]);
             let (a, b) = unsqueeze_impl_i16(d, avg_first, res_first, avg_last, prev_b);
-            a.store_array(&mut buf_arr[0]);
-            b.store_array(&mut buf_arr[1]);
+            a.store(buf);
+            b.store(&mut buf[lanes..]);
         } else {
             for dy in 0..lanes {
                 let avg_row = in_avg.row(y + dy);
@@ -632,25 +624,23 @@ fn hsqueeze_impl_i16<D: SimdDescriptor>(
                 };
             }
 
-            let buf_arr = D::I16Vec::make_array_slice_mut(&mut buf[..2 * lanes * lanes]);
-            D::I16Vec::transpose_square(d, buf_arr, 2);
-            D::I16Vec::transpose_square(d, &mut buf_arr[1..], 2);
+            transpose_in_place_strided(d, &mut buf[..2 * tile], lanes, 2 * lanes);
+            transpose_in_place_strided(d, &mut buf[lanes..2 * tile], lanes, 2 * lanes);
 
             for idx in 0..=remainder_count {
-                let avg_next = D::I16Vec::load_array(d, &buf_arr[2 * idx]);
-                let res_next = D::I16Vec::load_array(d, &buf_arr[2 * idx + 1]);
+                let avg_next = I16Vec::load(d, &buf[2 * idx * lanes..]);
+                let res_next = I16Vec::load(d, &buf[(2 * idx + 1) * lanes..]);
                 let (a, b) = unsqueeze_impl_i16(d, avg_first, res_first, avg_next, prev_b);
-                a.store_array(&mut buf_arr[2 * idx]);
-                b.store_array(&mut buf_arr[2 * idx + 1]);
+                a.store(&mut buf[2 * idx * lanes..]);
+                b.store(&mut buf[(2 * idx + 1) * lanes..]);
                 avg_first = avg_next;
                 res_first = res_next;
                 prev_b = b;
             }
         }
 
-        let buf_arr = D::I16Vec::make_array_slice_mut(&mut buf[..2 * lanes * lanes]);
-        D::I16Vec::transpose_square(d, buf_arr, 1);
-        D::I16Vec::transpose_square(d, &mut buf_arr[lanes..], 1);
+        transpose_in_place(d, &mut buf[..tile], lanes);
+        transpose_in_place(d, &mut buf[tile..2 * tile], lanes);
 
         let x_limit = 2 * (remainder_count + 1);
         for dy in 0..lanes {
@@ -901,13 +891,13 @@ fn vsqueeze_impl<D: SimdDescriptor>(
     out_prev: Option<&ImageRect<'_, i32>>,
     out: &mut ImageRectMut<'_, i32>,
 ) {
-    const { assert!(D::I32Vec::LEN.is_power_of_two()) };
+    const { assert!(I32Vec::<D>::LEN.is_power_of_two()) };
 
-    let lanes = D::I32Vec::LEN;
+    let lanes = I32Vec::<D>::LEN;
     assert_eq!(x_start % lanes, 0);
 
     let (w, h) = in_res.size();
-    if lanes == 1 {
+    if D::IS_EMULATED {
         return vsqueeze_scalar(x_start, in_avg, in_res, in_next_avg, out_prev, out);
     }
 
@@ -927,23 +917,23 @@ fn vsqueeze_impl<D: SimdDescriptor>(
     };
 
     for x in (x_start..x_limit).step_by(lanes) {
-        let mut prev_b = D::I32Vec::load(d, &prev_b_row[x..]);
-        let mut avg_first = D::I32Vec::load(d, &in_avg.row(0)[x..]);
-        let mut res_first = D::I32Vec::load(d, &in_res.row(0)[x..]);
+        let mut prev_b = I32Vec::load(d, &prev_b_row[x..]);
+        let mut avg_first = I32Vec::load(d, &in_avg.row(0)[x..]);
+        let mut res_first = I32Vec::load(d, &in_res.row(0)[x..]);
         for y in 0..h - 1 {
-            let avg_next = D::I32Vec::load(d, &in_avg.row(y + 1)[x..]);
+            let avg_next = I32Vec::load(d, &in_avg.row(y + 1)[x..]);
             let (a, b) = unsqueeze_impl(d, avg_first, res_first, avg_next, prev_b);
             a.store(&mut out.row(2 * y)[x..]);
             b.store(&mut out.row(2 * y + 1)[x..]);
             prev_b = b;
             avg_first = avg_next;
-            res_first = D::I32Vec::load(d, &in_res.row(y + 1)[x..]);
+            res_first = I32Vec::load(d, &in_res.row(y + 1)[x..]);
         }
 
         let avg_last = if has_tail || has_next_in_avg {
-            D::I32Vec::load(d, &in_avg.row(h)[x..])
+            I32Vec::load(d, &in_avg.row(h)[x..])
         } else if let Some(tb) = in_next_avg {
-            D::I32Vec::load(d, &tb.row(0)[x..])
+            I32Vec::load(d, &tb.row(0)[x..])
         } else {
             avg_first
         };
@@ -994,13 +984,13 @@ fn vsqueeze_impl_i16<D: SimdDescriptor>(
     out_prev: Option<&ImageRect<'_, i16>>,
     out: &mut ImageRectMut<'_, i16>,
 ) {
-    const { assert!(D::I16Vec::LEN.is_power_of_two()) };
+    const { assert!(I16Vec::<D>::LEN.is_power_of_two()) };
 
-    let lanes = D::I16Vec::LEN;
+    let lanes = I16Vec::<D>::LEN;
     assert_eq!(x_start % lanes, 0);
 
     let (w, h) = in_res.size();
-    if lanes == 1 {
+    if D::IS_EMULATED {
         return vsqueeze_scalar_i16(x_start, in_avg, in_res, in_next_avg, out_prev, out);
     }
 
@@ -1020,23 +1010,23 @@ fn vsqueeze_impl_i16<D: SimdDescriptor>(
     };
 
     for x in (x_start..x_limit).step_by(lanes) {
-        let mut prev_b = D::I16Vec::load(d, &prev_b_row[x..]);
-        let mut avg_first = D::I16Vec::load(d, &in_avg.row(0)[x..]);
-        let mut res_first = D::I16Vec::load(d, &in_res.row(0)[x..]);
+        let mut prev_b = I16Vec::load(d, &prev_b_row[x..]);
+        let mut avg_first = I16Vec::load(d, &in_avg.row(0)[x..]);
+        let mut res_first = I16Vec::load(d, &in_res.row(0)[x..]);
         for y in 0..h - 1 {
-            let avg_next = D::I16Vec::load(d, &in_avg.row(y + 1)[x..]);
+            let avg_next = I16Vec::load(d, &in_avg.row(y + 1)[x..]);
             let (a, b) = unsqueeze_impl_i16(d, avg_first, res_first, avg_next, prev_b);
             a.store(&mut out.row(2 * y)[x..]);
             b.store(&mut out.row(2 * y + 1)[x..]);
             prev_b = b;
             avg_first = avg_next;
-            res_first = D::I16Vec::load(d, &in_res.row(y + 1)[x..]);
+            res_first = I16Vec::load(d, &in_res.row(y + 1)[x..]);
         }
 
         let avg_last = if has_tail || has_next_in_avg {
-            D::I16Vec::load(d, &in_avg.row(h)[x..])
+            I16Vec::load(d, &in_avg.row(h)[x..])
         } else if let Some(tb) = in_next_avg {
-            D::I16Vec::load(d, &tb.row(0)[x..])
+            I16Vec::load(d, &tb.row(0)[x..])
         } else {
             avg_first
         };
