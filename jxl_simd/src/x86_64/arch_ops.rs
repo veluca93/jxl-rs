@@ -10,7 +10,9 @@
 // Clippy treats safe `#[target_feature]` functions as requiring `# Safety` docs.
 #![allow(clippy::missing_safety_doc)]
 
-use std::arch::x86_64::{self as arch, __m128, __m128i, __m256, __m256i, __m512, __m512i};
+use std::arch::x86_64::{
+    self as arch, __m128, __m128d, __m128i, __m256, __m256d, __m256i, __m512, __m512d, __m512i,
+};
 
 #[inline]
 #[target_feature(enable = "sse")]
@@ -24,6 +26,20 @@ pub fn _mm_loadu_ps(mem_addr: &[f32; 4]) -> __m128 {
 pub fn _mm_storeu_ps(mem_addr: &mut [f32; 4], a: __m128) {
     // SAFETY: `mem_addr` is valid for 4 `f32`s and `_mm_storeu_ps` supports unaligned stores.
     unsafe { arch::_mm_storeu_ps(mem_addr.as_mut_ptr(), a) }
+}
+
+#[inline]
+#[target_feature(enable = "sse2")]
+pub fn _mm_loadu_pd(mem_addr: &[f64; 2]) -> __m128d {
+    // SAFETY: `mem_addr` is valid for 2 `f64`s and `_mm_loadu_pd` supports unaligned loads.
+    unsafe { arch::_mm_loadu_pd(mem_addr.as_ptr()) }
+}
+
+#[inline]
+#[target_feature(enable = "sse2")]
+pub fn _mm_storeu_pd(mem_addr: &mut [f64; 2], a: __m128d) {
+    // SAFETY: `mem_addr` is valid for 2 `f64`s and `_mm_storeu_pd` supports unaligned stores.
+    unsafe { arch::_mm_storeu_pd(mem_addr.as_mut_ptr(), a) }
 }
 
 #[inline]
@@ -41,6 +57,20 @@ pub fn _mm256_storeu_ps(mem_addr: &mut [f32; 8], a: __m256) {
 }
 
 #[inline]
+#[target_feature(enable = "avx")]
+pub fn _mm256_loadu_pd(mem_addr: &[f64; 4]) -> __m256d {
+    // SAFETY: `mem_addr` is valid for 4 `f64`s and `_mm256_loadu_pd` supports unaligned loads.
+    unsafe { arch::_mm256_loadu_pd(mem_addr.as_ptr()) }
+}
+
+#[inline]
+#[target_feature(enable = "avx")]
+pub fn _mm256_storeu_pd(mem_addr: &mut [f64; 4], a: __m256d) {
+    // SAFETY: `mem_addr` is valid for 4 `f64`s and `_mm256_storeu_pd` supports unaligned stores.
+    unsafe { arch::_mm256_storeu_pd(mem_addr.as_mut_ptr(), a) }
+}
+
+#[inline]
 #[target_feature(enable = "avx512f")]
 pub fn _mm512_loadu_ps(mem_addr: &[f32; 16]) -> __m512 {
     // SAFETY: `mem_addr` is valid for 16 `f32`s and `_mm512_loadu_ps` supports unaligned loads.
@@ -52,6 +82,20 @@ pub fn _mm512_loadu_ps(mem_addr: &[f32; 16]) -> __m512 {
 pub fn _mm512_storeu_ps(mem_addr: &mut [f32; 16], a: __m512) {
     // SAFETY: `mem_addr` is valid for 16 `f32`s and `_mm512_storeu_ps` supports unaligned stores.
     unsafe { arch::_mm512_storeu_ps(mem_addr.as_mut_ptr(), a) }
+}
+
+#[inline]
+#[target_feature(enable = "avx512f")]
+pub fn _mm512_loadu_pd(mem_addr: &[f64; 8]) -> __m512d {
+    // SAFETY: `mem_addr` is valid for 8 `f64`s and `_mm512_loadu_pd` supports unaligned loads.
+    unsafe { arch::_mm512_loadu_pd(mem_addr.as_ptr()) }
+}
+
+#[inline]
+#[target_feature(enable = "avx512f")]
+pub fn _mm512_storeu_pd(mem_addr: &mut [f64; 8], a: __m512d) {
+    // SAFETY: `mem_addr` is valid for 8 `f64`s and `_mm512_storeu_pd` supports unaligned stores.
+    unsafe { arch::_mm512_storeu_pd(mem_addr.as_mut_ptr(), a) }
 }
 
 macro_rules! x86_si_load_store {
@@ -92,11 +136,13 @@ x86_si_load_store!(
     load_intrinsic = _mm_loadu_si128,
     store_intrinsic = _mm_storeu_si128,
     (_mm_loadu_si128_u8, _mm_storeu_si128_u8, [u8; 16]),
+    (_mm_loadu_si128_i8, _mm_storeu_si128_i8, [i8; 16]),
     (_mm_loadu_si128_u16, _mm_storeu_si128_u16, [u16; 8]),
     (_mm_loadu_si128_i16, _mm_storeu_si128_i16, [i16; 8]),
     (_mm_loadu_si128_u32, _mm_storeu_si128_u32, [u32; 4]),
     (_mm_loadu_si128_i32, _mm_storeu_si128_i32, [i32; 4]),
     (_mm_loadu_si128_u64, _mm_storeu_si128_u64, [u64; 2]),
+    (_mm_loadu_si128_i64, _mm_storeu_si128_i64, [i64; 2]),
 );
 
 x86_si_load_store!(
@@ -106,11 +152,13 @@ x86_si_load_store!(
     load_intrinsic = _mm_loadu_si64,
     store_intrinsic = _mm_storeu_si64,
     (_mm_loadu_si64_u8, _mm_storeu_si64_u8, [u8; 8]),
+    (_mm_loadu_si64_i8, _mm_storeu_si64_i8, [i8; 8]),
     (_mm_loadu_si64_u16, _mm_storeu_si64_u16, [u16; 4]),
     (_mm_loadu_si64_i16, _mm_storeu_si64_i16, [i16; 4]),
     (_mm_loadu_si64_u32, _mm_storeu_si64_u32, [u32; 2]),
     (_mm_loadu_si64_i32, _mm_storeu_si64_i32, [i32; 2]),
     (_mm_loadu_si64_u64, _mm_storeu_si64_u64, [u64; 1]),
+    (_mm_loadu_si64_i64, _mm_storeu_si64_i64, [i64; 1]),
 );
 
 x86_si_load_store!(
@@ -120,6 +168,7 @@ x86_si_load_store!(
     load_intrinsic = _mm_loadu_si32,
     store_intrinsic = _mm_storeu_si32,
     (_mm_loadu_si32_u8, _mm_storeu_si32_u8, [u8; 4]),
+    (_mm_loadu_si32_i8, _mm_storeu_si32_i8, [i8; 4]),
     (_mm_loadu_si32_u16, _mm_storeu_si32_u16, [u16; 2]),
     (_mm_loadu_si32_i16, _mm_storeu_si32_i16, [i16; 2]),
     (_mm_loadu_si32_u32, _mm_storeu_si32_u32, [u32; 1]),
@@ -133,6 +182,7 @@ x86_si_load_store!(
     load_intrinsic = _mm_loadu_si16,
     store_intrinsic = _mm_storeu_si16,
     (_mm_loadu_si16_u8, _mm_storeu_si16_u8, [u8; 2]),
+    (_mm_loadu_si16_i8, _mm_storeu_si16_i8, [i8; 2]),
     (_mm_loadu_si16_u16, _mm_storeu_si16_u16, [u16; 1]),
     (_mm_loadu_si16_i16, _mm_storeu_si16_i16, [i16; 1]),
 );
@@ -144,11 +194,13 @@ x86_si_load_store!(
     load_intrinsic = _mm256_loadu_si256,
     store_intrinsic = _mm256_storeu_si256,
     (_mm256_loadu_si256_u8, _mm256_storeu_si256_u8, [u8; 32]),
+    (_mm256_loadu_si256_i8, _mm256_storeu_si256_i8, [i8; 32]),
     (_mm256_loadu_si256_u16, _mm256_storeu_si256_u16, [u16; 16]),
     (_mm256_loadu_si256_i16, _mm256_storeu_si256_i16, [i16; 16]),
     (_mm256_loadu_si256_u32, _mm256_storeu_si256_u32, [u32; 8]),
     (_mm256_loadu_si256_i32, _mm256_storeu_si256_i32, [i32; 8]),
     (_mm256_loadu_si256_u64, _mm256_storeu_si256_u64, [u64; 4]),
+    (_mm256_loadu_si256_i64, _mm256_storeu_si256_i64, [i64; 4]),
 );
 
 x86_si_load_store!(
@@ -158,9 +210,11 @@ x86_si_load_store!(
     load_intrinsic = _mm512_loadu_si512,
     store_intrinsic = _mm512_storeu_si512,
     (_mm512_loadu_si512_u8, _mm512_storeu_si512_u8, [u8; 64]),
+    (_mm512_loadu_si512_i8, _mm512_storeu_si512_i8, [i8; 64]),
     (_mm512_loadu_si512_u16, _mm512_storeu_si512_u16, [u16; 32]),
     (_mm512_loadu_si512_i16, _mm512_storeu_si512_i16, [i16; 32]),
     (_mm512_loadu_si512_u32, _mm512_storeu_si512_u32, [u32; 16]),
     (_mm512_loadu_si512_i32, _mm512_storeu_si512_i32, [i32; 16]),
     (_mm512_loadu_si512_u64, _mm512_storeu_si512_u64, [u64; 8]),
+    (_mm512_loadu_si512_i64, _mm512_storeu_si512_i64, [i64; 8]),
 );

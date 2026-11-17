@@ -4,9 +4,10 @@
 // license that can be found in the LICENSE file.
 
 use crate::{
-    ComparableElement, Emu128Descriptor, F32Vec, FloatElement, I16Vec, I32Vec, IntElement,
-    MaskWidth, MulElement, SignedElement, SimdDescriptor, SimdElement, SimdMask, SimdVec, U8Vec,
-    U64Vec, W8, W16, W32, W64, simd_test,
+    ComparableElement, DemoteTo, Emu128Descriptor, F32Vec, F64Vec, FloatElement, I8Vec, I16Vec,
+    I32Vec, I64Vec, IntElement, MaskWidth, MulElement, PromoteTo, SatElement, SignedElement,
+    SimdDescriptor, SimdElement, SimdMask, SimdVec, U8Vec, U16Vec, U32Vec, U64Vec, W8, W16, W32,
+    W64, simd_test,
 };
 
 struct Rng(u64);
@@ -70,6 +71,28 @@ impl TestScalar for f32 {
     }
 }
 
+impl TestScalar for f64 {
+    fn boundary() -> Vec<Self> {
+        vec![
+            0.0, -0.0, 1.0, -1.0, 0.5, -0.5, 1.5, 2.5, -1.5, -2.5, 123.75, -123.75, 1e-8, -1e8,
+        ]
+    }
+    fn from_rng(rng: &mut Rng) -> Self {
+        let m = (rng.next_u64() & 0xFFFF_FFFF) as f64 / 65536.0;
+        let s = if rng.next_u64() & 1 == 0 { 1.0 } else { -1.0 };
+        s * (0.25 + m)
+    }
+    fn check_eq(e: Self, a: Self, ctx: &str) {
+        if e == 0.0 && a == 0.0 {
+            return;
+        }
+        assert!(
+            (e - a).abs() <= 1e-12 * (1.0 + e.abs().max(a.abs())),
+            "{ctx}: expected {e}, got {a}"
+        );
+    }
+}
+
 macro_rules! impl_test_scalar_int {
     ($($t:ty),*) => {
         $(impl TestScalar for $t {
@@ -82,7 +105,7 @@ macro_rules! impl_test_scalar_int {
         })*
     };
 }
-impl_test_scalar_int!(u8, i16, u16, i32, u32, u64);
+impl_test_scalar_int!(i8, u8, i16, u16, i32, u32, i64, u64);
 
 macro_rules! check_against_emu {
     ($d:expr, $t:ty, $d_ty:ty, $a:expr, $b:expr, $c:expr, |$darg:ident, $va:ident, $vb:ident, $vc:ident| $body:expr, $ctx:expr) => {{
@@ -175,6 +198,46 @@ fn test_lane_arith_cmp<T: TestScalar + ComparableElement + MulElement, D: SimdDe
         a,
         b,
         c,
+        |_d, va, vb, vc| va.lt(vb).if_then_else(va, vc),
+        "lt"
+    );
+    check_against_emu!(
+        d,
+        T,
+        D,
+        a,
+        b,
+        c,
+        |_d, va, vb, vc| va.ge(vb).if_then_else(va, vc),
+        "ge"
+    );
+    check_against_emu!(
+        d,
+        T,
+        D,
+        a,
+        b,
+        c,
+        |_d, va, vb, vc| va.le(vb).if_then_else(va, vc),
+        "le"
+    );
+    check_against_emu!(
+        d,
+        T,
+        D,
+        a,
+        b,
+        c,
+        |_d, va, vb, _vc| va.eq_zero().if_then_else_zero(vb),
+        "eqz_zero"
+    );
+    check_against_emu!(
+        d,
+        T,
+        D,
+        a,
+        b,
+        c,
         |_d, va, vb, _vc| va.eq_zero().if_then_zero_else(vb),
         "eqz_zero_else"
     );
@@ -223,6 +286,12 @@ fn test_interleave<T: TestScalar + PartialEq, D: SimdDescriptor>(d: D, seed: u64
         assert_eq!(buf2[2 * i], src[i]);
         assert_eq!(buf2[2 * i + 1], src[len + i]);
     }
+    let (da, db) = SimdVec::load_deinterleaved_2(d, &buf2);
+    let mut out = vec![T::default(); len];
+    da.store(&mut out);
+    assert_eq!(out, src[..len]);
+    db.store(&mut out);
+    assert_eq!(out, src[len..2 * len]);
 
     let mut buf3 = vec![T::default(); 3 * len];
     SimdVec::store_interleaved_3(va, vb, vc, &mut buf3);
@@ -231,6 +300,13 @@ fn test_interleave<T: TestScalar + PartialEq, D: SimdDescriptor>(d: D, seed: u64
         assert_eq!(buf3[3 * i + 1], src[len + i]);
         assert_eq!(buf3[3 * i + 2], src[2 * len + i]);
     }
+    let (la, lb, lc) = SimdVec::load_deinterleaved_3(d, &buf3);
+    la.store(&mut out);
+    assert_eq!(out, src[..len]);
+    lb.store(&mut out);
+    assert_eq!(out, src[len..2 * len]);
+    lc.store(&mut out);
+    assert_eq!(out, src[2 * len..3 * len]);
 
     let mut buf4 = vec![T::default(); 4 * len];
     SimdVec::store_interleaved_4(va, vb, vc, vd, &mut buf4);
@@ -240,8 +316,16 @@ fn test_interleave<T: TestScalar + PartialEq, D: SimdDescriptor>(d: D, seed: u64
         assert_eq!(buf4[4 * i + 2], src[2 * len + i]);
         assert_eq!(buf4[4 * i + 3], src[3 * len + i]);
     }
+    let (fa, fb, fc, fd) = SimdVec::load_deinterleaved_4(d, &buf4);
+    fa.store(&mut out);
+    assert_eq!(out, src[..len]);
+    fb.store(&mut out);
+    assert_eq!(out, src[len..2 * len]);
+    fc.store(&mut out);
+    assert_eq!(out, src[2 * len..3 * len]);
+    fd.store(&mut out);
+    assert_eq!(out, src[3 * len..4 * len]);
 
-    let mut out = vec![T::default(); len];
     let (b128_0, b128_1) = va.interleave_blocks_128(vb);
     let mut out2 = vec![T::default(); len];
     b128_0.store(&mut out);
@@ -291,6 +375,7 @@ fn test_signed_ops<T: TestScalar + SignedElement + MulElement, D: SimdDescriptor
     let bnd = T::boundary();
     let a = fill_inputs(seed, 64, &bnd, T::from_rng);
     check_against_emu!(d, T, D, a, a, a, |_d, va, _vb, _vc| -va, "neg_op");
+    check_against_emu!(d, T, D, a, a, a, |_d, va, _vb, _vc| va.neg(), "neg_fn");
     check_against_emu!(d, T, D, a, a, a, |_d, va, _vb, _vc| va.abs(), "abs");
     check_against_emu!(
         d,
@@ -324,10 +409,21 @@ where
         .collect();
 
     check_against_emu!(d, T, D, a, nonzero, c, |_d, va, vb, _vc| va / vb, "div_op");
+    check_against_emu!(
+        d,
+        T,
+        D,
+        a,
+        nonzero,
+        c,
+        |_d, va, vb, _vc| va.div(vb),
+        "div_fn"
+    );
     check_against_emu!(d, T, D, pos, a, a, |_d, va, _vb, _vc| va.sqrt(), "sqrt");
     check_against_emu!(d, T, D, a, a, a, |_d, va, _vb, _vc| va.floor(), "floor");
     check_against_emu!(d, T, D, a, a, a, |_d, va, _vb, _vc| va.ceil(), "ceil");
     check_against_emu!(d, T, D, a, a, a, |_d, va, _vb, _vc| va.round(), "round");
+    check_against_emu!(d, T, D, a, a, a, |_d, va, _vb, _vc| va.trunc(), "trunc");
     check_against_emu!(
         d,
         T,
@@ -365,19 +461,31 @@ fn test_int_ops<T: TestScalar + IntElement, D: SimdDescriptor, const MID: u32, c
     let bnd = T::boundary();
     let a = fill_inputs(seed, 64, &bnd, T::from_rng);
     let b = fill_inputs(seed ^ 55, 64, &bnd, T::from_rng);
+    let cnts: Vec<T> = (0..a.len())
+        .map(|i| T::from_u8((i as u32 % <T as crate::sealed::IntElement>::BITS) as u8))
+        .collect();
 
-    check_against_emu!(d, T, D, a, b, b, |_d, va, vb, _vc| va & vb, "band");
-    check_against_emu!(d, T, D, a, b, b, |_d, va, vb, _vc| va | vb, "bor");
-    check_against_emu!(d, T, D, a, b, b, |_d, va, vb, _vc| va ^ vb, "bxor");
-    check_against_emu!(d, T, D, a, b, b, |_d, va, _vb, _vc| !va, "bnot");
-    check_against_emu!(d, T, D, a, b, b, |_d, va, vb, _vc| va.andnot(vb), "andnot");
+    check_against_emu!(d, T, D, a, b, cnts, |_d, va, vb, _vc| va & vb, "band");
+    check_against_emu!(d, T, D, a, b, cnts, |_d, va, vb, _vc| va | vb, "bor");
+    check_against_emu!(d, T, D, a, b, cnts, |_d, va, vb, _vc| va ^ vb, "bxor");
+    check_against_emu!(d, T, D, a, b, cnts, |_d, va, _vb, _vc| !va, "bnot");
     check_against_emu!(
         d,
         T,
         D,
         a,
         b,
+        cnts,
+        |_d, va, vb, _vc| va.andnot(vb),
+        "andnot"
+    );
+    check_against_emu!(
+        d,
+        T,
+        D,
+        a,
         b,
+        cnts,
         |_d, va, _vb, _vc| crate::shl!(va, 0),
         "shl0"
     );
@@ -387,7 +495,7 @@ fn test_int_ops<T: TestScalar + IntElement, D: SimdDescriptor, const MID: u32, c
         D,
         a,
         b,
-        b,
+        cnts,
         |_d, va, _vb, _vc| crate::shr!(va, 0),
         "shr0"
     );
@@ -397,7 +505,7 @@ fn test_int_ops<T: TestScalar + IntElement, D: SimdDescriptor, const MID: u32, c
         D,
         a,
         b,
-        b,
+        cnts,
         |_d, va, _vb, _vc| crate::shl!(va, 1),
         "shl1"
     );
@@ -407,7 +515,7 @@ fn test_int_ops<T: TestScalar + IntElement, D: SimdDescriptor, const MID: u32, c
         D,
         a,
         b,
-        b,
+        cnts,
         |_d, va, _vb, _vc| crate::shr!(va, 1),
         "shr1"
     );
@@ -417,7 +525,7 @@ fn test_int_ops<T: TestScalar + IntElement, D: SimdDescriptor, const MID: u32, c
         D,
         a,
         b,
-        b,
+        cnts,
         |_d, va, _vb, _vc| va.shl::<MID>(),
         "shl_mid"
     );
@@ -427,7 +535,7 @@ fn test_int_ops<T: TestScalar + IntElement, D: SimdDescriptor, const MID: u32, c
         D,
         a,
         b,
-        b,
+        cnts,
         |_d, va, _vb, _vc| va.shr::<MID>(),
         "shr_mid"
     );
@@ -437,7 +545,7 @@ fn test_int_ops<T: TestScalar + IntElement, D: SimdDescriptor, const MID: u32, c
         D,
         a,
         b,
-        b,
+        cnts,
         |_d, va, _vb, _vc| va.shl::<HI>(),
         "shl_hi"
     );
@@ -447,10 +555,118 @@ fn test_int_ops<T: TestScalar + IntElement, D: SimdDescriptor, const MID: u32, c
         D,
         a,
         b,
-        b,
+        cnts,
         |_d, va, _vb, _vc| va.shr::<HI>(),
         "shr_hi"
     );
+    check_against_emu!(
+        d,
+        T,
+        D,
+        a,
+        b,
+        cnts,
+        |_d, va, _vb, _vc| va.shl_vec(_vc),
+        "shl_vec"
+    );
+    check_against_emu!(
+        d,
+        T,
+        D,
+        a,
+        b,
+        cnts,
+        |_d, va, _vb, _vc| va.shr_vec(_vc),
+        "shr_vec"
+    );
+    check_against_emu!(
+        d,
+        T,
+        D,
+        a,
+        b,
+        cnts,
+        |_d, va, _vb, _vc| va.count_ones(),
+        "count_ones"
+    );
+    check_against_emu!(
+        d,
+        T,
+        D,
+        a,
+        b,
+        cnts,
+        |_d, va, _vb, _vc| va.leading_zeros(),
+        "clz"
+    );
+    check_against_emu!(
+        d,
+        T,
+        D,
+        a,
+        b,
+        cnts,
+        |_d, va, _vb, _vc| va.trailing_zeros(),
+        "ctz"
+    );
+}
+
+#[inline]
+fn test_sat_ops<T: TestScalar + SatElement, D: SimdDescriptor>(d: D, seed: u64) {
+    let bnd = T::boundary();
+    let a = fill_inputs(seed, 64, &bnd, T::from_rng);
+    let b = fill_inputs(seed ^ 77, 64, &bnd, T::from_rng);
+    check_against_emu!(
+        d,
+        T,
+        D,
+        a,
+        b,
+        a,
+        |_d, va, vb, _vc| va.sat_add(vb),
+        "sat_add"
+    );
+    check_against_emu!(
+        d,
+        T,
+        D,
+        a,
+        b,
+        a,
+        |_d, va, vb, _vc| va.sat_sub(vb),
+        "sat_sub"
+    );
+}
+
+#[inline]
+fn test_promote_demote<N, W, D: SimdDescriptor>(
+    d: D,
+    seed: u64,
+    expected_lo_hi: fn(&[N]) -> Vec<W>,
+    expected_demote: fn(&[W]) -> Vec<N>,
+) where
+    N: TestScalar + PromoteTo<W>,
+    W: TestScalar + DemoteTo<N>,
+{
+    let nlen = SimdVec::<N, D>::LEN;
+    let wlen = SimdVec::<W, D>::LEN;
+    let src = fill_inputs(seed, nlen, &N::boundary(), N::from_rng);
+    let vn = SimdVec::load(d, &src);
+    let (mut lo, mut hi) = (vec![W::default(); wlen], vec![W::default(); wlen]);
+    vn.promote_lo().store(&mut lo);
+    vn.promote_hi().store(&mut hi);
+    let exp = expected_lo_hi(&src[..nlen]);
+    assert_eq!(lo, exp[..wlen]);
+    assert_eq!(hi, exp[wlen..]);
+
+    let wide = fill_inputs(seed ^ 99, 2 * wlen, &W::boundary(), W::from_rng);
+    let (vlo, vhi) = (
+        SimdVec::<W, D>::load(d, &wide),
+        SimdVec::<W, D>::load(d, &wide[wlen..]),
+    );
+    let mut dem = vec![N::default(); nlen];
+    vlo.demote_to(vhi).store(&mut dem);
+    assert_eq!(dem, expected_demote(&wide[..2 * wlen]));
 }
 
 #[inline]
@@ -494,38 +710,169 @@ impl<W: MaskWidth, D: SimdDescriptor> MaskEqZeroCheck for SimdMask<W, D> {
 #[simd_test]
 fn test_all_types_and_ops<D: SimdDescriptor>(d: D) {
     test_lane_arith_cmp::<f32, D>(d, 1);
+    test_lane_arith_cmp::<f64, D>(d, 2);
+    test_lane_arith_cmp::<i8, D>(d, 3);
     test_lane_arith_cmp::<u8, D>(d, 4);
     test_lane_arith_cmp::<i16, D>(d, 5);
     test_lane_arith_cmp::<u16, D>(d, 6);
     test_lane_arith_cmp::<i32, D>(d, 7);
     test_lane_arith_cmp::<u32, D>(d, 8);
+    test_lane_arith_cmp::<i64, D>(d, 9);
     test_lane_arith_cmp::<u64, D>(d, 10);
 
     test_interleave::<f32, D>(d, 11);
+    test_interleave::<f64, D>(d, 12);
+    test_interleave::<i8, D>(d, 13);
     test_interleave::<u8, D>(d, 14);
     test_interleave::<i16, D>(d, 15);
     test_interleave::<u16, D>(d, 16);
     test_interleave::<i32, D>(d, 17);
     test_interleave::<u32, D>(d, 18);
+    test_interleave::<i64, D>(d, 19);
     test_interleave::<u64, D>(d, 20);
 
     test_signed_ops::<f32, D>(d, 21);
+    test_signed_ops::<f64, D>(d, 22);
+    test_signed_ops::<i8, D>(d, 23);
     test_signed_ops::<i16, D>(d, 24);
     test_signed_ops::<i32, D>(d, 25);
+    test_signed_ops::<i64, D>(d, 26);
 
     test_float_ops::<f32, D>(d, 27);
+    test_float_ops::<f64, D>(d, 28);
 
+    test_int_ops::<i8, D, 3, 7>(d, 29);
     test_int_ops::<u8, D, 3, 7>(d, 30);
     test_int_ops::<i16, D, 7, 15>(d, 31);
     test_int_ops::<u16, D, 7, 15>(d, 32);
     test_int_ops::<i32, D, 15, 31>(d, 33);
     test_int_ops::<u32, D, 15, 31>(d, 34);
+    test_int_ops::<i64, D, 31, 63>(d, 35);
     test_int_ops::<u64, D, 31, 63>(d, 36);
 
-    test_masks::<W8, u8, D>(d);
+    test_sat_ops::<i8, D>(d, 37);
+    test_sat_ops::<u8, D>(d, 38);
+    test_sat_ops::<i16, D>(d, 39);
+    test_sat_ops::<u16, D>(d, 40);
+
+    test_masks::<W8, i8, D>(d);
     test_masks::<W16, i16, D>(d);
     test_masks::<W32, i32, D>(d);
-    test_masks::<W64, u64, D>(d);
+    test_masks::<W64, i64, D>(d);
+
+    test_promote_demote::<f32, f64, D>(
+        d,
+        41,
+        |s| s.iter().map(|&x| x as f64).collect(),
+        |w| w.iter().map(|&x| x as f32).collect(),
+    );
+    test_promote_demote::<i8, i16, D>(
+        d,
+        42,
+        |s| s.iter().map(|&x| x as i16).collect(),
+        |w| {
+            w.iter()
+                .map(|&x| x.clamp(i8::MIN as i16, i8::MAX as i16) as i8)
+                .collect()
+        },
+    );
+    test_promote_demote::<u8, u16, D>(
+        d,
+        43,
+        |s| s.iter().map(|&x| x as u16).collect(),
+        |w| w.iter().map(|&x| x.min(u8::MAX as u16) as u8).collect(),
+    );
+    test_promote_demote::<i16, i32, D>(
+        d,
+        44,
+        |s| s.iter().map(|&x| x as i32).collect(),
+        |w| {
+            w.iter()
+                .map(|&x| x.clamp(i16::MIN as i32, i16::MAX as i32) as i16)
+                .collect()
+        },
+    );
+    test_promote_demote::<u16, u32, D>(
+        d,
+        45,
+        |s| s.iter().map(|&x| x as u32).collect(),
+        |w| w.iter().map(|&x| x.min(u16::MAX as u32) as u16).collect(),
+    );
+    test_promote_demote::<i32, i64, D>(
+        d,
+        46,
+        |s| s.iter().map(|&x| x as i64).collect(),
+        |w| {
+            w.iter()
+                .map(|&x| x.clamp(i32::MIN as i64, i32::MAX as i64) as i32)
+                .collect()
+        },
+    );
+    test_promote_demote::<u32, u64, D>(
+        d,
+        47,
+        |s| s.iter().map(|&x| x as u64).collect(),
+        |w| w.iter().map(|&x| x.min(u32::MAX as u64) as u32).collect(),
+    );
+
+    // Asymmetric u8->i16, u16->i32, u32->i64 promote + signed->unsigned i16->u8, i32->u16 demote
+    let u8s = fill_inputs(48, U8Vec::<D>::LEN, &u8::boundary(), u8::from_rng);
+    let (mut plo, mut phi) = (vec![0i16; I16Vec::<D>::LEN], vec![0i16; I16Vec::<D>::LEN]);
+    U8Vec::load(d, &u8s).promote_lo::<i16>().store(&mut plo);
+    U8Vec::load(d, &u8s).promote_hi::<i16>().store(&mut phi);
+    assert_eq!(
+        plo.iter().chain(phi.iter()).copied().collect::<Vec<_>>(),
+        u8s[..U8Vec::<D>::LEN]
+            .iter()
+            .map(|&x| x as i16)
+            .collect::<Vec<_>>()
+    );
+    let i16s = fill_inputs(49, 2 * I16Vec::<D>::LEN, &i16::boundary(), i16::from_rng);
+    let mut u8d = vec![0u8; U8Vec::<D>::LEN];
+    I16Vec::load(d, &i16s)
+        .demote_to(I16Vec::load(d, &i16s[I16Vec::<D>::LEN..]))
+        .store(&mut u8d);
+    assert_eq!(
+        u8d,
+        i16s[..U8Vec::<D>::LEN]
+            .iter()
+            .map(|&x| x.clamp(0, 255) as u8)
+            .collect::<Vec<_>>()
+    );
+    let i32s = fill_inputs(50, 2 * I32Vec::<D>::LEN, &i32::boundary(), i32::from_rng);
+    let mut u16d = vec![0u16; U16Vec::<D>::LEN];
+    I32Vec::load(d, &i32s)
+        .demote_to(I32Vec::load(d, &i32s[I32Vec::<D>::LEN..]))
+        .store(&mut u16d);
+    assert_eq!(
+        u16d,
+        i32s[..U16Vec::<D>::LEN]
+            .iter()
+            .map(|&x| x.clamp(0, 65535) as u16)
+            .collect::<Vec<_>>()
+    );
+    let u16s = fill_inputs(51, U16Vec::<D>::LEN, &u16::boundary(), u16::from_rng);
+    let (mut p32l, mut p32h) = (vec![0i32; I32Vec::<D>::LEN], vec![0i32; I32Vec::<D>::LEN]);
+    U16Vec::load(d, &u16s).promote_lo::<i32>().store(&mut p32l);
+    U16Vec::load(d, &u16s).promote_hi::<i32>().store(&mut p32h);
+    assert_eq!(
+        p32l.iter().chain(p32h.iter()).copied().collect::<Vec<_>>(),
+        u16s[..U16Vec::<D>::LEN]
+            .iter()
+            .map(|&x| x as i32)
+            .collect::<Vec<_>>()
+    );
+    let u32s = fill_inputs(52, U32Vec::<D>::LEN, &u32::boundary(), u32::from_rng);
+    let (mut p64l, mut p64h) = (vec![0i64; I64Vec::<D>::LEN], vec![0i64; I64Vec::<D>::LEN]);
+    U32Vec::load(d, &u32s).promote_lo::<i64>().store(&mut p64l);
+    U32Vec::load(d, &u32s).promote_hi::<i64>().store(&mut p64h);
+    assert_eq!(
+        p64l.iter().chain(p64h.iter()).copied().collect::<Vec<_>>(),
+        u32s[..U32Vec::<D>::LEN]
+            .iter()
+            .map(|&x| x as i64)
+            .collect::<Vec<_>>()
+    );
 }
 
 #[simd_test]
@@ -545,6 +892,15 @@ fn test_extra_conversions_and_lut<D: SimdDescriptor>(d: D) {
     let mut back_f = vec![0.0f32; flen];
     I32Vec::load(d, &i32o).as_f32().store(&mut back_f);
     assert_eq!(back_f, i32o.iter().map(|&x| x as f32).collect::<Vec<_>>());
+
+    let dlen = F64Vec::<D>::LEN;
+    let f64s: Vec<f64> = (0..dlen).map(|i| (i as f64) * -12.75 + 1.25).collect();
+    let mut i64o = vec![0i64; dlen];
+    F64Vec::load(d, &f64s).as_i64().store(&mut i64o);
+    assert_eq!(i64o, f64s.iter().map(|&x| x as i64).collect::<Vec<_>>());
+    let mut f64_back = vec![0.0f64; dlen];
+    I64Vec::load(d, &i64o).as_f64().store(&mut f64_back);
+    assert_eq!(f64_back, i64o.iter().map(|&x| x as f64).collect::<Vec<_>>());
 
     let src16 = [
         -32768i16, -1, 0, 1, 42, 32767, 100, -100, 1, 2, 3, 4, 5, 6, 7, 8,
@@ -635,10 +991,16 @@ fn test_extra_conversions_and_lut<D: SimdDescriptor>(d: D) {
     }
 
     // Also test constant shifts across wider shift amounts (`0`, mid, `BITS-1`).
+    assert_eq!(crate::shl!(I8Vec::splat(d, 1), 7).extract_lane0(), i8::MIN);
+    assert_eq!(crate::shr!(I8Vec::splat(d, -128), 7).extract_lane0(), -1);
     assert_eq!(crate::shr!(U8Vec::splat(d, 0x80), 7).extract_lane0(), 1);
     assert_eq!(
         crate::shl!(I16Vec::splat(d, 1), 15).extract_lane0(),
         i16::MIN
+    );
+    assert_eq!(
+        crate::shr!(I64Vec::splat(d, i64::MIN), 63).extract_lane0(),
+        -1
     );
     assert_eq!(
         crate::shr!(U64Vec::splat(d, u64::MAX), 63).extract_lane0(),

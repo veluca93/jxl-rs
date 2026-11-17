@@ -13,8 +13,8 @@ use std::arch::x86_64::*;
 use super::{AvxDescriptor, arch_ops, avx_call, avx_shift};
 use crate::sealed::{
     ArithBackend, BytesBackend, CompareBackend, DescriptorSealed, Element, F32ExtraBackend,
-    FloatBackend, I16ExtraBackend, I32ExtraBackend, IntBitBackend, LaneBackend, MaskBackend,
-    MulBackend, SignedBackend, U8ExtraBackend,
+    F64ExtraBackend, FloatBackend, I16ExtraBackend, I32ExtraBackend, I64ExtraBackend,
+    IntBitBackend, LaneBackend, MaskBackend, MulBackend, SatBackend, SignedBackend, U8ExtraBackend,
 };
 use crate::{W8, W16, W32, W64, generic_ops};
 
@@ -354,6 +354,12 @@ impl CompareBackend<f32> for AvxDescriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: __m256, if_true: __m256) -> __m256 {
+        avx_call!(self, |mask: __m256, if_true: __m256| -> __m256 {
+            _mm256_and_ps(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: __m256, if_false: __m256) -> __m256 {
         avx_call!(self, |mask: __m256, if_false: __m256| -> __m256 {
             _mm256_andnot_ps(mask, if_false)
@@ -444,10 +450,523 @@ impl FloatBackend<f32> for AvxDescriptor {
         })
     }
     #[inline(always)]
+    fn trunc(self, a: __m256) -> __m256 {
+        avx_call!(self, |a: __m256| -> __m256 {
+            _mm256_round_ps::<{ _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC }>(a)
+        })
+    }
+    #[inline(always)]
     fn copysign(self, a: __m256, sign: __m256) -> __m256 {
         avx_call!(self, |a: __m256, sign: __m256| -> __m256 {
             let m = _mm256_set1_ps(-0.0);
             _mm256_or_ps(_mm256_andnot_ps(m, a), _mm256_and_ps(m, sign))
+        })
+    }
+}
+
+impl LaneBackend<f64> for AvxDescriptor {
+    type Raw = __m256d;
+    type Array = [f64; 4];
+
+    #[inline(always)]
+    fn zero(self) -> __m256d {
+        avx_call!(self, || -> __m256d { _mm256_setzero_pd() })
+    }
+    #[inline(always)]
+    fn splat(self, v: f64) -> __m256d {
+        avx_call!(self, |v: f64| -> __m256d { _mm256_set1_pd(v) })
+    }
+    #[inline(always)]
+    fn extract_lane0(self, a: __m256d) -> f64 {
+        avx_call!(self, |a: __m256d| -> f64 {
+            _mm_cvtsd_f64(_mm256_castpd256_pd128(a))
+        })
+    }
+    #[inline(always)]
+    fn load(self, mem: &[f64]) -> __m256d {
+        let chunk: &[f64; 4] = mem.first_chunk::<4>().unwrap();
+        avx_call!(self, |chunk: &[f64; 4]| -> __m256d {
+            arch_ops::_mm256_loadu_pd(chunk)
+        })
+    }
+    #[inline(always)]
+    fn store(self, a: __m256d, dest: &mut [f64]) {
+        let chunk: &mut [f64; 4] = dest.first_chunk_mut::<4>().unwrap();
+        avx_call!(self, |chunk: &mut [f64; 4], a: __m256d| {
+            arch_ops::_mm256_storeu_pd(chunk, a)
+        });
+    }
+    #[inline(always)]
+    fn load_array(self, mem: &[f64; 4]) -> __m256d {
+        avx_call!(self, |mem: &[f64; 4]| -> __m256d {
+            arch_ops::_mm256_loadu_pd(mem)
+        })
+    }
+    #[inline(always)]
+    fn store_array(self, a: __m256d, dest: &mut [f64; 4]) {
+        avx_call!(self, |dest: &mut [f64; 4], a: __m256d| {
+            arch_ops::_mm256_storeu_pd(dest, a)
+        });
+    }
+    #[inline(always)]
+    fn zero_array() -> [f64; 4] {
+        [f64::ZERO; 4]
+    }
+    #[inline(always)]
+    fn slice_as_array(slice: &[f64]) -> &[[f64; 4]] {
+        generic_ops::chunks(slice)
+    }
+    #[inline(always)]
+    fn slice_as_array_mut(slice: &mut [f64]) -> &mut [[f64; 4]] {
+        generic_ops::chunks_mut(slice)
+    }
+    #[inline(always)]
+    fn to_raw_bytes(self, a: __m256d) -> __m256i {
+        avx_call!(self, |a: __m256d| -> __m256i { _mm256_castpd_si256(a) })
+    }
+    #[inline(always)]
+    fn from_raw_bytes(self, a: __m256i) -> __m256d {
+        avx_call!(self, |a: __m256i| -> __m256d { _mm256_castsi256_pd(a) })
+    }
+    #[inline(always)]
+    fn interleave_lo(self, a: __m256d, b: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d, b: __m256d| -> __m256d {
+            _mm256_unpacklo_pd(a, b)
+        })
+    }
+    #[inline(always)]
+    fn interleave_hi(self, a: __m256d, b: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d, b: __m256d| -> __m256d {
+            _mm256_unpackhi_pd(a, b)
+        })
+    }
+}
+
+impl crate::SimdVec<f64, AvxDescriptor> {
+    /// Returns the underlying native SIMD register.
+    #[inline(always)]
+    pub fn raw(self) -> __m256d {
+        self.0
+    }
+
+    /// Wraps a native SIMD register with its descriptor token.
+    #[inline(always)]
+    pub fn from_raw(d: AvxDescriptor, raw: __m256d) -> Self {
+        Self(raw, d)
+    }
+}
+
+impl CompareBackend<f64> for AvxDescriptor {
+    #[inline(always)]
+    fn eq(self, a: __m256d, b: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d, b: __m256d| -> __m256d {
+            _mm256_cmp_pd::<_CMP_EQ_OQ>(a, b)
+        })
+    }
+    #[inline(always)]
+    fn gt(self, a: __m256d, b: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d, b: __m256d| -> __m256d {
+            _mm256_cmp_pd::<_CMP_GT_OQ>(a, b)
+        })
+    }
+    #[inline(always)]
+    fn eq_zero(self, a: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d| -> __m256d {
+            _mm256_cmp_pd::<_CMP_EQ_OQ>(a, _mm256_setzero_pd())
+        })
+    }
+    #[inline(always)]
+    fn min(self, a: __m256d, b: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d, b: __m256d| -> __m256d {
+            _mm256_min_pd(a, b)
+        })
+    }
+    #[inline(always)]
+    fn max(self, a: __m256d, b: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d, b: __m256d| -> __m256d {
+            _mm256_max_pd(a, b)
+        })
+    }
+    #[inline(always)]
+    fn mask_select(self, mask: __m256d, if_true: __m256d, if_false: __m256d) -> __m256d {
+        avx_call!(self, |mask: __m256d,
+                         if_true: __m256d,
+                         if_false: __m256d|
+         -> __m256d {
+            _mm256_blendv_pd(if_false, if_true, mask)
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: __m256d, if_true: __m256d) -> __m256d {
+        avx_call!(self, |mask: __m256d, if_true: __m256d| -> __m256d {
+            _mm256_and_pd(mask, if_true)
+        })
+    }
+    #[inline(always)]
+    fn mask_zero_select(self, mask: __m256d, if_false: __m256d) -> __m256d {
+        avx_call!(self, |mask: __m256d, if_false: __m256d| -> __m256d {
+            _mm256_andnot_pd(mask, if_false)
+        })
+    }
+}
+
+impl ArithBackend<f64> for AvxDescriptor {
+    #[inline(always)]
+    fn add(self, a: __m256d, b: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d, b: __m256d| -> __m256d {
+            _mm256_add_pd(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sub(self, a: __m256d, b: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d, b: __m256d| -> __m256d {
+            _mm256_sub_pd(a, b)
+        })
+    }
+}
+
+impl MulBackend<f64> for AvxDescriptor {
+    #[inline(always)]
+    fn mul(self, a: __m256d, b: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d, b: __m256d| -> __m256d {
+            _mm256_mul_pd(a, b)
+        })
+    }
+}
+
+impl SignedBackend<f64> for AvxDescriptor {
+    #[inline(always)]
+    fn neg(self, a: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d| -> __m256d {
+            _mm256_xor_pd(_mm256_set1_pd(-0.0), a)
+        })
+    }
+    #[inline(always)]
+    fn abs(self, a: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d| -> __m256d {
+            _mm256_andnot_pd(_mm256_set1_pd(-0.0), a)
+        })
+    }
+    #[inline(always)]
+    fn lt_zero(self, a: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d| -> __m256d {
+            _mm256_cmp_pd::<_CMP_LT_OQ>(a, _mm256_setzero_pd())
+        })
+    }
+}
+
+impl FloatBackend<f64> for AvxDescriptor {
+    #[inline(always)]
+    fn div(self, a: __m256d, b: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d, b: __m256d| -> __m256d {
+            _mm256_div_pd(a, b)
+        })
+    }
+    #[inline(always)]
+    fn mul_add(self, a: __m256d, mul: __m256d, add: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d, mul: __m256d, add: __m256d| -> __m256d {
+            _mm256_fmadd_pd(a, mul, add)
+        })
+    }
+    #[inline(always)]
+    fn neg_mul_add(self, a: __m256d, mul: __m256d, add: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d, mul: __m256d, add: __m256d| -> __m256d {
+            _mm256_fnmadd_pd(a, mul, add)
+        })
+    }
+    #[inline(always)]
+    fn sqrt(self, a: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d| -> __m256d { _mm256_sqrt_pd(a) })
+    }
+    #[inline(always)]
+    fn floor(self, a: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d| -> __m256d { _mm256_floor_pd(a) })
+    }
+    #[inline(always)]
+    fn ceil(self, a: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d| -> __m256d { _mm256_ceil_pd(a) })
+    }
+    #[inline(always)]
+    fn round(self, a: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d| -> __m256d {
+            _mm256_round_pd::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(a)
+        })
+    }
+    #[inline(always)]
+    fn trunc(self, a: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d| -> __m256d {
+            _mm256_round_pd::<{ _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC }>(a)
+        })
+    }
+    #[inline(always)]
+    fn copysign(self, a: __m256d, sign: __m256d) -> __m256d {
+        avx_call!(self, |a: __m256d, sign: __m256d| -> __m256d {
+            let m = _mm256_set1_pd(-0.0);
+            _mm256_or_pd(_mm256_andnot_pd(m, a), _mm256_and_pd(m, sign))
+        })
+    }
+}
+
+impl LaneBackend<i8> for AvxDescriptor {
+    type Raw = __m256i;
+    type Array = [i8; 32];
+
+    #[inline(always)]
+    fn zero(self) -> __m256i {
+        avx_call!(self, || -> __m256i { _mm256_setzero_si256() })
+    }
+    #[inline(always)]
+    fn splat(self, v: i8) -> __m256i {
+        avx_call!(self, |v: i8| -> __m256i { _mm256_set1_epi8(v) })
+    }
+    #[inline(always)]
+    fn extract_lane0(self, a: __m256i) -> i8 {
+        avx_call!(self, |a: __m256i| -> i8 {
+            _mm_cvtsi128_si32(_mm256_castsi256_si128(a)) as i8
+        })
+    }
+    #[inline(always)]
+    fn load(self, mem: &[i8]) -> __m256i {
+        let chunk: &[i8; 32] = mem.first_chunk::<32>().unwrap();
+        avx_call!(self, |chunk: &[i8; 32]| -> __m256i {
+            arch_ops::_mm256_loadu_si256_i8(chunk)
+        })
+    }
+    #[inline(always)]
+    fn store(self, a: __m256i, dest: &mut [i8]) {
+        let chunk: &mut [i8; 32] = dest.first_chunk_mut::<32>().unwrap();
+        avx_call!(self, |chunk: &mut [i8; 32], a: __m256i| {
+            arch_ops::_mm256_storeu_si256_i8(chunk, a)
+        });
+    }
+    #[inline(always)]
+    fn load_array(self, mem: &[i8; 32]) -> __m256i {
+        avx_call!(self, |mem: &[i8; 32]| -> __m256i {
+            arch_ops::_mm256_loadu_si256_i8(mem)
+        })
+    }
+    #[inline(always)]
+    fn store_array(self, a: __m256i, dest: &mut [i8; 32]) {
+        avx_call!(self, |dest: &mut [i8; 32], a: __m256i| {
+            arch_ops::_mm256_storeu_si256_i8(dest, a)
+        });
+    }
+    #[inline(always)]
+    fn zero_array() -> [i8; 32] {
+        [i8::ZERO; 32]
+    }
+    #[inline(always)]
+    fn slice_as_array(slice: &[i8]) -> &[[i8; 32]] {
+        generic_ops::chunks(slice)
+    }
+    #[inline(always)]
+    fn slice_as_array_mut(slice: &mut [i8]) -> &mut [[i8; 32]] {
+        generic_ops::chunks_mut(slice)
+    }
+    #[inline(always)]
+    fn to_raw_bytes(self, a: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i| -> __m256i { a })
+    }
+    #[inline(always)]
+    fn from_raw_bytes(self, a: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i| -> __m256i { a })
+    }
+    #[inline(always)]
+    fn interleave_lo(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_unpacklo_epi8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn interleave_hi(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_unpackhi_epi8(a, b)
+        })
+    }
+}
+
+impl crate::SimdVec<i8, AvxDescriptor> {
+    /// Returns the underlying native SIMD register.
+    #[inline(always)]
+    pub fn raw(self) -> __m256i {
+        self.0
+    }
+
+    /// Wraps a native SIMD register with its descriptor token.
+    #[inline(always)]
+    pub fn from_raw(d: AvxDescriptor, raw: __m256i) -> Self {
+        Self(raw, d)
+    }
+}
+
+impl CompareBackend<i8> for AvxDescriptor {
+    #[inline(always)]
+    fn eq(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_cmpeq_epi8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn gt(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_cmpgt_epi8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn eq_zero(self, a: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i| -> __m256i {
+            _mm256_cmpeq_epi8(a, _mm256_setzero_si256())
+        })
+    }
+    #[inline(always)]
+    fn min(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_min_epi8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn max(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_max_epi8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn mask_select(self, mask: __m256i, if_true: __m256i, if_false: __m256i) -> __m256i {
+        avx_call!(self, |mask: __m256i,
+                         if_true: __m256i,
+                         if_false: __m256i|
+         -> __m256i {
+            _mm256_blendv_epi8(if_false, if_true, mask)
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: __m256i, if_true: __m256i) -> __m256i {
+        avx_call!(self, |mask: __m256i, if_true: __m256i| -> __m256i {
+            _mm256_and_si256(mask, if_true)
+        })
+    }
+    #[inline(always)]
+    fn mask_zero_select(self, mask: __m256i, if_false: __m256i) -> __m256i {
+        avx_call!(self, |mask: __m256i, if_false: __m256i| -> __m256i {
+            _mm256_andnot_si256(mask, if_false)
+        })
+    }
+}
+
+impl ArithBackend<i8> for AvxDescriptor {
+    #[inline(always)]
+    fn add(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_add_epi8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sub(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_sub_epi8(a, b)
+        })
+    }
+}
+
+impl MulBackend<i8> for AvxDescriptor {
+    #[inline(always)]
+    fn mul(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            let lo = _mm256_and_si256(_mm256_mullo_epi16(a, b), _mm256_set1_epi16(0x00FF));
+            let hi = _mm256_slli_epi16::<8>(_mm256_mullo_epi16(
+                _mm256_srli_epi16::<8>(a),
+                _mm256_srli_epi16::<8>(b),
+            ));
+            _mm256_or_si256(lo, hi)
+        })
+    }
+}
+
+impl SignedBackend<i8> for AvxDescriptor {
+    #[inline(always)]
+    fn neg(self, a: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i| -> __m256i {
+            _mm256_sub_epi8(_mm256_setzero_si256(), a)
+        })
+    }
+    #[inline(always)]
+    fn abs(self, a: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i| -> __m256i { _mm256_abs_epi8(a) })
+    }
+    #[inline(always)]
+    fn lt_zero(self, a: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i| -> __m256i {
+            _mm256_cmpgt_epi8(_mm256_setzero_si256(), a)
+        })
+    }
+}
+
+impl IntBitBackend<i8> for AvxDescriptor {
+    #[inline(always)]
+    fn bit_and(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_and_si256(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_or(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_or_si256(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_xor(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_xor_si256(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_not(self, a: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i| -> __m256i {
+            _mm256_xor_si256(a, _mm256_set1_epi32(-1))
+        })
+    }
+    #[inline(always)]
+    fn andnot(self, not_a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |not_a: __m256i, b: __m256i| -> __m256i {
+            _mm256_andnot_si256(not_a, b)
+        })
+    }
+    #[inline(always)]
+    fn shl<const AMOUNT: u32>(self, a: __m256i) -> __m256i {
+        avx_shift!(self, AMOUNT, |a: __m256i| -> __m256i {
+            _mm256_and_si256(
+                _mm256_sll_epi16(a, _mm_cvtsi64_si128(AMOUNT as i64)),
+                _mm256_set1_epi8((0xFFu8.checked_shl(AMOUNT).unwrap_or(0)) as i8),
+            )
+        })
+    }
+    #[inline(always)]
+    fn shr<const AMOUNT: u32>(self, a: __m256i) -> __m256i {
+        avx_shift!(self, AMOUNT, |a: __m256i| -> __m256i {
+            let b = _mm256_set1_epi8(-128);
+            _mm256_sub_epi8(
+                _mm256_and_si256(
+                    _mm256_srl_epi16(_mm256_xor_si256(a, b), _mm_cvtsi64_si128(AMOUNT as i64)),
+                    _mm256_set1_epi8((0xFFu8.checked_shr(AMOUNT).unwrap_or(0)) as i8),
+                ),
+                _mm256_set1_epi8((0x80u8.checked_shr(AMOUNT).unwrap_or(0)) as i8),
+            )
+        })
+    }
+}
+
+impl SatBackend<i8> for AvxDescriptor {
+    #[inline(always)]
+    fn sat_add(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_adds_epi8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_subs_epi8(a, b)
         })
     }
 }
@@ -586,6 +1105,12 @@ impl CompareBackend<u8> for AvxDescriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: __m256i, if_true: __m256i) -> __m256i {
+        avx_call!(self, |mask: __m256i, if_true: __m256i| -> __m256i {
+            _mm256_and_si256(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: __m256i, if_false: __m256i) -> __m256i {
         avx_call!(self, |mask: __m256i, if_false: __m256i| -> __m256i {
             _mm256_andnot_si256(mask, if_false)
@@ -669,6 +1194,21 @@ impl IntBitBackend<u8> for AvxDescriptor {
                 _mm256_srl_epi16(a, _mm_cvtsi64_si128(AMOUNT as i64)),
                 _mm256_set1_epi8((0xFFu8.checked_shr(AMOUNT).unwrap_or(0)) as i8),
             )
+        })
+    }
+}
+
+impl SatBackend<u8> for AvxDescriptor {
+    #[inline(always)]
+    fn sat_add(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_adds_epu8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_subs_epu8(a, b)
         })
     }
 }
@@ -806,6 +1346,12 @@ impl CompareBackend<i16> for AvxDescriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: __m256i, if_true: __m256i) -> __m256i {
+        avx_call!(self, |mask: __m256i, if_true: __m256i| -> __m256i {
+            _mm256_and_si256(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: __m256i, if_false: __m256i) -> __m256i {
         avx_call!(self, |mask: __m256i, if_false: __m256i| -> __m256i {
             _mm256_andnot_si256(mask, if_false)
@@ -897,6 +1443,21 @@ impl IntBitBackend<i16> for AvxDescriptor {
     fn shr<const AMOUNT: u32>(self, a: __m256i) -> __m256i {
         avx_shift!(self, AMOUNT, |a: __m256i| -> __m256i {
             _mm256_sra_epi16(a, _mm_cvtsi64_si128(AMOUNT as i64))
+        })
+    }
+}
+
+impl SatBackend<i16> for AvxDescriptor {
+    #[inline(always)]
+    fn sat_add(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_adds_epi16(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_subs_epi16(a, b)
         })
     }
 }
@@ -1035,6 +1596,12 @@ impl CompareBackend<u16> for AvxDescriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: __m256i, if_true: __m256i) -> __m256i {
+        avx_call!(self, |mask: __m256i, if_true: __m256i| -> __m256i {
+            _mm256_and_si256(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: __m256i, if_false: __m256i) -> __m256i {
         avx_call!(self, |mask: __m256i, if_false: __m256i| -> __m256i {
             _mm256_andnot_si256(mask, if_false)
@@ -1107,6 +1674,21 @@ impl IntBitBackend<u16> for AvxDescriptor {
     fn shr<const AMOUNT: u32>(self, a: __m256i) -> __m256i {
         avx_shift!(self, AMOUNT, |a: __m256i| -> __m256i {
             _mm256_srl_epi16(a, _mm_cvtsi64_si128(AMOUNT as i64))
+        })
+    }
+}
+
+impl SatBackend<u16> for AvxDescriptor {
+    #[inline(always)]
+    fn sat_add(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_adds_epu16(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_subs_epu16(a, b)
         })
     }
 }
@@ -1244,6 +1826,12 @@ impl CompareBackend<i32> for AvxDescriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: __m256, if_true: __m256i) -> __m256i {
+        avx_call!(self, |mask: __m256, if_true: __m256i| -> __m256i {
+            _mm256_and_si256(_mm256_castps_si256(mask), if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: __m256, if_false: __m256i) -> __m256i {
         avx_call!(self, |mask: __m256, if_false: __m256i| -> __m256i {
             _mm256_andnot_si256(_mm256_castps_si256(mask), if_false)
@@ -1335,6 +1923,18 @@ impl IntBitBackend<i32> for AvxDescriptor {
     fn shr<const AMOUNT: u32>(self, a: __m256i) -> __m256i {
         avx_shift!(self, AMOUNT, |a: __m256i| -> __m256i {
             _mm256_sra_epi32(a, _mm_cvtsi64_si128(AMOUNT as i64))
+        })
+    }
+    #[inline(always)]
+    fn shl_vec(self, a: __m256i, counts: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, counts: __m256i| -> __m256i {
+            _mm256_sllv_epi32(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn shr_vec(self, a: __m256i, counts: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, counts: __m256i| -> __m256i {
+            _mm256_srav_epi32(a, counts)
         })
     }
 }
@@ -1476,6 +2076,12 @@ impl CompareBackend<u32> for AvxDescriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: __m256, if_true: __m256i) -> __m256i {
+        avx_call!(self, |mask: __m256, if_true: __m256i| -> __m256i {
+            _mm256_and_si256(_mm256_castps_si256(mask), if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: __m256, if_false: __m256i) -> __m256i {
         avx_call!(self, |mask: __m256, if_false: __m256i| -> __m256i {
             _mm256_andnot_si256(_mm256_castps_si256(mask), if_false)
@@ -1548,6 +2154,282 @@ impl IntBitBackend<u32> for AvxDescriptor {
     fn shr<const AMOUNT: u32>(self, a: __m256i) -> __m256i {
         avx_shift!(self, AMOUNT, |a: __m256i| -> __m256i {
             _mm256_srl_epi32(a, _mm_cvtsi64_si128(AMOUNT as i64))
+        })
+    }
+    #[inline(always)]
+    fn shl_vec(self, a: __m256i, counts: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, counts: __m256i| -> __m256i {
+            _mm256_sllv_epi32(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn shr_vec(self, a: __m256i, counts: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, counts: __m256i| -> __m256i {
+            _mm256_srlv_epi32(a, counts)
+        })
+    }
+}
+
+impl LaneBackend<i64> for AvxDescriptor {
+    type Raw = __m256i;
+    type Array = [i64; 4];
+
+    #[inline(always)]
+    fn zero(self) -> __m256i {
+        avx_call!(self, || -> __m256i { _mm256_setzero_si256() })
+    }
+    #[inline(always)]
+    fn splat(self, v: i64) -> __m256i {
+        avx_call!(self, |v: i64| -> __m256i { _mm256_set1_epi64x(v) })
+    }
+    #[inline(always)]
+    fn extract_lane0(self, a: __m256i) -> i64 {
+        avx_call!(self, |a: __m256i| -> i64 {
+            _mm_cvtsi128_si64(_mm256_castsi256_si128(a)) as i64
+        })
+    }
+    #[inline(always)]
+    fn load(self, mem: &[i64]) -> __m256i {
+        let chunk: &[i64; 4] = mem.first_chunk::<4>().unwrap();
+        avx_call!(self, |chunk: &[i64; 4]| -> __m256i {
+            arch_ops::_mm256_loadu_si256_i64(chunk)
+        })
+    }
+    #[inline(always)]
+    fn store(self, a: __m256i, dest: &mut [i64]) {
+        let chunk: &mut [i64; 4] = dest.first_chunk_mut::<4>().unwrap();
+        avx_call!(self, |chunk: &mut [i64; 4], a: __m256i| {
+            arch_ops::_mm256_storeu_si256_i64(chunk, a)
+        });
+    }
+    #[inline(always)]
+    fn load_array(self, mem: &[i64; 4]) -> __m256i {
+        avx_call!(self, |mem: &[i64; 4]| -> __m256i {
+            arch_ops::_mm256_loadu_si256_i64(mem)
+        })
+    }
+    #[inline(always)]
+    fn store_array(self, a: __m256i, dest: &mut [i64; 4]) {
+        avx_call!(self, |dest: &mut [i64; 4], a: __m256i| {
+            arch_ops::_mm256_storeu_si256_i64(dest, a)
+        });
+    }
+    #[inline(always)]
+    fn zero_array() -> [i64; 4] {
+        [i64::ZERO; 4]
+    }
+    #[inline(always)]
+    fn slice_as_array(slice: &[i64]) -> &[[i64; 4]] {
+        generic_ops::chunks(slice)
+    }
+    #[inline(always)]
+    fn slice_as_array_mut(slice: &mut [i64]) -> &mut [[i64; 4]] {
+        generic_ops::chunks_mut(slice)
+    }
+    #[inline(always)]
+    fn to_raw_bytes(self, a: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i| -> __m256i { a })
+    }
+    #[inline(always)]
+    fn from_raw_bytes(self, a: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i| -> __m256i { a })
+    }
+    #[inline(always)]
+    fn interleave_lo(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_unpacklo_epi64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn interleave_hi(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_unpackhi_epi64(a, b)
+        })
+    }
+}
+
+impl crate::SimdVec<i64, AvxDescriptor> {
+    /// Returns the underlying native SIMD register.
+    #[inline(always)]
+    pub fn raw(self) -> __m256i {
+        self.0
+    }
+
+    /// Wraps a native SIMD register with its descriptor token.
+    #[inline(always)]
+    pub fn from_raw(d: AvxDescriptor, raw: __m256i) -> Self {
+        Self(raw, d)
+    }
+}
+
+impl CompareBackend<i64> for AvxDescriptor {
+    #[inline(always)]
+    fn eq(self, a: __m256i, b: __m256i) -> __m256d {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256d {
+            _mm256_castsi256_pd(_mm256_cmpeq_epi64(a, b))
+        })
+    }
+    #[inline(always)]
+    fn gt(self, a: __m256i, b: __m256i) -> __m256d {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256d {
+            _mm256_castsi256_pd(_mm256_cmpgt_epi64(a, b))
+        })
+    }
+    #[inline(always)]
+    fn eq_zero(self, a: __m256i) -> __m256d {
+        avx_call!(self, |a: __m256i| -> __m256d {
+            _mm256_castsi256_pd(_mm256_cmpeq_epi64(a, _mm256_setzero_si256()))
+        })
+    }
+    #[inline(always)]
+    fn min(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_blendv_epi8(a, b, _mm256_cmpgt_epi64(a, b))
+        })
+    }
+    #[inline(always)]
+    fn max(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_blendv_epi8(b, a, _mm256_cmpgt_epi64(a, b))
+        })
+    }
+    #[inline(always)]
+    fn mask_select(self, mask: __m256d, if_true: __m256i, if_false: __m256i) -> __m256i {
+        avx_call!(self, |mask: __m256d,
+                         if_true: __m256i,
+                         if_false: __m256i|
+         -> __m256i {
+            _mm256_blendv_epi8(if_false, if_true, _mm256_castpd_si256(mask))
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: __m256d, if_true: __m256i) -> __m256i {
+        avx_call!(self, |mask: __m256d, if_true: __m256i| -> __m256i {
+            _mm256_and_si256(_mm256_castpd_si256(mask), if_true)
+        })
+    }
+    #[inline(always)]
+    fn mask_zero_select(self, mask: __m256d, if_false: __m256i) -> __m256i {
+        avx_call!(self, |mask: __m256d, if_false: __m256i| -> __m256i {
+            _mm256_andnot_si256(_mm256_castpd_si256(mask), if_false)
+        })
+    }
+}
+
+impl ArithBackend<i64> for AvxDescriptor {
+    #[inline(always)]
+    fn add(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_add_epi64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sub(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_sub_epi64(a, b)
+        })
+    }
+}
+
+impl MulBackend<i64> for AvxDescriptor {
+    #[inline(always)]
+    fn mul(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            let lo = _mm256_mul_epu32(a, b);
+            let hi = _mm256_add_epi64(
+                _mm256_mul_epu32(_mm256_srli_epi64::<32>(a), b),
+                _mm256_mul_epu32(a, _mm256_srli_epi64::<32>(b)),
+            );
+            _mm256_add_epi64(lo, _mm256_slli_epi64::<32>(hi))
+        })
+    }
+}
+
+impl SignedBackend<i64> for AvxDescriptor {
+    #[inline(always)]
+    fn neg(self, a: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i| -> __m256i {
+            _mm256_sub_epi64(_mm256_setzero_si256(), a)
+        })
+    }
+    #[inline(always)]
+    fn abs(self, a: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i| -> __m256i {
+            let n = _mm256_sub_epi64(_mm256_setzero_si256(), a);
+            _mm256_blendv_epi8(a, n, _mm256_cmpgt_epi64(_mm256_setzero_si256(), a))
+        })
+    }
+    #[inline(always)]
+    fn lt_zero(self, a: __m256i) -> __m256d {
+        avx_call!(self, |a: __m256i| -> __m256d {
+            _mm256_castsi256_pd(_mm256_cmpgt_epi64(_mm256_setzero_si256(), a))
+        })
+    }
+}
+
+impl IntBitBackend<i64> for AvxDescriptor {
+    #[inline(always)]
+    fn bit_and(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_and_si256(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_or(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_or_si256(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_xor(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_xor_si256(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_not(self, a: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i| -> __m256i {
+            _mm256_xor_si256(a, _mm256_set1_epi32(-1))
+        })
+    }
+    #[inline(always)]
+    fn andnot(self, not_a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |not_a: __m256i, b: __m256i| -> __m256i {
+            _mm256_andnot_si256(not_a, b)
+        })
+    }
+    #[inline(always)]
+    fn shl<const AMOUNT: u32>(self, a: __m256i) -> __m256i {
+        avx_shift!(self, AMOUNT, |a: __m256i| -> __m256i {
+            _mm256_sll_epi64(a, _mm_cvtsi64_si128(AMOUNT as i64))
+        })
+    }
+    #[inline(always)]
+    fn shr<const AMOUNT: u32>(self, a: __m256i) -> __m256i {
+        avx_shift!(self, AMOUNT, |a: __m256i| -> __m256i {
+            let b = _mm256_set1_epi64x(i64::MIN);
+            _mm256_sub_epi64(
+                _mm256_srl_epi64(_mm256_xor_si256(a, b), _mm_cvtsi64_si128(AMOUNT as i64)),
+                _mm256_set1_epi64x(
+                    (0x8000_0000_0000_0000u64.checked_shr(AMOUNT).unwrap_or(0)) as i64,
+                ),
+            )
+        })
+    }
+    #[inline(always)]
+    fn shl_vec(self, a: __m256i, counts: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, counts: __m256i| -> __m256i {
+            _mm256_sllv_epi64(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn shr_vec(self, a: __m256i, counts: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, counts: __m256i| -> __m256i {
+            let b = _mm256_set1_epi64x(i64::MIN);
+            _mm256_sub_epi64(
+                _mm256_srlv_epi64(_mm256_xor_si256(a, b), counts),
+                _mm256_srlv_epi64(b, counts),
+            )
         })
     }
 }
@@ -1699,6 +2581,12 @@ impl CompareBackend<u64> for AvxDescriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: __m256d, if_true: __m256i) -> __m256i {
+        avx_call!(self, |mask: __m256d, if_true: __m256i| -> __m256i {
+            _mm256_and_si256(_mm256_castpd_si256(mask), if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: __m256d, if_false: __m256i) -> __m256i {
         avx_call!(self, |mask: __m256d, if_false: __m256i| -> __m256i {
             _mm256_andnot_si256(_mm256_castpd_si256(mask), if_false)
@@ -1778,6 +2666,18 @@ impl IntBitBackend<u64> for AvxDescriptor {
             _mm256_srl_epi64(a, _mm_cvtsi64_si128(AMOUNT as i64))
         })
     }
+    #[inline(always)]
+    fn shl_vec(self, a: __m256i, counts: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, counts: __m256i| -> __m256i {
+            _mm256_sllv_epi64(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn shr_vec(self, a: __m256i, counts: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, counts: __m256i| -> __m256i {
+            _mm256_srlv_epi64(a, counts)
+        })
+    }
 }
 
 impl F32ExtraBackend for AvxDescriptor {
@@ -1817,6 +2717,41 @@ impl F32ExtraBackend for AvxDescriptor {
                 _mm256_cvtps_ph::<{ _MM_FROUND_TO_NEAREST_INT }>(a),
             );
         });
+    }
+}
+
+impl F64ExtraBackend for AvxDescriptor {
+    #[inline(always)]
+    fn f64_as_i64(self, a: __m256d) -> __m256i {
+        generic_ops::f64_as_i64_sw(self, a)
+    }
+    #[inline(always)]
+    fn f64_from_f32_lo(self, a: __m256) -> __m256d {
+        avx_call!(self, |a: __m256| -> __m256d {
+            _mm256_cvtps_pd(_mm256_castps256_ps128(a))
+        })
+    }
+    #[inline(always)]
+    fn f64_from_f32_hi(self, a: __m256) -> __m256d {
+        avx_call!(self, |a: __m256| -> __m256d {
+            _mm256_cvtps_pd(_mm256_extractf128_ps::<1>(a))
+        })
+    }
+    #[inline(always)]
+    fn f64_to_f32(self, lo: __m256d, hi: __m256d) -> __m256 {
+        avx_call!(self, |lo: __m256d, hi: __m256d| -> __m256 {
+            _mm256_insertf128_ps::<1>(
+                _mm256_castps128_ps256(_mm256_cvtpd_ps(lo)),
+                _mm256_cvtpd_ps(hi),
+            )
+        })
+    }
+}
+
+impl I64ExtraBackend for AvxDescriptor {
+    #[inline(always)]
+    fn i64_as_f64(self, a: __m256i) -> __m256d {
+        generic_ops::i64_as_f64_sw(self, a)
     }
 }
 

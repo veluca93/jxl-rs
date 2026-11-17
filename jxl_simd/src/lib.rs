@@ -393,8 +393,14 @@ pub trait MulElement: ArithElement + sealed::MulElement {}
 pub trait SignedElement: ComparableElement + ArithElement + sealed::SignedElement {}
 /// Marker trait for floating-point elements supporting division, FMA, `sqrt`, rounding, and `copysign`.
 pub trait FloatElement: SignedElement + MulElement + sealed::FloatElement {}
-/// Marker trait for integer elements supporting bitwise logic and shifts.
+/// Marker trait for integer elements supporting bitwise logic, shifts, and bit counting.
 pub trait IntElement: ComparableElement + ArithElement + MulElement + sealed::IntElement {}
+/// Marker trait for integer elements supporting saturating addition and subtraction.
+pub trait SatElement: IntElement + sealed::SatElement {}
+/// Marker trait for element pairs supporting widening promotion (`promote_lo` / `promote_hi`).
+pub trait PromoteTo<W: SimdElement>: SimdElement + sealed::PromoteElement<W> {}
+/// Marker trait for element pairs supporting narrowing demotion (`demote_to`).
+pub trait DemoteTo<N: SimdElement>: SimdElement + sealed::DemoteElement<N> {}
 
 macro_rules! impl_public_marker {
     ($tr:ident: $($t:ty),* $(,)?) => {
@@ -402,13 +408,43 @@ macro_rules! impl_public_marker {
     };
 }
 
-impl_public_marker!(SimdElement: f32, u8, i16, u16, i32, u32, u64);
-impl_public_marker!(ComparableElement: f32, u8, i16, u16, i32, u32, u64);
-impl_public_marker!(ArithElement: f32, u8, i16, u16, i32, u32, u64);
-impl_public_marker!(MulElement: f32, u8, i16, u16, i32, u32, u64);
-impl_public_marker!(SignedElement: f32, i16, i32);
-impl_public_marker!(FloatElement: f32);
-impl_public_marker!(IntElement: u8, i16, u16, i32, u32, u64);
+impl_public_marker!(SimdElement: f32, f64, i8, u8, i16, u16, i32, u32, i64, u64);
+impl_public_marker!(ComparableElement: f32, f64, i8, u8, i16, u16, i32, u32, i64, u64);
+impl_public_marker!(ArithElement: f32, f64, i8, u8, i16, u16, i32, u32, i64, u64);
+impl_public_marker!(MulElement: f32, f64, i8, u8, i16, u16, i32, u32, i64, u64);
+impl_public_marker!(SignedElement: f32, f64, i8, i16, i32, i64);
+impl_public_marker!(FloatElement: f32, f64);
+impl_public_marker!(IntElement: i8, u8, i16, u16, i32, u32, i64, u64);
+impl_public_marker!(SatElement: i8, u8, i16, u16);
+
+macro_rules! impl_pair_marker {
+    ($tr:ident: $(($a:ty, $b:ty)),* $(,)?) => {
+        $(impl $tr<$b> for $a {})*
+    };
+}
+impl_pair_marker!(
+    PromoteTo: (f32, f64),
+    (i8, i16),
+    (u8, u16),
+    (u8, i16),
+    (i16, i32),
+    (u16, u32),
+    (u16, i32),
+    (i32, i64),
+    (u32, u64),
+    (u32, i64)
+);
+impl_pair_marker!(
+    DemoteTo: (f64, f32),
+    (i16, i8),
+    (i16, u8),
+    (u16, u8),
+    (i32, i16),
+    (i32, u16),
+    (u32, u16),
+    (i64, i32),
+    (u64, u32)
+);
 
 /// Generic SIMD vector of element type `T` for descriptor `D`.
 #[derive(Clone, Copy, Debug)]
@@ -424,18 +460,24 @@ pub struct Bf16Table8<D: SimdDescriptor>(pub(crate) D::RawBf16Table8, pub(crate)
 
 pub type SimdVecArray<T, D> = <T as sealed::Element>::Array<D>;
 pub type F32Vec<D> = SimdVec<f32, D>;
+pub type F64Vec<D> = SimdVec<f64, D>;
+pub type I8Vec<D> = SimdVec<i8, D>;
 pub type U8Vec<D> = SimdVec<u8, D>;
 pub type I16Vec<D> = SimdVec<i16, D>;
 pub type U16Vec<D> = SimdVec<u16, D>;
 pub type I32Vec<D> = SimdVec<i32, D>;
 pub type U32Vec<D> = SimdVec<u32, D>;
+pub type I64Vec<D> = SimdVec<i64, D>;
 pub type U64Vec<D> = SimdVec<u64, D>;
 pub type F32VecArray<D> = SimdVecArray<f32, D>;
+pub type F64VecArray<D> = SimdVecArray<f64, D>;
+pub type I8VecArray<D> = SimdVecArray<i8, D>;
 pub type U8VecArray<D> = SimdVecArray<u8, D>;
 pub type I16VecArray<D> = SimdVecArray<i16, D>;
 pub type U16VecArray<D> = SimdVecArray<u16, D>;
 pub type I32VecArray<D> = SimdVecArray<i32, D>;
 pub type U32VecArray<D> = SimdVecArray<u32, D>;
+pub type I64VecArray<D> = SimdVecArray<i64, D>;
 pub type U64VecArray<D> = SimdVecArray<u64, D>;
 pub type Mask8<D> = SimdMask<W8, D>;
 pub type Mask16<D> = SimdMask<W16, D>;
@@ -667,6 +709,14 @@ impl<W: MaskWidth, D: SimdDescriptor> SimdMask<W, D> {
         )
     }
 
+    #[inline(always)]
+    pub fn if_then_else_zero<T: ComparableElement<Mask = W>>(
+        self,
+        if_true: SimdVec<T, D>,
+    ) -> SimdVec<T, D> {
+        SimdVec(T::mask_select_zero(self.1, self.0, if_true.0), self.1)
+    }
+
     /// Returns `if_false` where mask is false and zero where mask is true.
     #[inline(always)]
     pub fn if_then_zero_else<T: ComparableElement<Mask = W>>(
@@ -854,6 +904,54 @@ impl<T: SimdElement, D: SimdDescriptor> SimdVec<T, D> {
     pub fn store_interleaved_4(a: Self, b: Self, c: Self, d: Self, dest: &mut [T]) {
         T::store_interleaved_4(a.1, a.0, b.0, c.0, d.0, dest);
     }
+
+    /// Loads two deinterleaved vectors from `[a0, b0, a1, b1, ...]`.
+    #[inline(always)]
+    pub fn load_deinterleaved_2(d: D, src: &[T]) -> (Self, Self) {
+        let (a, b) = T::load_deinterleaved_2(d, src);
+        (Self(a, d), Self(b, d))
+    }
+
+    /// Loads three deinterleaved vectors from `[a0, b0, c0, ...]`.
+    #[inline(always)]
+    pub fn load_deinterleaved_3(d: D, src: &[T]) -> (Self, Self, Self) {
+        let (a, b, c) = T::load_deinterleaved_3(d, src);
+        (Self(a, d), Self(b, d), Self(c, d))
+    }
+
+    /// Loads four deinterleaved vectors from `[a0, b0, c0, d0, ...]`.
+    #[inline(always)]
+    pub fn load_deinterleaved_4(d: D, src: &[T]) -> (Self, Self, Self, Self) {
+        let (a, b, c, e) = T::load_deinterleaved_4(d, src);
+        (Self(a, d), Self(b, d), Self(c, d), Self(e, d))
+    }
+
+    /// Widens the lower half of lanes into `W`.
+    #[inline(always)]
+    pub fn promote_lo<W: SimdElement>(self) -> SimdVec<W, D>
+    where
+        T: PromoteTo<W>,
+    {
+        SimdVec(T::promote_lo(self.1, self.0), self.1)
+    }
+
+    /// Widens the upper half of lanes into `W`.
+    #[inline(always)]
+    pub fn promote_hi<W: SimdElement>(self) -> SimdVec<W, D>
+    where
+        T: PromoteTo<W>,
+    {
+        SimdVec(T::promote_hi(self.1, self.0), self.1)
+    }
+
+    /// Narrows two vectors `(self, hi)` into half-width element type `N`.
+    #[inline(always)]
+    pub fn demote_to<N: SimdElement>(self, hi: Self) -> SimdVec<N, D>
+    where
+        T: DemoteTo<N>,
+    {
+        SimdVec(T::demote_to(self.1, self.0, hi.0), self.1)
+    }
 }
 
 impl<T: ComparableElement, D: SimdDescriptor> SimdVec<T, D> {
@@ -868,6 +966,21 @@ impl<T: ComparableElement, D: SimdDescriptor> SimdVec<T, D> {
     #[inline(always)]
     pub fn gt(self, other: Self) -> SimdMask<T::Mask, D> {
         SimdMask(T::gt(self.1, self.0, other.0), self.1)
+    }
+
+    #[inline(always)]
+    pub fn lt(self, other: Self) -> SimdMask<T::Mask, D> {
+        other.gt(self)
+    }
+
+    #[inline(always)]
+    pub fn ge(self, other: Self) -> SimdMask<T::Mask, D> {
+        self.gt(other) | self.eq(other)
+    }
+
+    #[inline(always)]
+    pub fn le(self, other: Self) -> SimdMask<T::Mask, D> {
+        self.lt(other) | self.eq(other)
     }
 
     #[inline(always)]
@@ -887,6 +1000,12 @@ impl<T: ComparableElement, D: SimdDescriptor> SimdVec<T, D> {
 }
 
 impl<T: SignedElement, D: SimdDescriptor> SimdVec<T, D> {
+    #[allow(clippy::should_implement_trait)]
+    #[inline(always)]
+    pub fn neg(self) -> Self {
+        Self(T::neg(self.1, self.0), self.1)
+    }
+
     #[inline(always)]
     pub fn abs(self) -> Self {
         Self(T::abs(self.1, self.0), self.1)
@@ -899,6 +1018,12 @@ impl<T: SignedElement, D: SimdDescriptor> SimdVec<T, D> {
 }
 
 impl<T: FloatElement, D: SimdDescriptor> SimdVec<T, D> {
+    #[allow(clippy::should_implement_trait)]
+    #[inline(always)]
+    pub fn div(self, other: Self) -> Self {
+        Self(T::div(self.1, self.0, other.0), self.1)
+    }
+
     #[inline(always)]
     pub fn mul_add(self, mul: Self, add: Self) -> Self {
         Self(T::mul_add(self.1, self.0, mul.0, add.0), self.1)
@@ -931,6 +1056,11 @@ impl<T: FloatElement, D: SimdDescriptor> SimdVec<T, D> {
     }
 
     #[inline(always)]
+    pub fn trunc(self) -> Self {
+        Self(T::trunc(self.1, self.0), self.1)
+    }
+
+    #[inline(always)]
     pub fn copysign(self, sign: Self) -> Self {
         Self(T::copysign(self.1, self.0, sign.0), self.1)
     }
@@ -951,6 +1081,48 @@ impl<T: IntElement, D: SimdDescriptor> SimdVec<T, D> {
     #[inline(always)]
     pub fn shr<const AMOUNT: u32>(self) -> Self {
         Self(T::shr::<D, AMOUNT>(self.1, self.0), self.1)
+    }
+
+    /// Variable per-lane left shift (`0 <= count < T::BITS`).
+    #[inline(always)]
+    pub fn shl_vec(self, counts: Self) -> Self {
+        Self(T::shl_vec(self.1, self.0, counts.0), self.1)
+    }
+
+    /// Variable per-lane right shift (`0 <= count < T::BITS`).
+    #[inline(always)]
+    pub fn shr_vec(self, counts: Self) -> Self {
+        Self(T::shr_vec(self.1, self.0, counts.0), self.1)
+    }
+
+    /// Population count (`1` bits) per lane.
+    #[inline(always)]
+    pub fn count_ones(self) -> Self {
+        generic_ops::int_count_ones(self)
+    }
+
+    /// Leading zero bits per lane.
+    #[inline(always)]
+    pub fn leading_zeros(self) -> Self {
+        generic_ops::int_leading_zeros(self)
+    }
+
+    /// Trailing zero bits per lane.
+    #[inline(always)]
+    pub fn trailing_zeros(self) -> Self {
+        generic_ops::int_trailing_zeros(self)
+    }
+}
+
+impl<T: SatElement, D: SimdDescriptor> SimdVec<T, D> {
+    #[inline(always)]
+    pub fn sat_add(self, rhs: Self) -> Self {
+        Self(T::sat_add(self.1, self.0, rhs.0), self.1)
+    }
+
+    #[inline(always)]
+    pub fn sat_sub(self, rhs: Self) -> Self {
+        Self(T::sat_sub(self.1, self.0, rhs.0), self.1)
     }
 }
 
@@ -1005,6 +1177,20 @@ impl<D: SimdDescriptor> SimdVec<f32, D> {
     #[inline(always)]
     pub fn table_lookup_bf16_8(d: D, table: Bf16Table8<D>, indices: I32Vec<D>) -> Self {
         Self(d.table_lookup_bf16_8(table.0, indices.0), d)
+    }
+}
+
+impl<D: SimdDescriptor> SimdVec<f64, D> {
+    #[inline(always)]
+    pub fn as_i64(self) -> I64Vec<D> {
+        SimdVec(self.1.f64_as_i64(self.0), self.1)
+    }
+}
+
+impl<D: SimdDescriptor> SimdVec<i64, D> {
+    #[inline(always)]
+    pub fn as_f64(self) -> F64Vec<D> {
+        SimdVec(self.1.i64_as_f64(self.0), self.1)
     }
 }
 

@@ -13,8 +13,8 @@ use std::arch::wasm32::*;
 use super::{Simd128Descriptor, arch_ops, simd128_call, simd128_shift};
 use crate::sealed::{
     ArithBackend, BytesBackend, CompareBackend, DescriptorSealed, Element, F32ExtraBackend,
-    FloatBackend, I16ExtraBackend, I32ExtraBackend, IntBitBackend, LaneBackend, MaskBackend,
-    MulBackend, SignedBackend, U8ExtraBackend,
+    F64ExtraBackend, FloatBackend, I16ExtraBackend, I32ExtraBackend, I64ExtraBackend,
+    IntBitBackend, LaneBackend, MaskBackend, MulBackend, SatBackend, SignedBackend, U8ExtraBackend,
 };
 use crate::{W8, W16, W32, W64, generic_ops};
 
@@ -291,6 +291,12 @@ impl CompareBackend<f32> for Simd128Descriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: v128, if_true: v128) -> v128 {
+        simd128_call!(self, |mask: v128, if_true: v128| -> v128 {
+            v128_and(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: v128, if_false: v128) -> v128 {
         simd128_call!(self, |mask: v128, if_false: v128| -> v128 {
             v128_andnot(if_false, mask)
@@ -365,10 +371,437 @@ impl FloatBackend<f32> for Simd128Descriptor {
         simd128_call!(self, |a: v128| -> v128 { f32x4_nearest(a) })
     }
     #[inline(always)]
+    fn trunc(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { f32x4_trunc(a) })
+    }
+    #[inline(always)]
     fn copysign(self, a: v128, sign: v128) -> v128 {
         simd128_call!(self, |a: v128, sign: v128| -> v128 {
             v128_bitselect(sign, a, u32x4_splat(0x8000_0000))
         })
+    }
+}
+
+impl LaneBackend<f64> for Simd128Descriptor {
+    type Raw = v128;
+    type Array = [f64; 2];
+
+    #[inline(always)]
+    fn zero(self) -> v128 {
+        simd128_call!(self, || -> v128 { f64x2_splat(0.0) })
+    }
+    #[inline(always)]
+    fn splat(self, v: f64) -> v128 {
+        simd128_call!(self, |v: f64| -> v128 { f64x2_splat(v) })
+    }
+    #[inline(always)]
+    fn extract_lane0(self, a: v128) -> f64 {
+        simd128_call!(self, |a: v128| -> f64 { f64x2_extract_lane::<0>(a) })
+    }
+    #[inline(always)]
+    fn load(self, mem: &[f64]) -> v128 {
+        let chunk: &[f64; 2] = mem.first_chunk::<2>().unwrap();
+        simd128_call!(self, |chunk: &[f64; 2]| -> v128 {
+            arch_ops::v128_load_f64(chunk)
+        })
+    }
+    #[inline(always)]
+    fn store(self, a: v128, dest: &mut [f64]) {
+        let chunk: &mut [f64; 2] = dest.first_chunk_mut::<2>().unwrap();
+        simd128_call!(self, |chunk: &mut [f64; 2], a: v128| {
+            arch_ops::v128_store_f64(chunk, a)
+        });
+    }
+    #[inline(always)]
+    fn load_array(self, mem: &[f64; 2]) -> v128 {
+        simd128_call!(self, |mem: &[f64; 2]| -> v128 {
+            arch_ops::v128_load_f64(mem)
+        })
+    }
+    #[inline(always)]
+    fn store_array(self, a: v128, dest: &mut [f64; 2]) {
+        simd128_call!(self, |dest: &mut [f64; 2], a: v128| {
+            arch_ops::v128_store_f64(dest, a)
+        });
+    }
+    #[inline(always)]
+    fn zero_array() -> [f64; 2] {
+        [f64::ZERO; 2]
+    }
+    #[inline(always)]
+    fn slice_as_array(slice: &[f64]) -> &[[f64; 2]] {
+        generic_ops::chunks(slice)
+    }
+    #[inline(always)]
+    fn slice_as_array_mut(slice: &mut [f64]) -> &mut [[f64; 2]] {
+        generic_ops::chunks_mut(slice)
+    }
+    #[inline(always)]
+    fn to_raw_bytes(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { a })
+    }
+    #[inline(always)]
+    fn from_raw_bytes(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { a })
+    }
+    #[inline(always)]
+    fn interleave_lo(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 {
+            i64x2_shuffle::<0, 2>(a, b)
+        })
+    }
+    #[inline(always)]
+    fn interleave_hi(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 {
+            i64x2_shuffle::<1, 3>(a, b)
+        })
+    }
+}
+
+impl crate::SimdVec<f64, Simd128Descriptor> {
+    /// Returns the underlying native SIMD register.
+    #[inline(always)]
+    pub fn raw(self) -> v128 {
+        self.0
+    }
+
+    /// Wraps a native SIMD register with its descriptor token.
+    #[inline(always)]
+    pub fn from_raw(d: Simd128Descriptor, raw: v128) -> Self {
+        Self(raw, d)
+    }
+}
+
+impl CompareBackend<f64> for Simd128Descriptor {
+    #[inline(always)]
+    fn eq(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { f64x2_eq(a, b) })
+    }
+    #[inline(always)]
+    fn gt(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { f64x2_gt(a, b) })
+    }
+    #[inline(always)]
+    fn eq_zero(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { f64x2_eq(a, f64x2_splat(0.0)) })
+    }
+    #[inline(always)]
+    fn min(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { f64x2_min(a, b) })
+    }
+    #[inline(always)]
+    fn max(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { f64x2_max(a, b) })
+    }
+    #[inline(always)]
+    fn mask_select(self, mask: v128, if_true: v128, if_false: v128) -> v128 {
+        simd128_call!(self, |mask: v128, if_true: v128, if_false: v128| -> v128 {
+            v128_bitselect(if_true, if_false, mask)
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: v128, if_true: v128) -> v128 {
+        simd128_call!(self, |mask: v128, if_true: v128| -> v128 {
+            v128_and(mask, if_true)
+        })
+    }
+    #[inline(always)]
+    fn mask_zero_select(self, mask: v128, if_false: v128) -> v128 {
+        simd128_call!(self, |mask: v128, if_false: v128| -> v128 {
+            v128_andnot(if_false, mask)
+        })
+    }
+}
+
+impl ArithBackend<f64> for Simd128Descriptor {
+    #[inline(always)]
+    fn add(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { f64x2_add(a, b) })
+    }
+    #[inline(always)]
+    fn sub(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { f64x2_sub(a, b) })
+    }
+}
+
+impl MulBackend<f64> for Simd128Descriptor {
+    #[inline(always)]
+    fn mul(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { f64x2_mul(a, b) })
+    }
+}
+
+impl SignedBackend<f64> for Simd128Descriptor {
+    #[inline(always)]
+    fn neg(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { f64x2_neg(a) })
+    }
+    #[inline(always)]
+    fn abs(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { f64x2_abs(a) })
+    }
+    #[inline(always)]
+    fn lt_zero(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { f64x2_lt(a, f64x2_splat(0.0)) })
+    }
+}
+
+impl FloatBackend<f64> for Simd128Descriptor {
+    #[inline(always)]
+    fn div(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { f64x2_div(a, b) })
+    }
+    #[inline(always)]
+    fn mul_add(self, a: v128, mul: v128, add: v128) -> v128 {
+        simd128_call!(self, |a: v128, mul: v128, add: v128| -> v128 {
+            f64x2_add(f64x2_mul(a, mul), add)
+        })
+    }
+    #[inline(always)]
+    fn neg_mul_add(self, a: v128, mul: v128, add: v128) -> v128 {
+        simd128_call!(self, |a: v128, mul: v128, add: v128| -> v128 {
+            f64x2_sub(add, f64x2_mul(a, mul))
+        })
+    }
+    #[inline(always)]
+    fn sqrt(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { f64x2_sqrt(a) })
+    }
+    #[inline(always)]
+    fn floor(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { f64x2_floor(a) })
+    }
+    #[inline(always)]
+    fn ceil(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { f64x2_ceil(a) })
+    }
+    #[inline(always)]
+    fn round(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { f64x2_nearest(a) })
+    }
+    #[inline(always)]
+    fn trunc(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { f64x2_trunc(a) })
+    }
+    #[inline(always)]
+    fn copysign(self, a: v128, sign: v128) -> v128 {
+        simd128_call!(self, |a: v128, sign: v128| -> v128 {
+            v128_bitselect(sign, a, u64x2_splat(0x8000_0000_0000_0000))
+        })
+    }
+}
+
+impl LaneBackend<i8> for Simd128Descriptor {
+    type Raw = v128;
+    type Array = [i8; 16];
+
+    #[inline(always)]
+    fn zero(self) -> v128 {
+        simd128_call!(self, || -> v128 { i8x16_splat(0) })
+    }
+    #[inline(always)]
+    fn splat(self, v: i8) -> v128 {
+        simd128_call!(self, |v: i8| -> v128 { i8x16_splat(v) })
+    }
+    #[inline(always)]
+    fn extract_lane0(self, a: v128) -> i8 {
+        simd128_call!(self, |a: v128| -> i8 { i8x16_extract_lane::<0>(a) })
+    }
+    #[inline(always)]
+    fn load(self, mem: &[i8]) -> v128 {
+        let chunk: &[i8; 16] = mem.first_chunk::<16>().unwrap();
+        simd128_call!(self, |chunk: &[i8; 16]| -> v128 {
+            arch_ops::v128_load_i8(chunk)
+        })
+    }
+    #[inline(always)]
+    fn store(self, a: v128, dest: &mut [i8]) {
+        let chunk: &mut [i8; 16] = dest.first_chunk_mut::<16>().unwrap();
+        simd128_call!(self, |chunk: &mut [i8; 16], a: v128| {
+            arch_ops::v128_store_i8(chunk, a)
+        });
+    }
+    #[inline(always)]
+    fn load_array(self, mem: &[i8; 16]) -> v128 {
+        simd128_call!(self, |mem: &[i8; 16]| -> v128 {
+            arch_ops::v128_load_i8(mem)
+        })
+    }
+    #[inline(always)]
+    fn store_array(self, a: v128, dest: &mut [i8; 16]) {
+        simd128_call!(self, |dest: &mut [i8; 16], a: v128| {
+            arch_ops::v128_store_i8(dest, a)
+        });
+    }
+    #[inline(always)]
+    fn zero_array() -> [i8; 16] {
+        [i8::ZERO; 16]
+    }
+    #[inline(always)]
+    fn slice_as_array(slice: &[i8]) -> &[[i8; 16]] {
+        generic_ops::chunks(slice)
+    }
+    #[inline(always)]
+    fn slice_as_array_mut(slice: &mut [i8]) -> &mut [[i8; 16]] {
+        generic_ops::chunks_mut(slice)
+    }
+    #[inline(always)]
+    fn to_raw_bytes(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { a })
+    }
+    #[inline(always)]
+    fn from_raw_bytes(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { a })
+    }
+    #[inline(always)]
+    fn interleave_lo(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 {
+            i8x16_shuffle::<0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23>(a, b)
+        })
+    }
+    #[inline(always)]
+    fn interleave_hi(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 {
+            i8x16_shuffle::<8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31>(a, b)
+        })
+    }
+}
+
+impl crate::SimdVec<i8, Simd128Descriptor> {
+    /// Returns the underlying native SIMD register.
+    #[inline(always)]
+    pub fn raw(self) -> v128 {
+        self.0
+    }
+
+    /// Wraps a native SIMD register with its descriptor token.
+    #[inline(always)]
+    pub fn from_raw(d: Simd128Descriptor, raw: v128) -> Self {
+        Self(raw, d)
+    }
+}
+
+impl CompareBackend<i8> for Simd128Descriptor {
+    #[inline(always)]
+    fn eq(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { i8x16_eq(a, b) })
+    }
+    #[inline(always)]
+    fn gt(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { i8x16_gt(a, b) })
+    }
+    #[inline(always)]
+    fn eq_zero(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { i8x16_eq(a, i8x16_splat(0)) })
+    }
+    #[inline(always)]
+    fn min(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { i8x16_min(a, b) })
+    }
+    #[inline(always)]
+    fn max(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { i8x16_max(a, b) })
+    }
+    #[inline(always)]
+    fn mask_select(self, mask: v128, if_true: v128, if_false: v128) -> v128 {
+        simd128_call!(self, |mask: v128, if_true: v128, if_false: v128| -> v128 {
+            v128_bitselect(if_true, if_false, mask)
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: v128, if_true: v128) -> v128 {
+        simd128_call!(self, |mask: v128, if_true: v128| -> v128 {
+            v128_and(mask, if_true)
+        })
+    }
+    #[inline(always)]
+    fn mask_zero_select(self, mask: v128, if_false: v128) -> v128 {
+        simd128_call!(self, |mask: v128, if_false: v128| -> v128 {
+            v128_andnot(if_false, mask)
+        })
+    }
+}
+
+impl ArithBackend<i8> for Simd128Descriptor {
+    #[inline(always)]
+    fn add(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { i8x16_add(a, b) })
+    }
+    #[inline(always)]
+    fn sub(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { i8x16_sub(a, b) })
+    }
+}
+
+impl MulBackend<i8> for Simd128Descriptor {
+    #[inline(always)]
+    fn mul(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 {
+            v128_bitselect(
+                i16x8_shl(i16x8_mul(u16x8_shr(a, 8), u16x8_shr(b, 8)), 8),
+                i16x8_mul(a, b),
+                u16x8_splat(0xFF00),
+            )
+        })
+    }
+}
+
+impl SignedBackend<i8> for Simd128Descriptor {
+    #[inline(always)]
+    fn neg(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { i8x16_neg(a) })
+    }
+    #[inline(always)]
+    fn abs(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { i8x16_abs(a) })
+    }
+    #[inline(always)]
+    fn lt_zero(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { i8x16_lt(a, i8x16_splat(0)) })
+    }
+}
+
+impl IntBitBackend<i8> for Simd128Descriptor {
+    #[inline(always)]
+    fn bit_and(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { v128_and(a, b) })
+    }
+    #[inline(always)]
+    fn bit_or(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { v128_or(a, b) })
+    }
+    #[inline(always)]
+    fn bit_xor(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { v128_xor(a, b) })
+    }
+    #[inline(always)]
+    fn bit_not(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { v128_not(a) })
+    }
+    #[inline(always)]
+    fn andnot(self, not_a: v128, b: v128) -> v128 {
+        simd128_call!(self, |not_a: v128, b: v128| -> v128 {
+            v128_andnot(b, not_a)
+        })
+    }
+    #[inline(always)]
+    fn shl<const AMOUNT: u32>(self, a: v128) -> v128 {
+        simd128_shift!(self, AMOUNT, |a: v128| -> v128 { i8x16_shl(a, AMOUNT) })
+    }
+    #[inline(always)]
+    fn shr<const AMOUNT: u32>(self, a: v128) -> v128 {
+        simd128_shift!(self, AMOUNT, |a: v128| -> v128 { i8x16_shr(a, AMOUNT) })
+    }
+}
+
+impl SatBackend<i8> for Simd128Descriptor {
+    #[inline(always)]
+    fn sat_add(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { i8x16_add_sat(a, b) })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { i8x16_sub_sat(a, b) })
     }
 }
 
@@ -490,6 +923,12 @@ impl CompareBackend<u8> for Simd128Descriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: v128, if_true: v128) -> v128 {
+        simd128_call!(self, |mask: v128, if_true: v128| -> v128 {
+            v128_and(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: v128, if_false: v128) -> v128 {
         simd128_call!(self, |mask: v128, if_false: v128| -> v128 {
             v128_andnot(if_false, mask)
@@ -551,6 +990,17 @@ impl IntBitBackend<u8> for Simd128Descriptor {
     #[inline(always)]
     fn shr<const AMOUNT: u32>(self, a: v128) -> v128 {
         simd128_shift!(self, AMOUNT, |a: v128| -> v128 { u8x16_shr(a, AMOUNT) })
+    }
+}
+
+impl SatBackend<u8> for Simd128Descriptor {
+    #[inline(always)]
+    fn sat_add(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { u8x16_add_sat(a, b) })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { u8x16_sub_sat(a, b) })
     }
 }
 
@@ -672,6 +1122,12 @@ impl CompareBackend<i16> for Simd128Descriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: v128, if_true: v128) -> v128 {
+        simd128_call!(self, |mask: v128, if_true: v128| -> v128 {
+            v128_and(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: v128, if_false: v128) -> v128 {
         simd128_call!(self, |mask: v128, if_false: v128| -> v128 {
             v128_andnot(if_false, mask)
@@ -742,6 +1198,17 @@ impl IntBitBackend<i16> for Simd128Descriptor {
     #[inline(always)]
     fn shr<const AMOUNT: u32>(self, a: v128) -> v128 {
         simd128_shift!(self, AMOUNT, |a: v128| -> v128 { i16x8_shr(a, AMOUNT) })
+    }
+}
+
+impl SatBackend<i16> for Simd128Descriptor {
+    #[inline(always)]
+    fn sat_add(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { i16x8_add_sat(a, b) })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { i16x8_sub_sat(a, b) })
     }
 }
 
@@ -863,6 +1330,12 @@ impl CompareBackend<u16> for Simd128Descriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: v128, if_true: v128) -> v128 {
+        simd128_call!(self, |mask: v128, if_true: v128| -> v128 {
+            v128_and(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: v128, if_false: v128) -> v128 {
         simd128_call!(self, |mask: v128, if_false: v128| -> v128 {
             v128_andnot(if_false, mask)
@@ -918,6 +1391,17 @@ impl IntBitBackend<u16> for Simd128Descriptor {
     #[inline(always)]
     fn shr<const AMOUNT: u32>(self, a: v128) -> v128 {
         simd128_shift!(self, AMOUNT, |a: v128| -> v128 { u16x8_shr(a, AMOUNT) })
+    }
+}
+
+impl SatBackend<u16> for Simd128Descriptor {
+    #[inline(always)]
+    fn sat_add(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { u16x8_add_sat(a, b) })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { u16x8_sub_sat(a, b) })
     }
 }
 
@@ -1036,6 +1520,12 @@ impl CompareBackend<i32> for Simd128Descriptor {
     fn mask_select(self, mask: v128, if_true: v128, if_false: v128) -> v128 {
         simd128_call!(self, |mask: v128, if_true: v128, if_false: v128| -> v128 {
             v128_bitselect(if_true, if_false, mask)
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: v128, if_true: v128) -> v128 {
+        simd128_call!(self, |mask: v128, if_true: v128| -> v128 {
+            v128_and(mask, if_true)
         })
     }
     #[inline(always)]
@@ -1230,6 +1720,12 @@ impl CompareBackend<u32> for Simd128Descriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: v128, if_true: v128) -> v128 {
+        simd128_call!(self, |mask: v128, if_true: v128| -> v128 {
+            v128_and(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: v128, if_false: v128) -> v128 {
         simd128_call!(self, |mask: v128, if_false: v128| -> v128 {
             v128_andnot(if_false, mask)
@@ -1285,6 +1781,207 @@ impl IntBitBackend<u32> for Simd128Descriptor {
     #[inline(always)]
     fn shr<const AMOUNT: u32>(self, a: v128) -> v128 {
         simd128_shift!(self, AMOUNT, |a: v128| -> v128 { u32x4_shr(a, AMOUNT) })
+    }
+}
+
+impl LaneBackend<i64> for Simd128Descriptor {
+    type Raw = v128;
+    type Array = [i64; 2];
+
+    #[inline(always)]
+    fn zero(self) -> v128 {
+        simd128_call!(self, || -> v128 { i64x2_splat(0) })
+    }
+    #[inline(always)]
+    fn splat(self, v: i64) -> v128 {
+        simd128_call!(self, |v: i64| -> v128 { i64x2_splat(v) })
+    }
+    #[inline(always)]
+    fn extract_lane0(self, a: v128) -> i64 {
+        simd128_call!(self, |a: v128| -> i64 { i64x2_extract_lane::<0>(a) })
+    }
+    #[inline(always)]
+    fn load(self, mem: &[i64]) -> v128 {
+        let chunk: &[i64; 2] = mem.first_chunk::<2>().unwrap();
+        simd128_call!(self, |chunk: &[i64; 2]| -> v128 {
+            arch_ops::v128_load_i64(chunk)
+        })
+    }
+    #[inline(always)]
+    fn store(self, a: v128, dest: &mut [i64]) {
+        let chunk: &mut [i64; 2] = dest.first_chunk_mut::<2>().unwrap();
+        simd128_call!(self, |chunk: &mut [i64; 2], a: v128| {
+            arch_ops::v128_store_i64(chunk, a)
+        });
+    }
+    #[inline(always)]
+    fn load_array(self, mem: &[i64; 2]) -> v128 {
+        simd128_call!(self, |mem: &[i64; 2]| -> v128 {
+            arch_ops::v128_load_i64(mem)
+        })
+    }
+    #[inline(always)]
+    fn store_array(self, a: v128, dest: &mut [i64; 2]) {
+        simd128_call!(self, |dest: &mut [i64; 2], a: v128| {
+            arch_ops::v128_store_i64(dest, a)
+        });
+    }
+    #[inline(always)]
+    fn zero_array() -> [i64; 2] {
+        [i64::ZERO; 2]
+    }
+    #[inline(always)]
+    fn slice_as_array(slice: &[i64]) -> &[[i64; 2]] {
+        generic_ops::chunks(slice)
+    }
+    #[inline(always)]
+    fn slice_as_array_mut(slice: &mut [i64]) -> &mut [[i64; 2]] {
+        generic_ops::chunks_mut(slice)
+    }
+    #[inline(always)]
+    fn to_raw_bytes(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { a })
+    }
+    #[inline(always)]
+    fn from_raw_bytes(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { a })
+    }
+    #[inline(always)]
+    fn interleave_lo(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 {
+            i64x2_shuffle::<0, 2>(a, b)
+        })
+    }
+    #[inline(always)]
+    fn interleave_hi(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 {
+            i64x2_shuffle::<1, 3>(a, b)
+        })
+    }
+}
+
+impl crate::SimdVec<i64, Simd128Descriptor> {
+    /// Returns the underlying native SIMD register.
+    #[inline(always)]
+    pub fn raw(self) -> v128 {
+        self.0
+    }
+
+    /// Wraps a native SIMD register with its descriptor token.
+    #[inline(always)]
+    pub fn from_raw(d: Simd128Descriptor, raw: v128) -> Self {
+        Self(raw, d)
+    }
+}
+
+impl CompareBackend<i64> for Simd128Descriptor {
+    #[inline(always)]
+    fn eq(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { i64x2_eq(a, b) })
+    }
+    #[inline(always)]
+    fn gt(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { i64x2_gt(a, b) })
+    }
+    #[inline(always)]
+    fn eq_zero(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { i64x2_eq(a, i64x2_splat(0)) })
+    }
+    #[inline(always)]
+    fn min(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 {
+            v128_bitselect(b, a, i64x2_gt(a, b))
+        })
+    }
+    #[inline(always)]
+    fn max(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 {
+            v128_bitselect(a, b, i64x2_gt(a, b))
+        })
+    }
+    #[inline(always)]
+    fn mask_select(self, mask: v128, if_true: v128, if_false: v128) -> v128 {
+        simd128_call!(self, |mask: v128, if_true: v128, if_false: v128| -> v128 {
+            v128_bitselect(if_true, if_false, mask)
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: v128, if_true: v128) -> v128 {
+        simd128_call!(self, |mask: v128, if_true: v128| -> v128 {
+            v128_and(mask, if_true)
+        })
+    }
+    #[inline(always)]
+    fn mask_zero_select(self, mask: v128, if_false: v128) -> v128 {
+        simd128_call!(self, |mask: v128, if_false: v128| -> v128 {
+            v128_andnot(if_false, mask)
+        })
+    }
+}
+
+impl ArithBackend<i64> for Simd128Descriptor {
+    #[inline(always)]
+    fn add(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { i64x2_add(a, b) })
+    }
+    #[inline(always)]
+    fn sub(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { i64x2_sub(a, b) })
+    }
+}
+
+impl MulBackend<i64> for Simd128Descriptor {
+    #[inline(always)]
+    fn mul(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { i64x2_mul(a, b) })
+    }
+}
+
+impl SignedBackend<i64> for Simd128Descriptor {
+    #[inline(always)]
+    fn neg(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { i64x2_neg(a) })
+    }
+    #[inline(always)]
+    fn abs(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { i64x2_abs(a) })
+    }
+    #[inline(always)]
+    fn lt_zero(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { i64x2_lt(a, i64x2_splat(0)) })
+    }
+}
+
+impl IntBitBackend<i64> for Simd128Descriptor {
+    #[inline(always)]
+    fn bit_and(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { v128_and(a, b) })
+    }
+    #[inline(always)]
+    fn bit_or(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { v128_or(a, b) })
+    }
+    #[inline(always)]
+    fn bit_xor(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { v128_xor(a, b) })
+    }
+    #[inline(always)]
+    fn bit_not(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { v128_not(a) })
+    }
+    #[inline(always)]
+    fn andnot(self, not_a: v128, b: v128) -> v128 {
+        simd128_call!(self, |not_a: v128, b: v128| -> v128 {
+            v128_andnot(b, not_a)
+        })
+    }
+    #[inline(always)]
+    fn shl<const AMOUNT: u32>(self, a: v128) -> v128 {
+        simd128_shift!(self, AMOUNT, |a: v128| -> v128 { i64x2_shl(a, AMOUNT) })
+    }
+    #[inline(always)]
+    fn shr<const AMOUNT: u32>(self, a: v128) -> v128 {
+        simd128_shift!(self, AMOUNT, |a: v128| -> v128 { i64x2_shr(a, AMOUNT) })
     }
 }
 
@@ -1415,6 +2112,12 @@ impl CompareBackend<u64> for Simd128Descriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: v128, if_true: v128) -> v128 {
+        simd128_call!(self, |mask: v128, if_true: v128| -> v128 {
+            v128_and(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: v128, if_false: v128) -> v128 {
         simd128_call!(self, |mask: v128, if_false: v128| -> v128 {
             v128_andnot(if_false, mask)
@@ -1504,6 +2207,36 @@ impl F32ExtraBackend for Simd128Descriptor {
     #[inline(always)]
     fn f32_store_f16_bits(self, a: v128, dest: &mut [u16]) {
         generic_ops::store_f16_bits_sw(crate::SimdVec(a, self), dest);
+    }
+}
+
+impl F64ExtraBackend for Simd128Descriptor {
+    #[inline(always)]
+    fn f64_as_i64(self, a: v128) -> v128 {
+        generic_ops::f64_as_i64_sw(self, a)
+    }
+    #[inline(always)]
+    fn f64_from_f32_lo(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 { f64x2_promote_low_f32x4(a) })
+    }
+    #[inline(always)]
+    fn f64_from_f32_hi(self, a: v128) -> v128 {
+        simd128_call!(self, |a: v128| -> v128 {
+            f64x2_promote_low_f32x4(i64x2_shuffle::<1, 1>(a, a))
+        })
+    }
+    #[inline(always)]
+    fn f64_to_f32(self, lo: v128, hi: v128) -> v128 {
+        simd128_call!(self, |lo: v128, hi: v128| -> v128 {
+            i64x2_shuffle::<0, 2>(f32x4_demote_f64x2_zero(lo), f32x4_demote_f64x2_zero(hi))
+        })
+    }
+}
+
+impl I64ExtraBackend for Simd128Descriptor {
+    #[inline(always)]
+    fn i64_as_f64(self, a: v128) -> v128 {
+        generic_ops::i64_as_f64_sw(self, a)
     }
 }
 

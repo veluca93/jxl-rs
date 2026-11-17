@@ -13,8 +13,8 @@ use std::arch::x86_64::*;
 use super::{Sse42Descriptor, arch_ops, sse42_call, sse42_shift};
 use crate::sealed::{
     ArithBackend, BytesBackend, CompareBackend, DescriptorSealed, Element, F32ExtraBackend,
-    FloatBackend, I16ExtraBackend, I32ExtraBackend, IntBitBackend, LaneBackend, MaskBackend,
-    MulBackend, SignedBackend, U8ExtraBackend,
+    F64ExtraBackend, FloatBackend, I16ExtraBackend, I32ExtraBackend, I64ExtraBackend,
+    IntBitBackend, LaneBackend, MaskBackend, MulBackend, SatBackend, SignedBackend, U8ExtraBackend,
 };
 use crate::{W8, W16, W32, W64, generic_ops};
 
@@ -338,6 +338,12 @@ impl CompareBackend<f32> for Sse42Descriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: __m128, if_true: __m128) -> __m128 {
+        sse42_call!(self, |mask: __m128, if_true: __m128| -> __m128 {
+            _mm_and_ps(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: __m128, if_false: __m128) -> __m128 {
         sse42_call!(self, |mask: __m128, if_false: __m128| -> __m128 {
             _mm_andnot_ps(mask, if_false)
@@ -420,10 +426,519 @@ impl FloatBackend<f32> for Sse42Descriptor {
         })
     }
     #[inline(always)]
+    fn trunc(self, a: __m128) -> __m128 {
+        sse42_call!(self, |a: __m128| -> __m128 {
+            _mm_round_ps::<{ _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC }>(a)
+        })
+    }
+    #[inline(always)]
     fn copysign(self, a: __m128, sign: __m128) -> __m128 {
         sse42_call!(self, |a: __m128, sign: __m128| -> __m128 {
             let m = _mm_set1_ps(-0.0);
             _mm_or_ps(_mm_andnot_ps(m, a), _mm_and_ps(m, sign))
+        })
+    }
+}
+
+impl LaneBackend<f64> for Sse42Descriptor {
+    type Raw = __m128d;
+    type Array = [f64; 2];
+
+    #[inline(always)]
+    fn zero(self) -> __m128d {
+        sse42_call!(self, || -> __m128d { _mm_setzero_pd() })
+    }
+    #[inline(always)]
+    fn splat(self, v: f64) -> __m128d {
+        sse42_call!(self, |v: f64| -> __m128d { _mm_set1_pd(v) })
+    }
+    #[inline(always)]
+    fn extract_lane0(self, a: __m128d) -> f64 {
+        sse42_call!(self, |a: __m128d| -> f64 { _mm_cvtsd_f64(a) })
+    }
+    #[inline(always)]
+    fn load(self, mem: &[f64]) -> __m128d {
+        let chunk: &[f64; 2] = mem.first_chunk::<2>().unwrap();
+        sse42_call!(self, |chunk: &[f64; 2]| -> __m128d {
+            arch_ops::_mm_loadu_pd(chunk)
+        })
+    }
+    #[inline(always)]
+    fn store(self, a: __m128d, dest: &mut [f64]) {
+        let chunk: &mut [f64; 2] = dest.first_chunk_mut::<2>().unwrap();
+        sse42_call!(self, |chunk: &mut [f64; 2], a: __m128d| {
+            arch_ops::_mm_storeu_pd(chunk, a)
+        });
+    }
+    #[inline(always)]
+    fn load_array(self, mem: &[f64; 2]) -> __m128d {
+        sse42_call!(self, |mem: &[f64; 2]| -> __m128d {
+            arch_ops::_mm_loadu_pd(mem)
+        })
+    }
+    #[inline(always)]
+    fn store_array(self, a: __m128d, dest: &mut [f64; 2]) {
+        sse42_call!(self, |dest: &mut [f64; 2], a: __m128d| {
+            arch_ops::_mm_storeu_pd(dest, a)
+        });
+    }
+    #[inline(always)]
+    fn zero_array() -> [f64; 2] {
+        [f64::ZERO; 2]
+    }
+    #[inline(always)]
+    fn slice_as_array(slice: &[f64]) -> &[[f64; 2]] {
+        generic_ops::chunks(slice)
+    }
+    #[inline(always)]
+    fn slice_as_array_mut(slice: &mut [f64]) -> &mut [[f64; 2]] {
+        generic_ops::chunks_mut(slice)
+    }
+    #[inline(always)]
+    fn to_raw_bytes(self, a: __m128d) -> __m128i {
+        sse42_call!(self, |a: __m128d| -> __m128i { _mm_castpd_si128(a) })
+    }
+    #[inline(always)]
+    fn from_raw_bytes(self, a: __m128i) -> __m128d {
+        sse42_call!(self, |a: __m128i| -> __m128d { _mm_castsi128_pd(a) })
+    }
+    #[inline(always)]
+    fn interleave_lo(self, a: __m128d, b: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d, b: __m128d| -> __m128d {
+            _mm_unpacklo_pd(a, b)
+        })
+    }
+    #[inline(always)]
+    fn interleave_hi(self, a: __m128d, b: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d, b: __m128d| -> __m128d {
+            _mm_unpackhi_pd(a, b)
+        })
+    }
+}
+
+impl crate::SimdVec<f64, Sse42Descriptor> {
+    /// Returns the underlying native SIMD register.
+    #[inline(always)]
+    pub fn raw(self) -> __m128d {
+        self.0
+    }
+
+    /// Wraps a native SIMD register with its descriptor token.
+    #[inline(always)]
+    pub fn from_raw(d: Sse42Descriptor, raw: __m128d) -> Self {
+        Self(raw, d)
+    }
+}
+
+impl CompareBackend<f64> for Sse42Descriptor {
+    #[inline(always)]
+    fn eq(self, a: __m128d, b: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d, b: __m128d| -> __m128d {
+            _mm_cmpeq_pd(a, b)
+        })
+    }
+    #[inline(always)]
+    fn gt(self, a: __m128d, b: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d, b: __m128d| -> __m128d {
+            _mm_cmpgt_pd(a, b)
+        })
+    }
+    #[inline(always)]
+    fn eq_zero(self, a: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d| -> __m128d {
+            _mm_cmpeq_pd(a, _mm_setzero_pd())
+        })
+    }
+    #[inline(always)]
+    fn min(self, a: __m128d, b: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d, b: __m128d| -> __m128d {
+            _mm_min_pd(a, b)
+        })
+    }
+    #[inline(always)]
+    fn max(self, a: __m128d, b: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d, b: __m128d| -> __m128d {
+            _mm_max_pd(a, b)
+        })
+    }
+    #[inline(always)]
+    fn mask_select(self, mask: __m128d, if_true: __m128d, if_false: __m128d) -> __m128d {
+        sse42_call!(self, |mask: __m128d,
+                           if_true: __m128d,
+                           if_false: __m128d|
+         -> __m128d {
+            _mm_blendv_pd(if_false, if_true, mask)
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: __m128d, if_true: __m128d) -> __m128d {
+        sse42_call!(self, |mask: __m128d, if_true: __m128d| -> __m128d {
+            _mm_and_pd(mask, if_true)
+        })
+    }
+    #[inline(always)]
+    fn mask_zero_select(self, mask: __m128d, if_false: __m128d) -> __m128d {
+        sse42_call!(self, |mask: __m128d, if_false: __m128d| -> __m128d {
+            _mm_andnot_pd(mask, if_false)
+        })
+    }
+}
+
+impl ArithBackend<f64> for Sse42Descriptor {
+    #[inline(always)]
+    fn add(self, a: __m128d, b: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d, b: __m128d| -> __m128d {
+            _mm_add_pd(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sub(self, a: __m128d, b: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d, b: __m128d| -> __m128d {
+            _mm_sub_pd(a, b)
+        })
+    }
+}
+
+impl MulBackend<f64> for Sse42Descriptor {
+    #[inline(always)]
+    fn mul(self, a: __m128d, b: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d, b: __m128d| -> __m128d {
+            _mm_mul_pd(a, b)
+        })
+    }
+}
+
+impl SignedBackend<f64> for Sse42Descriptor {
+    #[inline(always)]
+    fn neg(self, a: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d| -> __m128d {
+            _mm_xor_pd(_mm_set1_pd(-0.0), a)
+        })
+    }
+    #[inline(always)]
+    fn abs(self, a: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d| -> __m128d {
+            _mm_andnot_pd(_mm_set1_pd(-0.0), a)
+        })
+    }
+    #[inline(always)]
+    fn lt_zero(self, a: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d| -> __m128d {
+            _mm_cmplt_pd(a, _mm_setzero_pd())
+        })
+    }
+}
+
+impl FloatBackend<f64> for Sse42Descriptor {
+    #[inline(always)]
+    fn div(self, a: __m128d, b: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d, b: __m128d| -> __m128d {
+            _mm_div_pd(a, b)
+        })
+    }
+    #[inline(always)]
+    fn mul_add(self, a: __m128d, mul: __m128d, add: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d, mul: __m128d, add: __m128d| -> __m128d {
+            _mm_add_pd(_mm_mul_pd(a, mul), add)
+        })
+    }
+    #[inline(always)]
+    fn neg_mul_add(self, a: __m128d, mul: __m128d, add: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d, mul: __m128d, add: __m128d| -> __m128d {
+            _mm_sub_pd(add, _mm_mul_pd(a, mul))
+        })
+    }
+    #[inline(always)]
+    fn sqrt(self, a: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d| -> __m128d { _mm_sqrt_pd(a) })
+    }
+    #[inline(always)]
+    fn floor(self, a: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d| -> __m128d { _mm_floor_pd(a) })
+    }
+    #[inline(always)]
+    fn ceil(self, a: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d| -> __m128d { _mm_ceil_pd(a) })
+    }
+    #[inline(always)]
+    fn round(self, a: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d| -> __m128d {
+            _mm_round_pd::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(a)
+        })
+    }
+    #[inline(always)]
+    fn trunc(self, a: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d| -> __m128d {
+            _mm_round_pd::<{ _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC }>(a)
+        })
+    }
+    #[inline(always)]
+    fn copysign(self, a: __m128d, sign: __m128d) -> __m128d {
+        sse42_call!(self, |a: __m128d, sign: __m128d| -> __m128d {
+            let m = _mm_set1_pd(-0.0);
+            _mm_or_pd(_mm_andnot_pd(m, a), _mm_and_pd(m, sign))
+        })
+    }
+}
+
+impl LaneBackend<i8> for Sse42Descriptor {
+    type Raw = __m128i;
+    type Array = [i8; 16];
+
+    #[inline(always)]
+    fn zero(self) -> __m128i {
+        sse42_call!(self, || -> __m128i { _mm_setzero_si128() })
+    }
+    #[inline(always)]
+    fn splat(self, v: i8) -> __m128i {
+        sse42_call!(self, |v: i8| -> __m128i { _mm_set1_epi8(v) })
+    }
+    #[inline(always)]
+    fn extract_lane0(self, a: __m128i) -> i8 {
+        sse42_call!(self, |a: __m128i| -> i8 { _mm_cvtsi128_si32(a) as i8 })
+    }
+    #[inline(always)]
+    fn load(self, mem: &[i8]) -> __m128i {
+        let chunk: &[i8; 16] = mem.first_chunk::<16>().unwrap();
+        sse42_call!(self, |chunk: &[i8; 16]| -> __m128i {
+            arch_ops::_mm_loadu_si128_i8(chunk)
+        })
+    }
+    #[inline(always)]
+    fn store(self, a: __m128i, dest: &mut [i8]) {
+        let chunk: &mut [i8; 16] = dest.first_chunk_mut::<16>().unwrap();
+        sse42_call!(self, |chunk: &mut [i8; 16], a: __m128i| {
+            arch_ops::_mm_storeu_si128_i8(chunk, a)
+        });
+    }
+    #[inline(always)]
+    fn load_array(self, mem: &[i8; 16]) -> __m128i {
+        sse42_call!(self, |mem: &[i8; 16]| -> __m128i {
+            arch_ops::_mm_loadu_si128_i8(mem)
+        })
+    }
+    #[inline(always)]
+    fn store_array(self, a: __m128i, dest: &mut [i8; 16]) {
+        sse42_call!(self, |dest: &mut [i8; 16], a: __m128i| {
+            arch_ops::_mm_storeu_si128_i8(dest, a)
+        });
+    }
+    #[inline(always)]
+    fn zero_array() -> [i8; 16] {
+        [i8::ZERO; 16]
+    }
+    #[inline(always)]
+    fn slice_as_array(slice: &[i8]) -> &[[i8; 16]] {
+        generic_ops::chunks(slice)
+    }
+    #[inline(always)]
+    fn slice_as_array_mut(slice: &mut [i8]) -> &mut [[i8; 16]] {
+        generic_ops::chunks_mut(slice)
+    }
+    #[inline(always)]
+    fn to_raw_bytes(self, a: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i| -> __m128i { a })
+    }
+    #[inline(always)]
+    fn from_raw_bytes(self, a: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i| -> __m128i { a })
+    }
+    #[inline(always)]
+    fn interleave_lo(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_unpacklo_epi8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn interleave_hi(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_unpackhi_epi8(a, b)
+        })
+    }
+}
+
+impl crate::SimdVec<i8, Sse42Descriptor> {
+    /// Returns the underlying native SIMD register.
+    #[inline(always)]
+    pub fn raw(self) -> __m128i {
+        self.0
+    }
+
+    /// Wraps a native SIMD register with its descriptor token.
+    #[inline(always)]
+    pub fn from_raw(d: Sse42Descriptor, raw: __m128i) -> Self {
+        Self(raw, d)
+    }
+}
+
+impl CompareBackend<i8> for Sse42Descriptor {
+    #[inline(always)]
+    fn eq(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_cmpeq_epi8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn gt(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_cmpgt_epi8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn eq_zero(self, a: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i| -> __m128i {
+            _mm_cmpeq_epi8(a, _mm_setzero_si128())
+        })
+    }
+    #[inline(always)]
+    fn min(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_min_epi8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn max(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_max_epi8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn mask_select(self, mask: __m128i, if_true: __m128i, if_false: __m128i) -> __m128i {
+        sse42_call!(self, |mask: __m128i,
+                           if_true: __m128i,
+                           if_false: __m128i|
+         -> __m128i {
+            _mm_blendv_epi8(if_false, if_true, mask)
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: __m128i, if_true: __m128i) -> __m128i {
+        sse42_call!(self, |mask: __m128i, if_true: __m128i| -> __m128i {
+            _mm_and_si128(mask, if_true)
+        })
+    }
+    #[inline(always)]
+    fn mask_zero_select(self, mask: __m128i, if_false: __m128i) -> __m128i {
+        sse42_call!(self, |mask: __m128i, if_false: __m128i| -> __m128i {
+            _mm_andnot_si128(mask, if_false)
+        })
+    }
+}
+
+impl ArithBackend<i8> for Sse42Descriptor {
+    #[inline(always)]
+    fn add(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_add_epi8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sub(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_sub_epi8(a, b)
+        })
+    }
+}
+
+impl MulBackend<i8> for Sse42Descriptor {
+    #[inline(always)]
+    fn mul(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            let lo = _mm_and_si128(_mm_mullo_epi16(a, b), _mm_set1_epi16(0x00FF));
+            let hi = _mm_slli_epi16::<8>(_mm_mullo_epi16(
+                _mm_srli_epi16::<8>(a),
+                _mm_srli_epi16::<8>(b),
+            ));
+            _mm_or_si128(lo, hi)
+        })
+    }
+}
+
+impl SignedBackend<i8> for Sse42Descriptor {
+    #[inline(always)]
+    fn neg(self, a: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i| -> __m128i {
+            _mm_sub_epi8(_mm_setzero_si128(), a)
+        })
+    }
+    #[inline(always)]
+    fn abs(self, a: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i| -> __m128i { _mm_abs_epi8(a) })
+    }
+    #[inline(always)]
+    fn lt_zero(self, a: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i| -> __m128i {
+            _mm_cmpgt_epi8(_mm_setzero_si128(), a)
+        })
+    }
+}
+
+impl IntBitBackend<i8> for Sse42Descriptor {
+    #[inline(always)]
+    fn bit_and(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_and_si128(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_or(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_or_si128(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_xor(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_xor_si128(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_not(self, a: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i| -> __m128i {
+            _mm_xor_si128(a, _mm_set1_epi32(-1))
+        })
+    }
+    #[inline(always)]
+    fn andnot(self, not_a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |not_a: __m128i, b: __m128i| -> __m128i {
+            _mm_andnot_si128(not_a, b)
+        })
+    }
+    #[inline(always)]
+    fn shl<const AMOUNT: u32>(self, a: __m128i) -> __m128i {
+        sse42_shift!(self, AMOUNT, |a: __m128i| -> __m128i {
+            _mm_and_si128(
+                _mm_sll_epi16(a, _mm_cvtsi64_si128(AMOUNT as i64)),
+                _mm_set1_epi8((0xFFu8.checked_shl(AMOUNT).unwrap_or(0)) as i8),
+            )
+        })
+    }
+    #[inline(always)]
+    fn shr<const AMOUNT: u32>(self, a: __m128i) -> __m128i {
+        sse42_shift!(self, AMOUNT, |a: __m128i| -> __m128i {
+            let b = _mm_set1_epi8(-128);
+            _mm_sub_epi8(
+                _mm_and_si128(
+                    _mm_srl_epi16(_mm_xor_si128(a, b), _mm_cvtsi64_si128(AMOUNT as i64)),
+                    _mm_set1_epi8((0xFFu8.checked_shr(AMOUNT).unwrap_or(0)) as i8),
+                ),
+                _mm_set1_epi8((0x80u8.checked_shr(AMOUNT).unwrap_or(0)) as i8),
+            )
+        })
+    }
+}
+
+impl SatBackend<i8> for Sse42Descriptor {
+    #[inline(always)]
+    fn sat_add(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_adds_epi8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_subs_epi8(a, b)
         })
     }
 }
@@ -560,6 +1075,12 @@ impl CompareBackend<u8> for Sse42Descriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: __m128i, if_true: __m128i) -> __m128i {
+        sse42_call!(self, |mask: __m128i, if_true: __m128i| -> __m128i {
+            _mm_and_si128(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: __m128i, if_false: __m128i) -> __m128i {
         sse42_call!(self, |mask: __m128i, if_false: __m128i| -> __m128i {
             _mm_andnot_si128(mask, if_false)
@@ -643,6 +1164,21 @@ impl IntBitBackend<u8> for Sse42Descriptor {
                 _mm_srl_epi16(a, _mm_cvtsi64_si128(AMOUNT as i64)),
                 _mm_set1_epi8((0xFFu8.checked_shr(AMOUNT).unwrap_or(0)) as i8),
             )
+        })
+    }
+}
+
+impl SatBackend<u8> for Sse42Descriptor {
+    #[inline(always)]
+    fn sat_add(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_adds_epu8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_subs_epu8(a, b)
         })
     }
 }
@@ -778,6 +1314,12 @@ impl CompareBackend<i16> for Sse42Descriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: __m128i, if_true: __m128i) -> __m128i {
+        sse42_call!(self, |mask: __m128i, if_true: __m128i| -> __m128i {
+            _mm_and_si128(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: __m128i, if_false: __m128i) -> __m128i {
         sse42_call!(self, |mask: __m128i, if_false: __m128i| -> __m128i {
             _mm_andnot_si128(mask, if_false)
@@ -869,6 +1411,21 @@ impl IntBitBackend<i16> for Sse42Descriptor {
     fn shr<const AMOUNT: u32>(self, a: __m128i) -> __m128i {
         sse42_shift!(self, AMOUNT, |a: __m128i| -> __m128i {
             _mm_sra_epi16(a, _mm_cvtsi64_si128(AMOUNT as i64))
+        })
+    }
+}
+
+impl SatBackend<i16> for Sse42Descriptor {
+    #[inline(always)]
+    fn sat_add(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_adds_epi16(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_subs_epi16(a, b)
         })
     }
 }
@@ -1005,6 +1562,12 @@ impl CompareBackend<u16> for Sse42Descriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: __m128i, if_true: __m128i) -> __m128i {
+        sse42_call!(self, |mask: __m128i, if_true: __m128i| -> __m128i {
+            _mm_and_si128(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: __m128i, if_false: __m128i) -> __m128i {
         sse42_call!(self, |mask: __m128i, if_false: __m128i| -> __m128i {
             _mm_andnot_si128(mask, if_false)
@@ -1077,6 +1640,21 @@ impl IntBitBackend<u16> for Sse42Descriptor {
     fn shr<const AMOUNT: u32>(self, a: __m128i) -> __m128i {
         sse42_shift!(self, AMOUNT, |a: __m128i| -> __m128i {
             _mm_srl_epi16(a, _mm_cvtsi64_si128(AMOUNT as i64))
+        })
+    }
+}
+
+impl SatBackend<u16> for Sse42Descriptor {
+    #[inline(always)]
+    fn sat_add(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_adds_epu16(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_subs_epu16(a, b)
         })
     }
 }
@@ -1209,6 +1787,12 @@ impl CompareBackend<i32> for Sse42Descriptor {
                            if_false: __m128i|
          -> __m128i {
             _mm_blendv_epi8(if_false, if_true, _mm_castps_si128(mask))
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: __m128, if_true: __m128i) -> __m128i {
+        sse42_call!(self, |mask: __m128, if_true: __m128i| -> __m128i {
+            _mm_and_si128(_mm_castps_si128(mask), if_true)
         })
     }
     #[inline(always)]
@@ -1439,6 +2023,12 @@ impl CompareBackend<u32> for Sse42Descriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: __m128, if_true: __m128i) -> __m128i {
+        sse42_call!(self, |mask: __m128, if_true: __m128i| -> __m128i {
+            _mm_and_si128(_mm_castps_si128(mask), if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: __m128, if_false: __m128i) -> __m128i {
         sse42_call!(self, |mask: __m128, if_false: __m128i| -> __m128i {
             _mm_andnot_si128(_mm_castps_si128(mask), if_false)
@@ -1511,6 +2101,250 @@ impl IntBitBackend<u32> for Sse42Descriptor {
     fn shr<const AMOUNT: u32>(self, a: __m128i) -> __m128i {
         sse42_shift!(self, AMOUNT, |a: __m128i| -> __m128i {
             _mm_srl_epi32(a, _mm_cvtsi64_si128(AMOUNT as i64))
+        })
+    }
+}
+
+impl LaneBackend<i64> for Sse42Descriptor {
+    type Raw = __m128i;
+    type Array = [i64; 2];
+
+    #[inline(always)]
+    fn zero(self) -> __m128i {
+        sse42_call!(self, || -> __m128i { _mm_setzero_si128() })
+    }
+    #[inline(always)]
+    fn splat(self, v: i64) -> __m128i {
+        sse42_call!(self, |v: i64| -> __m128i { _mm_set1_epi64x(v) })
+    }
+    #[inline(always)]
+    fn extract_lane0(self, a: __m128i) -> i64 {
+        sse42_call!(self, |a: __m128i| -> i64 { _mm_cvtsi128_si64(a) as i64 })
+    }
+    #[inline(always)]
+    fn load(self, mem: &[i64]) -> __m128i {
+        let chunk: &[i64; 2] = mem.first_chunk::<2>().unwrap();
+        sse42_call!(self, |chunk: &[i64; 2]| -> __m128i {
+            arch_ops::_mm_loadu_si128_i64(chunk)
+        })
+    }
+    #[inline(always)]
+    fn store(self, a: __m128i, dest: &mut [i64]) {
+        let chunk: &mut [i64; 2] = dest.first_chunk_mut::<2>().unwrap();
+        sse42_call!(self, |chunk: &mut [i64; 2], a: __m128i| {
+            arch_ops::_mm_storeu_si128_i64(chunk, a)
+        });
+    }
+    #[inline(always)]
+    fn load_array(self, mem: &[i64; 2]) -> __m128i {
+        sse42_call!(self, |mem: &[i64; 2]| -> __m128i {
+            arch_ops::_mm_loadu_si128_i64(mem)
+        })
+    }
+    #[inline(always)]
+    fn store_array(self, a: __m128i, dest: &mut [i64; 2]) {
+        sse42_call!(self, |dest: &mut [i64; 2], a: __m128i| {
+            arch_ops::_mm_storeu_si128_i64(dest, a)
+        });
+    }
+    #[inline(always)]
+    fn zero_array() -> [i64; 2] {
+        [i64::ZERO; 2]
+    }
+    #[inline(always)]
+    fn slice_as_array(slice: &[i64]) -> &[[i64; 2]] {
+        generic_ops::chunks(slice)
+    }
+    #[inline(always)]
+    fn slice_as_array_mut(slice: &mut [i64]) -> &mut [[i64; 2]] {
+        generic_ops::chunks_mut(slice)
+    }
+    #[inline(always)]
+    fn to_raw_bytes(self, a: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i| -> __m128i { a })
+    }
+    #[inline(always)]
+    fn from_raw_bytes(self, a: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i| -> __m128i { a })
+    }
+    #[inline(always)]
+    fn interleave_lo(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_unpacklo_epi64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn interleave_hi(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_unpackhi_epi64(a, b)
+        })
+    }
+}
+
+impl crate::SimdVec<i64, Sse42Descriptor> {
+    /// Returns the underlying native SIMD register.
+    #[inline(always)]
+    pub fn raw(self) -> __m128i {
+        self.0
+    }
+
+    /// Wraps a native SIMD register with its descriptor token.
+    #[inline(always)]
+    pub fn from_raw(d: Sse42Descriptor, raw: __m128i) -> Self {
+        Self(raw, d)
+    }
+}
+
+impl CompareBackend<i64> for Sse42Descriptor {
+    #[inline(always)]
+    fn eq(self, a: __m128i, b: __m128i) -> __m128d {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128d {
+            _mm_castsi128_pd(_mm_cmpeq_epi64(a, b))
+        })
+    }
+    #[inline(always)]
+    fn gt(self, a: __m128i, b: __m128i) -> __m128d {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128d {
+            _mm_castsi128_pd(_mm_cmpgt_epi64(a, b))
+        })
+    }
+    #[inline(always)]
+    fn eq_zero(self, a: __m128i) -> __m128d {
+        sse42_call!(self, |a: __m128i| -> __m128d {
+            _mm_castsi128_pd(_mm_cmpeq_epi64(a, _mm_setzero_si128()))
+        })
+    }
+    #[inline(always)]
+    fn min(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_blendv_epi8(a, b, _mm_cmpgt_epi64(a, b))
+        })
+    }
+    #[inline(always)]
+    fn max(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_blendv_epi8(b, a, _mm_cmpgt_epi64(a, b))
+        })
+    }
+    #[inline(always)]
+    fn mask_select(self, mask: __m128d, if_true: __m128i, if_false: __m128i) -> __m128i {
+        sse42_call!(self, |mask: __m128d,
+                           if_true: __m128i,
+                           if_false: __m128i|
+         -> __m128i {
+            _mm_blendv_epi8(if_false, if_true, _mm_castpd_si128(mask))
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: __m128d, if_true: __m128i) -> __m128i {
+        sse42_call!(self, |mask: __m128d, if_true: __m128i| -> __m128i {
+            _mm_and_si128(_mm_castpd_si128(mask), if_true)
+        })
+    }
+    #[inline(always)]
+    fn mask_zero_select(self, mask: __m128d, if_false: __m128i) -> __m128i {
+        sse42_call!(self, |mask: __m128d, if_false: __m128i| -> __m128i {
+            _mm_andnot_si128(_mm_castpd_si128(mask), if_false)
+        })
+    }
+}
+
+impl ArithBackend<i64> for Sse42Descriptor {
+    #[inline(always)]
+    fn add(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_add_epi64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sub(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_sub_epi64(a, b)
+        })
+    }
+}
+
+impl MulBackend<i64> for Sse42Descriptor {
+    #[inline(always)]
+    fn mul(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            let lo = _mm_mul_epu32(a, b);
+            let hi = _mm_add_epi64(
+                _mm_mul_epu32(_mm_srli_epi64::<32>(a), b),
+                _mm_mul_epu32(a, _mm_srli_epi64::<32>(b)),
+            );
+            _mm_add_epi64(lo, _mm_slli_epi64::<32>(hi))
+        })
+    }
+}
+
+impl SignedBackend<i64> for Sse42Descriptor {
+    #[inline(always)]
+    fn neg(self, a: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i| -> __m128i {
+            _mm_sub_epi64(_mm_setzero_si128(), a)
+        })
+    }
+    #[inline(always)]
+    fn abs(self, a: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i| -> __m128i {
+            let n = _mm_sub_epi64(_mm_setzero_si128(), a);
+            _mm_blendv_epi8(a, n, _mm_cmpgt_epi64(_mm_setzero_si128(), a))
+        })
+    }
+    #[inline(always)]
+    fn lt_zero(self, a: __m128i) -> __m128d {
+        sse42_call!(self, |a: __m128i| -> __m128d {
+            _mm_castsi128_pd(_mm_cmpgt_epi64(_mm_setzero_si128(), a))
+        })
+    }
+}
+
+impl IntBitBackend<i64> for Sse42Descriptor {
+    #[inline(always)]
+    fn bit_and(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_and_si128(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_or(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_or_si128(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_xor(self, a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i, b: __m128i| -> __m128i {
+            _mm_xor_si128(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_not(self, a: __m128i) -> __m128i {
+        sse42_call!(self, |a: __m128i| -> __m128i {
+            _mm_xor_si128(a, _mm_set1_epi32(-1))
+        })
+    }
+    #[inline(always)]
+    fn andnot(self, not_a: __m128i, b: __m128i) -> __m128i {
+        sse42_call!(self, |not_a: __m128i, b: __m128i| -> __m128i {
+            _mm_andnot_si128(not_a, b)
+        })
+    }
+    #[inline(always)]
+    fn shl<const AMOUNT: u32>(self, a: __m128i) -> __m128i {
+        sse42_shift!(self, AMOUNT, |a: __m128i| -> __m128i {
+            _mm_sll_epi64(a, _mm_cvtsi64_si128(AMOUNT as i64))
+        })
+    }
+    #[inline(always)]
+    fn shr<const AMOUNT: u32>(self, a: __m128i) -> __m128i {
+        sse42_shift!(self, AMOUNT, |a: __m128i| -> __m128i {
+            let b = _mm_set1_epi64x(i64::MIN);
+            _mm_sub_epi64(
+                _mm_srl_epi64(_mm_xor_si128(a, b), _mm_cvtsi64_si128(AMOUNT as i64)),
+                _mm_set1_epi64x((0x8000_0000_0000_0000u64.checked_shr(AMOUNT).unwrap_or(0)) as i64),
+            )
         })
     }
 }
@@ -1657,6 +2491,12 @@ impl CompareBackend<u64> for Sse42Descriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: __m128d, if_true: __m128i) -> __m128i {
+        sse42_call!(self, |mask: __m128d, if_true: __m128i| -> __m128i {
+            _mm_and_si128(_mm_castpd_si128(mask), if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: __m128d, if_false: __m128i) -> __m128i {
         sse42_call!(self, |mask: __m128d, if_false: __m128i| -> __m128i {
             _mm_andnot_si128(_mm_castpd_si128(mask), if_false)
@@ -1764,6 +2604,36 @@ impl F32ExtraBackend for Sse42Descriptor {
     #[inline(always)]
     fn f32_store_f16_bits(self, a: __m128, dest: &mut [u16]) {
         generic_ops::store_f16_bits_sw(crate::SimdVec(a, self), dest);
+    }
+}
+
+impl F64ExtraBackend for Sse42Descriptor {
+    #[inline(always)]
+    fn f64_as_i64(self, a: __m128d) -> __m128i {
+        generic_ops::f64_as_i64_sw(self, a)
+    }
+    #[inline(always)]
+    fn f64_from_f32_lo(self, a: __m128) -> __m128d {
+        sse42_call!(self, |a: __m128| -> __m128d { _mm_cvtps_pd(a) })
+    }
+    #[inline(always)]
+    fn f64_from_f32_hi(self, a: __m128) -> __m128d {
+        sse42_call!(self, |a: __m128| -> __m128d {
+            _mm_cvtps_pd(_mm_movehl_ps(a, a))
+        })
+    }
+    #[inline(always)]
+    fn f64_to_f32(self, lo: __m128d, hi: __m128d) -> __m128 {
+        sse42_call!(self, |lo: __m128d, hi: __m128d| -> __m128 {
+            _mm_movelh_ps(_mm_cvtpd_ps(lo), _mm_cvtpd_ps(hi))
+        })
+    }
+}
+
+impl I64ExtraBackend for Sse42Descriptor {
+    #[inline(always)]
+    fn i64_as_f64(self, a: __m128i) -> __m128d {
+        generic_ops::i64_as_f64_sw(self, a)
     }
 }
 

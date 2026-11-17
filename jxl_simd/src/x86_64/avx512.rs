@@ -13,8 +13,8 @@ use std::arch::x86_64::*;
 use super::{Avx512Descriptor, arch_ops, avx512_call, avx512_shift};
 use crate::sealed::{
     ArithBackend, BytesBackend, CompareBackend, DescriptorSealed, Element, F32ExtraBackend,
-    FloatBackend, I16ExtraBackend, I32ExtraBackend, IntBitBackend, LaneBackend, MaskBackend,
-    MulBackend, SignedBackend, U8ExtraBackend,
+    F64ExtraBackend, FloatBackend, I16ExtraBackend, I32ExtraBackend, I64ExtraBackend,
+    IntBitBackend, LaneBackend, MaskBackend, MulBackend, SatBackend, SignedBackend, U8ExtraBackend,
 };
 use crate::{W8, W16, W32, W64, generic_ops};
 
@@ -323,6 +323,12 @@ impl CompareBackend<f32> for Avx512Descriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: u16, if_true: __m512) -> __m512 {
+        avx512_call!(self, |mask: u16, if_true: __m512| -> __m512 {
+            _mm512_maskz_mov_ps(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: u16, if_false: __m512) -> __m512 {
         avx512_call!(self, |mask: u16, if_false: __m512| -> __m512 {
             _mm512_maskz_mov_ps(!mask, if_false)
@@ -423,6 +429,12 @@ impl FloatBackend<f32> for Avx512Descriptor {
         })
     }
     #[inline(always)]
+    fn trunc(self, a: __m512) -> __m512 {
+        avx512_call!(self, |a: __m512| -> __m512 {
+            _mm512_roundscale_ps::<{ _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC }>(a)
+        })
+    }
+    #[inline(always)]
     fn copysign(self, a: __m512, sign: __m512) -> __m512 {
         avx512_call!(self, |a: __m512, sign: __m512| -> __m512 {
             let m = _mm512_set1_epi32(i32::MIN);
@@ -430,6 +442,521 @@ impl FloatBackend<f32> for Avx512Descriptor {
                 _mm512_andnot_si512(m, _mm512_castps_si512(a)),
                 _mm512_and_si512(m, _mm512_castps_si512(sign)),
             ))
+        })
+    }
+}
+
+impl LaneBackend<f64> for Avx512Descriptor {
+    type Raw = __m512d;
+    type Array = [f64; 8];
+
+    #[inline(always)]
+    fn zero(self) -> __m512d {
+        avx512_call!(self, || -> __m512d { _mm512_setzero_pd() })
+    }
+    #[inline(always)]
+    fn splat(self, v: f64) -> __m512d {
+        avx512_call!(self, |v: f64| -> __m512d { _mm512_set1_pd(v) })
+    }
+    #[inline(always)]
+    fn extract_lane0(self, a: __m512d) -> f64 {
+        avx512_call!(self, |a: __m512d| -> f64 {
+            _mm_cvtsd_f64(_mm512_castpd512_pd128(a))
+        })
+    }
+    #[inline(always)]
+    fn load(self, mem: &[f64]) -> __m512d {
+        let chunk: &[f64; 8] = mem.first_chunk::<8>().unwrap();
+        avx512_call!(self, |chunk: &[f64; 8]| -> __m512d {
+            arch_ops::_mm512_loadu_pd(chunk)
+        })
+    }
+    #[inline(always)]
+    fn store(self, a: __m512d, dest: &mut [f64]) {
+        let chunk: &mut [f64; 8] = dest.first_chunk_mut::<8>().unwrap();
+        avx512_call!(self, |chunk: &mut [f64; 8], a: __m512d| {
+            arch_ops::_mm512_storeu_pd(chunk, a)
+        });
+    }
+    #[inline(always)]
+    fn load_array(self, mem: &[f64; 8]) -> __m512d {
+        avx512_call!(self, |mem: &[f64; 8]| -> __m512d {
+            arch_ops::_mm512_loadu_pd(mem)
+        })
+    }
+    #[inline(always)]
+    fn store_array(self, a: __m512d, dest: &mut [f64; 8]) {
+        avx512_call!(self, |dest: &mut [f64; 8], a: __m512d| {
+            arch_ops::_mm512_storeu_pd(dest, a)
+        });
+    }
+    #[inline(always)]
+    fn zero_array() -> [f64; 8] {
+        [f64::ZERO; 8]
+    }
+    #[inline(always)]
+    fn slice_as_array(slice: &[f64]) -> &[[f64; 8]] {
+        generic_ops::chunks(slice)
+    }
+    #[inline(always)]
+    fn slice_as_array_mut(slice: &mut [f64]) -> &mut [[f64; 8]] {
+        generic_ops::chunks_mut(slice)
+    }
+    #[inline(always)]
+    fn to_raw_bytes(self, a: __m512d) -> __m512i {
+        avx512_call!(self, |a: __m512d| -> __m512i { _mm512_castpd_si512(a) })
+    }
+    #[inline(always)]
+    fn from_raw_bytes(self, a: __m512i) -> __m512d {
+        avx512_call!(self, |a: __m512i| -> __m512d { _mm512_castsi512_pd(a) })
+    }
+    #[inline(always)]
+    fn interleave_lo(self, a: __m512d, b: __m512d) -> __m512d {
+        avx512_call!(self, |a: __m512d, b: __m512d| -> __m512d {
+            _mm512_unpacklo_pd(a, b)
+        })
+    }
+    #[inline(always)]
+    fn interleave_hi(self, a: __m512d, b: __m512d) -> __m512d {
+        avx512_call!(self, |a: __m512d, b: __m512d| -> __m512d {
+            _mm512_unpackhi_pd(a, b)
+        })
+    }
+}
+
+impl crate::SimdVec<f64, Avx512Descriptor> {
+    /// Returns the underlying native SIMD register.
+    #[inline(always)]
+    pub fn raw(self) -> __m512d {
+        self.0
+    }
+
+    /// Wraps a native SIMD register with its descriptor token.
+    #[inline(always)]
+    pub fn from_raw(d: Avx512Descriptor, raw: __m512d) -> Self {
+        Self(raw, d)
+    }
+}
+
+impl CompareBackend<f64> for Avx512Descriptor {
+    #[inline(always)]
+    fn eq(self, a: __m512d, b: __m512d) -> u8 {
+        avx512_call!(self, |a: __m512d, b: __m512d| -> u8 {
+            _mm512_cmp_pd_mask::<_CMP_EQ_OQ>(a, b)
+        })
+    }
+    #[inline(always)]
+    fn gt(self, a: __m512d, b: __m512d) -> u8 {
+        avx512_call!(self, |a: __m512d, b: __m512d| -> u8 {
+            _mm512_cmp_pd_mask::<_CMP_GT_OQ>(a, b)
+        })
+    }
+    #[inline(always)]
+    fn eq_zero(self, a: __m512d) -> u8 {
+        avx512_call!(self, |a: __m512d| -> u8 {
+            _mm512_cmp_pd_mask::<_CMP_EQ_OQ>(a, _mm512_setzero_pd())
+        })
+    }
+    #[inline(always)]
+    fn min(self, a: __m512d, b: __m512d) -> __m512d {
+        avx512_call!(self, |a: __m512d, b: __m512d| -> __m512d {
+            _mm512_min_pd(a, b)
+        })
+    }
+    #[inline(always)]
+    fn max(self, a: __m512d, b: __m512d) -> __m512d {
+        avx512_call!(self, |a: __m512d, b: __m512d| -> __m512d {
+            _mm512_max_pd(a, b)
+        })
+    }
+    #[inline(always)]
+    fn mask_select(self, mask: u8, if_true: __m512d, if_false: __m512d) -> __m512d {
+        avx512_call!(self, |mask: u8,
+                            if_true: __m512d,
+                            if_false: __m512d|
+         -> __m512d {
+            _mm512_mask_blend_pd(mask, if_false, if_true)
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: u8, if_true: __m512d) -> __m512d {
+        avx512_call!(self, |mask: u8, if_true: __m512d| -> __m512d {
+            _mm512_maskz_mov_pd(mask, if_true)
+        })
+    }
+    #[inline(always)]
+    fn mask_zero_select(self, mask: u8, if_false: __m512d) -> __m512d {
+        avx512_call!(self, |mask: u8, if_false: __m512d| -> __m512d {
+            _mm512_maskz_mov_pd(!mask, if_false)
+        })
+    }
+}
+
+impl ArithBackend<f64> for Avx512Descriptor {
+    #[inline(always)]
+    fn add(self, a: __m512d, b: __m512d) -> __m512d {
+        avx512_call!(self, |a: __m512d, b: __m512d| -> __m512d {
+            _mm512_add_pd(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sub(self, a: __m512d, b: __m512d) -> __m512d {
+        avx512_call!(self, |a: __m512d, b: __m512d| -> __m512d {
+            _mm512_sub_pd(a, b)
+        })
+    }
+}
+
+impl MulBackend<f64> for Avx512Descriptor {
+    #[inline(always)]
+    fn mul(self, a: __m512d, b: __m512d) -> __m512d {
+        avx512_call!(self, |a: __m512d, b: __m512d| -> __m512d {
+            _mm512_mul_pd(a, b)
+        })
+    }
+}
+
+impl SignedBackend<f64> for Avx512Descriptor {
+    #[inline(always)]
+    fn neg(self, a: __m512d) -> __m512d {
+        avx512_call!(self, |a: __m512d| -> __m512d {
+            _mm512_castsi512_pd(_mm512_xor_si512(
+                _mm512_castpd_si512(a),
+                _mm512_set1_epi64(i64::MIN),
+            ))
+        })
+    }
+    #[inline(always)]
+    fn abs(self, a: __m512d) -> __m512d {
+        avx512_call!(self, |a: __m512d| -> __m512d { _mm512_abs_pd(a) })
+    }
+    #[inline(always)]
+    fn lt_zero(self, a: __m512d) -> u8 {
+        avx512_call!(self, |a: __m512d| -> u8 {
+            _mm512_cmp_pd_mask::<_CMP_LT_OQ>(a, _mm512_setzero_pd())
+        })
+    }
+}
+
+impl FloatBackend<f64> for Avx512Descriptor {
+    #[inline(always)]
+    fn div(self, a: __m512d, b: __m512d) -> __m512d {
+        avx512_call!(self, |a: __m512d, b: __m512d| -> __m512d {
+            _mm512_div_pd(a, b)
+        })
+    }
+    #[inline(always)]
+    fn mul_add(self, a: __m512d, mul: __m512d, add: __m512d) -> __m512d {
+        avx512_call!(self, |a: __m512d, mul: __m512d, add: __m512d| -> __m512d {
+            _mm512_fmadd_pd(a, mul, add)
+        })
+    }
+    #[inline(always)]
+    fn neg_mul_add(self, a: __m512d, mul: __m512d, add: __m512d) -> __m512d {
+        avx512_call!(self, |a: __m512d, mul: __m512d, add: __m512d| -> __m512d {
+            _mm512_fnmadd_pd(a, mul, add)
+        })
+    }
+    #[inline(always)]
+    fn sqrt(self, a: __m512d) -> __m512d {
+        avx512_call!(self, |a: __m512d| -> __m512d { _mm512_sqrt_pd(a) })
+    }
+    #[inline(always)]
+    fn floor(self, a: __m512d) -> __m512d {
+        avx512_call!(self, |a: __m512d| -> __m512d {
+            _mm512_roundscale_pd::<{ _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC }>(a)
+        })
+    }
+    #[inline(always)]
+    fn ceil(self, a: __m512d) -> __m512d {
+        avx512_call!(self, |a: __m512d| -> __m512d {
+            _mm512_roundscale_pd::<{ _MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC }>(a)
+        })
+    }
+    #[inline(always)]
+    fn round(self, a: __m512d) -> __m512d {
+        avx512_call!(self, |a: __m512d| -> __m512d {
+            _mm512_roundscale_pd::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(a)
+        })
+    }
+    #[inline(always)]
+    fn trunc(self, a: __m512d) -> __m512d {
+        avx512_call!(self, |a: __m512d| -> __m512d {
+            _mm512_roundscale_pd::<{ _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC }>(a)
+        })
+    }
+    #[inline(always)]
+    fn copysign(self, a: __m512d, sign: __m512d) -> __m512d {
+        avx512_call!(self, |a: __m512d, sign: __m512d| -> __m512d {
+            let m = _mm512_set1_epi64(i64::MIN);
+            _mm512_castsi512_pd(_mm512_or_si512(
+                _mm512_andnot_si512(m, _mm512_castpd_si512(a)),
+                _mm512_and_si512(m, _mm512_castpd_si512(sign)),
+            ))
+        })
+    }
+}
+
+impl LaneBackend<i8> for Avx512Descriptor {
+    type Raw = __m512i;
+    type Array = [i8; 64];
+
+    #[inline(always)]
+    fn zero(self) -> __m512i {
+        avx512_call!(self, || -> __m512i { _mm512_setzero_si512() })
+    }
+    #[inline(always)]
+    fn splat(self, v: i8) -> __m512i {
+        avx512_call!(self, |v: i8| -> __m512i { _mm512_set1_epi8(v) })
+    }
+    #[inline(always)]
+    fn extract_lane0(self, a: __m512i) -> i8 {
+        avx512_call!(self, |a: __m512i| -> i8 {
+            _mm_cvtsi128_si32(_mm512_castsi512_si128(a)) as i8
+        })
+    }
+    #[inline(always)]
+    fn load(self, mem: &[i8]) -> __m512i {
+        let chunk: &[i8; 64] = mem.first_chunk::<64>().unwrap();
+        avx512_call!(self, |chunk: &[i8; 64]| -> __m512i {
+            arch_ops::_mm512_loadu_si512_i8(chunk)
+        })
+    }
+    #[inline(always)]
+    fn store(self, a: __m512i, dest: &mut [i8]) {
+        let chunk: &mut [i8; 64] = dest.first_chunk_mut::<64>().unwrap();
+        avx512_call!(self, |chunk: &mut [i8; 64], a: __m512i| {
+            arch_ops::_mm512_storeu_si512_i8(chunk, a)
+        });
+    }
+    #[inline(always)]
+    fn load_array(self, mem: &[i8; 64]) -> __m512i {
+        avx512_call!(self, |mem: &[i8; 64]| -> __m512i {
+            arch_ops::_mm512_loadu_si512_i8(mem)
+        })
+    }
+    #[inline(always)]
+    fn store_array(self, a: __m512i, dest: &mut [i8; 64]) {
+        avx512_call!(self, |dest: &mut [i8; 64], a: __m512i| {
+            arch_ops::_mm512_storeu_si512_i8(dest, a)
+        });
+    }
+    #[inline(always)]
+    fn zero_array() -> [i8; 64] {
+        [i8::ZERO; 64]
+    }
+    #[inline(always)]
+    fn slice_as_array(slice: &[i8]) -> &[[i8; 64]] {
+        generic_ops::chunks(slice)
+    }
+    #[inline(always)]
+    fn slice_as_array_mut(slice: &mut [i8]) -> &mut [[i8; 64]] {
+        generic_ops::chunks_mut(slice)
+    }
+    #[inline(always)]
+    fn to_raw_bytes(self, a: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i| -> __m512i { a })
+    }
+    #[inline(always)]
+    fn from_raw_bytes(self, a: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i| -> __m512i { a })
+    }
+    #[inline(always)]
+    fn interleave_lo(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_unpacklo_epi8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn interleave_hi(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_unpackhi_epi8(a, b)
+        })
+    }
+}
+
+impl crate::SimdVec<i8, Avx512Descriptor> {
+    /// Returns the underlying native SIMD register.
+    #[inline(always)]
+    pub fn raw(self) -> __m512i {
+        self.0
+    }
+
+    /// Wraps a native SIMD register with its descriptor token.
+    #[inline(always)]
+    pub fn from_raw(d: Avx512Descriptor, raw: __m512i) -> Self {
+        Self(raw, d)
+    }
+}
+
+impl CompareBackend<i8> for Avx512Descriptor {
+    #[inline(always)]
+    fn eq(self, a: __m512i, b: __m512i) -> u64 {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> u64 {
+            _mm512_cmpeq_epi8_mask(a, b)
+        })
+    }
+    #[inline(always)]
+    fn gt(self, a: __m512i, b: __m512i) -> u64 {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> u64 {
+            _mm512_cmpgt_epi8_mask(a, b)
+        })
+    }
+    #[inline(always)]
+    fn eq_zero(self, a: __m512i) -> u64 {
+        avx512_call!(self, |a: __m512i| -> u64 {
+            _mm512_cmpeq_epi8_mask(a, _mm512_setzero_si512())
+        })
+    }
+    #[inline(always)]
+    fn min(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_min_epi8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn max(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_max_epi8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn mask_select(self, mask: u64, if_true: __m512i, if_false: __m512i) -> __m512i {
+        avx512_call!(self, |mask: u64,
+                            if_true: __m512i,
+                            if_false: __m512i|
+         -> __m512i {
+            _mm512_mask_blend_epi8(mask, if_false, if_true)
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: u64, if_true: __m512i) -> __m512i {
+        avx512_call!(self, |mask: u64, if_true: __m512i| -> __m512i {
+            _mm512_maskz_mov_epi8(mask, if_true)
+        })
+    }
+    #[inline(always)]
+    fn mask_zero_select(self, mask: u64, if_false: __m512i) -> __m512i {
+        avx512_call!(self, |mask: u64, if_false: __m512i| -> __m512i {
+            _mm512_maskz_mov_epi8(!mask, if_false)
+        })
+    }
+}
+
+impl ArithBackend<i8> for Avx512Descriptor {
+    #[inline(always)]
+    fn add(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_add_epi8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sub(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_sub_epi8(a, b)
+        })
+    }
+}
+
+impl MulBackend<i8> for Avx512Descriptor {
+    #[inline(always)]
+    fn mul(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            let lo = _mm512_and_si512(_mm512_mullo_epi16(a, b), _mm512_set1_epi16(0x00FF));
+            let hi = _mm512_slli_epi16::<8>(_mm512_mullo_epi16(
+                _mm512_srli_epi16::<8>(a),
+                _mm512_srli_epi16::<8>(b),
+            ));
+            _mm512_or_si512(lo, hi)
+        })
+    }
+}
+
+impl SignedBackend<i8> for Avx512Descriptor {
+    #[inline(always)]
+    fn neg(self, a: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i| -> __m512i {
+            _mm512_sub_epi8(_mm512_setzero_si512(), a)
+        })
+    }
+    #[inline(always)]
+    fn abs(self, a: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i| -> __m512i { _mm512_abs_epi8(a) })
+    }
+    #[inline(always)]
+    fn lt_zero(self, a: __m512i) -> u64 {
+        avx512_call!(self, |a: __m512i| -> u64 {
+            _mm512_cmpgt_epi8_mask(_mm512_setzero_si512(), a)
+        })
+    }
+}
+
+impl IntBitBackend<i8> for Avx512Descriptor {
+    #[inline(always)]
+    fn bit_and(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_and_si512(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_or(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_or_si512(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_xor(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_xor_si512(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_not(self, a: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i| -> __m512i {
+            _mm512_xor_si512(a, _mm512_set1_epi32(-1))
+        })
+    }
+    #[inline(always)]
+    fn andnot(self, not_a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |not_a: __m512i, b: __m512i| -> __m512i {
+            _mm512_andnot_si512(not_a, b)
+        })
+    }
+    #[inline(always)]
+    fn shl<const AMOUNT: u32>(self, a: __m512i) -> __m512i {
+        avx512_shift!(self, AMOUNT, |a: __m512i| -> __m512i {
+            _mm512_and_si512(
+                _mm512_slli_epi16::<AMOUNT>(a),
+                _mm512_set1_epi8((0xFFu8.checked_shl(AMOUNT).unwrap_or(0)) as i8),
+            )
+        })
+    }
+    #[inline(always)]
+    fn shr<const AMOUNT: u32>(self, a: __m512i) -> __m512i {
+        avx512_shift!(self, AMOUNT, |a: __m512i| -> __m512i {
+            let b = _mm512_set1_epi8(-128);
+            _mm512_sub_epi8(
+                _mm512_and_si512(
+                    _mm512_srli_epi16::<AMOUNT>(_mm512_xor_si512(a, b)),
+                    _mm512_set1_epi8((0xFFu8.checked_shr(AMOUNT).unwrap_or(0)) as i8),
+                ),
+                _mm512_set1_epi8((0x80u8.checked_shr(AMOUNT).unwrap_or(0)) as i8),
+            )
+        })
+    }
+}
+
+impl SatBackend<i8> for Avx512Descriptor {
+    #[inline(always)]
+    fn sat_add(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_adds_epi8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_subs_epi8(a, b)
         })
     }
 }
@@ -567,6 +1094,12 @@ impl CompareBackend<u8> for Avx512Descriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: u64, if_true: __m512i) -> __m512i {
+        avx512_call!(self, |mask: u64, if_true: __m512i| -> __m512i {
+            _mm512_maskz_mov_epi8(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: u64, if_false: __m512i) -> __m512i {
         avx512_call!(self, |mask: u64, if_false: __m512i| -> __m512i {
             _mm512_maskz_mov_epi8(!mask, if_false)
@@ -650,6 +1183,21 @@ impl IntBitBackend<u8> for Avx512Descriptor {
                 _mm512_srli_epi16::<AMOUNT>(a),
                 _mm512_set1_epi8((0xFFu8.checked_shr(AMOUNT).unwrap_or(0)) as i8),
             )
+        })
+    }
+}
+
+impl SatBackend<u8> for Avx512Descriptor {
+    #[inline(always)]
+    fn sat_add(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_adds_epu8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_subs_epu8(a, b)
         })
     }
 }
@@ -787,6 +1335,12 @@ impl CompareBackend<i16> for Avx512Descriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: u32, if_true: __m512i) -> __m512i {
+        avx512_call!(self, |mask: u32, if_true: __m512i| -> __m512i {
+            _mm512_maskz_mov_epi16(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: u32, if_false: __m512i) -> __m512i {
         avx512_call!(self, |mask: u32, if_false: __m512i| -> __m512i {
             _mm512_maskz_mov_epi16(!mask, if_false)
@@ -878,6 +1432,33 @@ impl IntBitBackend<i16> for Avx512Descriptor {
     fn shr<const AMOUNT: u32>(self, a: __m512i) -> __m512i {
         avx512_shift!(self, AMOUNT, |a: __m512i| -> __m512i {
             _mm512_srai_epi16::<AMOUNT>(a)
+        })
+    }
+    #[inline(always)]
+    fn shl_vec(self, a: __m512i, counts: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, counts: __m512i| -> __m512i {
+            _mm512_sllv_epi16(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn shr_vec(self, a: __m512i, counts: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, counts: __m512i| -> __m512i {
+            _mm512_srav_epi16(a, counts)
+        })
+    }
+}
+
+impl SatBackend<i16> for Avx512Descriptor {
+    #[inline(always)]
+    fn sat_add(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_adds_epi16(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_subs_epi16(a, b)
         })
     }
 }
@@ -1015,6 +1596,12 @@ impl CompareBackend<u16> for Avx512Descriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: u32, if_true: __m512i) -> __m512i {
+        avx512_call!(self, |mask: u32, if_true: __m512i| -> __m512i {
+            _mm512_maskz_mov_epi16(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: u32, if_false: __m512i) -> __m512i {
         avx512_call!(self, |mask: u32, if_false: __m512i| -> __m512i {
             _mm512_maskz_mov_epi16(!mask, if_false)
@@ -1087,6 +1674,33 @@ impl IntBitBackend<u16> for Avx512Descriptor {
     fn shr<const AMOUNT: u32>(self, a: __m512i) -> __m512i {
         avx512_shift!(self, AMOUNT, |a: __m512i| -> __m512i {
             _mm512_srli_epi16::<AMOUNT>(a)
+        })
+    }
+    #[inline(always)]
+    fn shl_vec(self, a: __m512i, counts: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, counts: __m512i| -> __m512i {
+            _mm512_sllv_epi16(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn shr_vec(self, a: __m512i, counts: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, counts: __m512i| -> __m512i {
+            _mm512_srlv_epi16(a, counts)
+        })
+    }
+}
+
+impl SatBackend<u16> for Avx512Descriptor {
+    #[inline(always)]
+    fn sat_add(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_adds_epu16(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_subs_epu16(a, b)
         })
     }
 }
@@ -1224,6 +1838,12 @@ impl CompareBackend<i32> for Avx512Descriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: u16, if_true: __m512i) -> __m512i {
+        avx512_call!(self, |mask: u16, if_true: __m512i| -> __m512i {
+            _mm512_maskz_mov_epi32(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: u16, if_false: __m512i) -> __m512i {
         avx512_call!(self, |mask: u16, if_false: __m512i| -> __m512i {
             _mm512_maskz_mov_epi32(!mask, if_false)
@@ -1315,6 +1935,18 @@ impl IntBitBackend<i32> for Avx512Descriptor {
     fn shr<const AMOUNT: u32>(self, a: __m512i) -> __m512i {
         avx512_shift!(self, AMOUNT, |a: __m512i| -> __m512i {
             _mm512_srai_epi32::<AMOUNT>(a)
+        })
+    }
+    #[inline(always)]
+    fn shl_vec(self, a: __m512i, counts: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, counts: __m512i| -> __m512i {
+            _mm512_sllv_epi32(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn shr_vec(self, a: __m512i, counts: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, counts: __m512i| -> __m512i {
+            _mm512_srav_epi32(a, counts)
         })
     }
 }
@@ -1452,6 +2084,12 @@ impl CompareBackend<u32> for Avx512Descriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: u16, if_true: __m512i) -> __m512i {
+        avx512_call!(self, |mask: u16, if_true: __m512i| -> __m512i {
+            _mm512_maskz_mov_epi32(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: u16, if_false: __m512i) -> __m512i {
         avx512_call!(self, |mask: u16, if_false: __m512i| -> __m512i {
             _mm512_maskz_mov_epi32(!mask, if_false)
@@ -1524,6 +2162,269 @@ impl IntBitBackend<u32> for Avx512Descriptor {
     fn shr<const AMOUNT: u32>(self, a: __m512i) -> __m512i {
         avx512_shift!(self, AMOUNT, |a: __m512i| -> __m512i {
             _mm512_srli_epi32::<AMOUNT>(a)
+        })
+    }
+    #[inline(always)]
+    fn shl_vec(self, a: __m512i, counts: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, counts: __m512i| -> __m512i {
+            _mm512_sllv_epi32(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn shr_vec(self, a: __m512i, counts: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, counts: __m512i| -> __m512i {
+            _mm512_srlv_epi32(a, counts)
+        })
+    }
+}
+
+impl LaneBackend<i64> for Avx512Descriptor {
+    type Raw = __m512i;
+    type Array = [i64; 8];
+
+    #[inline(always)]
+    fn zero(self) -> __m512i {
+        avx512_call!(self, || -> __m512i { _mm512_setzero_si512() })
+    }
+    #[inline(always)]
+    fn splat(self, v: i64) -> __m512i {
+        avx512_call!(self, |v: i64| -> __m512i { _mm512_set1_epi64(v) })
+    }
+    #[inline(always)]
+    fn extract_lane0(self, a: __m512i) -> i64 {
+        avx512_call!(self, |a: __m512i| -> i64 {
+            _mm_cvtsi128_si64(_mm512_castsi512_si128(a)) as i64
+        })
+    }
+    #[inline(always)]
+    fn load(self, mem: &[i64]) -> __m512i {
+        let chunk: &[i64; 8] = mem.first_chunk::<8>().unwrap();
+        avx512_call!(self, |chunk: &[i64; 8]| -> __m512i {
+            arch_ops::_mm512_loadu_si512_i64(chunk)
+        })
+    }
+    #[inline(always)]
+    fn store(self, a: __m512i, dest: &mut [i64]) {
+        let chunk: &mut [i64; 8] = dest.first_chunk_mut::<8>().unwrap();
+        avx512_call!(self, |chunk: &mut [i64; 8], a: __m512i| {
+            arch_ops::_mm512_storeu_si512_i64(chunk, a)
+        });
+    }
+    #[inline(always)]
+    fn load_array(self, mem: &[i64; 8]) -> __m512i {
+        avx512_call!(self, |mem: &[i64; 8]| -> __m512i {
+            arch_ops::_mm512_loadu_si512_i64(mem)
+        })
+    }
+    #[inline(always)]
+    fn store_array(self, a: __m512i, dest: &mut [i64; 8]) {
+        avx512_call!(self, |dest: &mut [i64; 8], a: __m512i| {
+            arch_ops::_mm512_storeu_si512_i64(dest, a)
+        });
+    }
+    #[inline(always)]
+    fn zero_array() -> [i64; 8] {
+        [i64::ZERO; 8]
+    }
+    #[inline(always)]
+    fn slice_as_array(slice: &[i64]) -> &[[i64; 8]] {
+        generic_ops::chunks(slice)
+    }
+    #[inline(always)]
+    fn slice_as_array_mut(slice: &mut [i64]) -> &mut [[i64; 8]] {
+        generic_ops::chunks_mut(slice)
+    }
+    #[inline(always)]
+    fn to_raw_bytes(self, a: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i| -> __m512i { a })
+    }
+    #[inline(always)]
+    fn from_raw_bytes(self, a: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i| -> __m512i { a })
+    }
+    #[inline(always)]
+    fn interleave_lo(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_unpacklo_epi64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn interleave_hi(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_unpackhi_epi64(a, b)
+        })
+    }
+}
+
+impl crate::SimdVec<i64, Avx512Descriptor> {
+    /// Returns the underlying native SIMD register.
+    #[inline(always)]
+    pub fn raw(self) -> __m512i {
+        self.0
+    }
+
+    /// Wraps a native SIMD register with its descriptor token.
+    #[inline(always)]
+    pub fn from_raw(d: Avx512Descriptor, raw: __m512i) -> Self {
+        Self(raw, d)
+    }
+}
+
+impl CompareBackend<i64> for Avx512Descriptor {
+    #[inline(always)]
+    fn eq(self, a: __m512i, b: __m512i) -> u8 {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> u8 {
+            _mm512_cmpeq_epi64_mask(a, b)
+        })
+    }
+    #[inline(always)]
+    fn gt(self, a: __m512i, b: __m512i) -> u8 {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> u8 {
+            _mm512_cmpgt_epi64_mask(a, b)
+        })
+    }
+    #[inline(always)]
+    fn eq_zero(self, a: __m512i) -> u8 {
+        avx512_call!(self, |a: __m512i| -> u8 {
+            _mm512_cmpeq_epi64_mask(a, _mm512_setzero_si512())
+        })
+    }
+    #[inline(always)]
+    fn min(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_min_epi64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn max(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_max_epi64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn mask_select(self, mask: u8, if_true: __m512i, if_false: __m512i) -> __m512i {
+        avx512_call!(self, |mask: u8,
+                            if_true: __m512i,
+                            if_false: __m512i|
+         -> __m512i {
+            _mm512_mask_blend_epi64(mask, if_false, if_true)
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: u8, if_true: __m512i) -> __m512i {
+        avx512_call!(self, |mask: u8, if_true: __m512i| -> __m512i {
+            _mm512_maskz_mov_epi64(mask, if_true)
+        })
+    }
+    #[inline(always)]
+    fn mask_zero_select(self, mask: u8, if_false: __m512i) -> __m512i {
+        avx512_call!(self, |mask: u8, if_false: __m512i| -> __m512i {
+            _mm512_maskz_mov_epi64(!mask, if_false)
+        })
+    }
+}
+
+impl ArithBackend<i64> for Avx512Descriptor {
+    #[inline(always)]
+    fn add(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_add_epi64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sub(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_sub_epi64(a, b)
+        })
+    }
+}
+
+impl MulBackend<i64> for Avx512Descriptor {
+    #[inline(always)]
+    fn mul(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            let lo = _mm512_mul_epu32(a, b);
+            let hi = _mm512_add_epi64(
+                _mm512_mul_epu32(_mm512_srli_epi64::<32>(a), b),
+                _mm512_mul_epu32(a, _mm512_srli_epi64::<32>(b)),
+            );
+            _mm512_add_epi64(lo, _mm512_slli_epi64::<32>(hi))
+        })
+    }
+}
+
+impl SignedBackend<i64> for Avx512Descriptor {
+    #[inline(always)]
+    fn neg(self, a: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i| -> __m512i {
+            _mm512_sub_epi64(_mm512_setzero_si512(), a)
+        })
+    }
+    #[inline(always)]
+    fn abs(self, a: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i| -> __m512i { _mm512_abs_epi64(a) })
+    }
+    #[inline(always)]
+    fn lt_zero(self, a: __m512i) -> u8 {
+        avx512_call!(self, |a: __m512i| -> u8 {
+            _mm512_cmpgt_epi64_mask(_mm512_setzero_si512(), a)
+        })
+    }
+}
+
+impl IntBitBackend<i64> for Avx512Descriptor {
+    #[inline(always)]
+    fn bit_and(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_and_si512(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_or(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_or_si512(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_xor(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_xor_si512(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_not(self, a: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i| -> __m512i {
+            _mm512_xor_si512(a, _mm512_set1_epi32(-1))
+        })
+    }
+    #[inline(always)]
+    fn andnot(self, not_a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |not_a: __m512i, b: __m512i| -> __m512i {
+            _mm512_andnot_si512(not_a, b)
+        })
+    }
+    #[inline(always)]
+    fn shl<const AMOUNT: u32>(self, a: __m512i) -> __m512i {
+        avx512_shift!(self, AMOUNT, |a: __m512i| -> __m512i {
+            _mm512_slli_epi64::<AMOUNT>(a)
+        })
+    }
+    #[inline(always)]
+    fn shr<const AMOUNT: u32>(self, a: __m512i) -> __m512i {
+        avx512_shift!(self, AMOUNT, |a: __m512i| -> __m512i {
+            _mm512_srai_epi64::<AMOUNT>(a)
+        })
+    }
+    #[inline(always)]
+    fn shl_vec(self, a: __m512i, counts: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, counts: __m512i| -> __m512i {
+            _mm512_sllv_epi64(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn shr_vec(self, a: __m512i, counts: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, counts: __m512i| -> __m512i {
+            _mm512_srav_epi64(a, counts)
         })
     }
 }
@@ -1661,6 +2562,12 @@ impl CompareBackend<u64> for Avx512Descriptor {
         })
     }
     #[inline(always)]
+    fn mask_select_zero(self, mask: u8, if_true: __m512i) -> __m512i {
+        avx512_call!(self, |mask: u8, if_true: __m512i| -> __m512i {
+            _mm512_maskz_mov_epi64(mask, if_true)
+        })
+    }
+    #[inline(always)]
     fn mask_zero_select(self, mask: u8, if_false: __m512i) -> __m512i {
         avx512_call!(self, |mask: u8, if_false: __m512i| -> __m512i {
             _mm512_maskz_mov_epi64(!mask, if_false)
@@ -1740,6 +2647,18 @@ impl IntBitBackend<u64> for Avx512Descriptor {
             _mm512_srli_epi64::<AMOUNT>(a)
         })
     }
+    #[inline(always)]
+    fn shl_vec(self, a: __m512i, counts: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, counts: __m512i| -> __m512i {
+            _mm512_sllv_epi64(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn shr_vec(self, a: __m512i, counts: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, counts: __m512i| -> __m512i {
+            _mm512_srlv_epi64(a, counts)
+        })
+    }
 }
 
 impl F32ExtraBackend for Avx512Descriptor {
@@ -1779,6 +2698,43 @@ impl F32ExtraBackend for Avx512Descriptor {
                 _mm512_cvtps_ph::<{ _MM_FROUND_TO_NEAREST_INT }>(a),
             );
         });
+    }
+}
+
+impl F64ExtraBackend for Avx512Descriptor {
+    #[inline(always)]
+    fn f64_as_i64(self, a: __m512d) -> __m512i {
+        generic_ops::f64_as_i64_sw(self, a)
+    }
+    #[inline(always)]
+    fn f64_from_f32_lo(self, a: __m512) -> __m512d {
+        avx512_call!(self, |a: __m512| -> __m512d {
+            _mm512_cvtps_pd(_mm512_castps512_ps256(a))
+        })
+    }
+    #[inline(always)]
+    fn f64_from_f32_hi(self, a: __m512) -> __m512d {
+        avx512_call!(self, |a: __m512| -> __m512d {
+            _mm512_cvtps_pd(_mm256_castsi256_ps(_mm512_extracti64x4_epi64::<1>(
+                _mm512_castps_si512(a),
+            )))
+        })
+    }
+    #[inline(always)]
+    fn f64_to_f32(self, lo: __m512d, hi: __m512d) -> __m512 {
+        avx512_call!(self, |lo: __m512d, hi: __m512d| -> __m512 {
+            _mm512_castsi512_ps(_mm512_inserti64x4::<1>(
+                _mm512_castps_si512(_mm512_castps256_ps512(_mm512_cvtpd_ps(lo))),
+                _mm256_castps_si256(_mm512_cvtpd_ps(hi)),
+            ))
+        })
+    }
+}
+
+impl I64ExtraBackend for Avx512Descriptor {
+    #[inline(always)]
+    fn i64_as_f64(self, a: __m512i) -> __m512d {
+        generic_ops::i64_as_f64_sw(self, a)
     }
 }
 

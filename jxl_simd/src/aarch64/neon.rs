@@ -13,8 +13,8 @@ use std::arch::aarch64::*;
 use super::{NeonDescriptor, arch_ops, neon_call, neon_shift};
 use crate::sealed::{
     ArithBackend, BytesBackend, CompareBackend, DescriptorSealed, Element, F32ExtraBackend,
-    FloatBackend, I16ExtraBackend, I32ExtraBackend, IntBitBackend, LaneBackend, MaskBackend,
-    MulBackend, SignedBackend, U8ExtraBackend,
+    F64ExtraBackend, FloatBackend, I16ExtraBackend, I32ExtraBackend, I64ExtraBackend,
+    IntBitBackend, LaneBackend, MaskBackend, MulBackend, SatBackend, SignedBackend, U8ExtraBackend,
 };
 use crate::{W8, W16, W32, W64, generic_ops};
 
@@ -321,6 +321,38 @@ impl LaneBackend<f32> for NeonDescriptor {
             arch_ops::vst4q_f32(dest.first_chunk_mut().unwrap(), float32x4x4_t(a, b, c, e));
         })
     }
+    #[inline(always)]
+    fn load_deinterleaved_2(self, src: &[f32]) -> (float32x4_t, float32x4_t) {
+        neon_call!(self, |src: &[f32]| -> (float32x4_t, float32x4_t) {
+            let r = arch_ops::vld2q_f32(src.first_chunk().unwrap());
+            (r.0, r.1)
+        })
+    }
+    #[inline(always)]
+    fn load_deinterleaved_3(self, src: &[f32]) -> (float32x4_t, float32x4_t, float32x4_t) {
+        neon_call!(
+            self,
+            |src: &[f32]| -> (float32x4_t, float32x4_t, float32x4_t) {
+                let r = arch_ops::vld3q_f32(src.first_chunk().unwrap());
+                (r.0, r.1, r.2)
+            }
+        )
+    }
+    #[inline(always)]
+    fn load_deinterleaved_4(
+        self,
+        src: &[f32],
+    ) -> (float32x4_t, float32x4_t, float32x4_t, float32x4_t) {
+        neon_call!(self, |src: &[f32]| -> (
+            float32x4_t,
+            float32x4_t,
+            float32x4_t,
+            float32x4_t
+        ) {
+            let r = arch_ops::vld4q_f32(src.first_chunk().unwrap());
+            (r.0, r.1, r.2, r.3)
+        })
+    }
 }
 
 impl crate::SimdVec<f32, NeonDescriptor> {
@@ -378,6 +410,14 @@ impl CompareBackend<f32> for NeonDescriptor {
                           if_false: float32x4_t|
          -> float32x4_t {
             vbslq_f32(mask, if_true, if_false)
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: uint32x4_t, if_true: float32x4_t) -> float32x4_t {
+        neon_call!(self, |mask: uint32x4_t,
+                          if_true: float32x4_t|
+         -> float32x4_t {
+            vreinterpretq_f32_u32(vandq_u32(mask, vreinterpretq_u32_f32(if_true)))
         })
     }
     #[inline(always)]
@@ -467,9 +507,631 @@ impl FloatBackend<f32> for NeonDescriptor {
         neon_call!(self, |a: float32x4_t| -> float32x4_t { vrndnq_f32(a) })
     }
     #[inline(always)]
+    fn trunc(self, a: float32x4_t) -> float32x4_t {
+        neon_call!(self, |a: float32x4_t| -> float32x4_t { vrndq_f32(a) })
+    }
+    #[inline(always)]
     fn copysign(self, a: float32x4_t, sign: float32x4_t) -> float32x4_t {
         neon_call!(self, |a: float32x4_t, sign: float32x4_t| -> float32x4_t {
             vbslq_f32(vdupq_n_u32(0x8000_0000), sign, a)
+        })
+    }
+}
+
+impl LaneBackend<f64> for NeonDescriptor {
+    type Raw = float64x2_t;
+    type Array = [f64; 2];
+
+    #[inline(always)]
+    fn zero(self) -> float64x2_t {
+        neon_call!(self, || -> float64x2_t { vdupq_n_f64(0.0) })
+    }
+    #[inline(always)]
+    fn splat(self, v: f64) -> float64x2_t {
+        neon_call!(self, |v: f64| -> float64x2_t { vdupq_n_f64(v) })
+    }
+    #[inline(always)]
+    fn extract_lane0(self, a: float64x2_t) -> f64 {
+        neon_call!(self, |a: float64x2_t| -> f64 { vgetq_lane_f64::<0>(a) })
+    }
+    #[inline(always)]
+    fn load(self, mem: &[f64]) -> float64x2_t {
+        let chunk: &[f64; 2] = mem.first_chunk::<2>().unwrap();
+        neon_call!(self, |chunk: &[f64; 2]| -> float64x2_t {
+            arch_ops::vld1q_f64(chunk)
+        })
+    }
+    #[inline(always)]
+    fn store(self, a: float64x2_t, dest: &mut [f64]) {
+        let chunk: &mut [f64; 2] = dest.first_chunk_mut::<2>().unwrap();
+        neon_call!(self, |chunk: &mut [f64; 2], a: float64x2_t| {
+            arch_ops::vst1q_f64(chunk, a)
+        });
+    }
+    #[inline(always)]
+    fn load_array(self, mem: &[f64; 2]) -> float64x2_t {
+        neon_call!(self, |mem: &[f64; 2]| -> float64x2_t {
+            arch_ops::vld1q_f64(mem)
+        })
+    }
+    #[inline(always)]
+    fn store_array(self, a: float64x2_t, dest: &mut [f64; 2]) {
+        neon_call!(self, |dest: &mut [f64; 2], a: float64x2_t| {
+            arch_ops::vst1q_f64(dest, a)
+        });
+    }
+    #[inline(always)]
+    fn zero_array() -> [f64; 2] {
+        [f64::ZERO; 2]
+    }
+    #[inline(always)]
+    fn slice_as_array(slice: &[f64]) -> &[[f64; 2]] {
+        generic_ops::chunks(slice)
+    }
+    #[inline(always)]
+    fn slice_as_array_mut(slice: &mut [f64]) -> &mut [[f64; 2]] {
+        generic_ops::chunks_mut(slice)
+    }
+    #[inline(always)]
+    fn to_raw_bytes(self, a: float64x2_t) -> uint8x16_t {
+        neon_call!(self, |a: float64x2_t| -> uint8x16_t {
+            vreinterpretq_u8_f64(a)
+        })
+    }
+    #[inline(always)]
+    fn from_raw_bytes(self, a: uint8x16_t) -> float64x2_t {
+        neon_call!(self, |a: uint8x16_t| -> float64x2_t {
+            vreinterpretq_f64_u8(a)
+        })
+    }
+    #[inline(always)]
+    fn interleave_lo(self, a: float64x2_t, b: float64x2_t) -> float64x2_t {
+        neon_call!(self, |a: float64x2_t, b: float64x2_t| -> float64x2_t {
+            vzip1q_f64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn interleave_hi(self, a: float64x2_t, b: float64x2_t) -> float64x2_t {
+        neon_call!(self, |a: float64x2_t, b: float64x2_t| -> float64x2_t {
+            vzip2q_f64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn store_interleaved_2(self, a: float64x2_t, b: float64x2_t, dest: &mut [f64]) {
+        neon_call!(self, |a: float64x2_t, b: float64x2_t, dest: &mut [f64]| {
+            arch_ops::vst2q_f64(dest.first_chunk_mut().unwrap(), float64x2x2_t(a, b));
+        })
+    }
+    #[inline(always)]
+    fn store_interleaved_3(self, a: float64x2_t, b: float64x2_t, c: float64x2_t, dest: &mut [f64]) {
+        neon_call!(self, |a: float64x2_t,
+                          b: float64x2_t,
+                          c: float64x2_t,
+                          dest: &mut [f64]| {
+            arch_ops::vst3q_f64(dest.first_chunk_mut().unwrap(), float64x2x3_t(a, b, c));
+        })
+    }
+    #[inline(always)]
+    fn store_interleaved_4(
+        self,
+        a: float64x2_t,
+        b: float64x2_t,
+        c: float64x2_t,
+        e: float64x2_t,
+        dest: &mut [f64],
+    ) {
+        neon_call!(self, |a: float64x2_t,
+                          b: float64x2_t,
+                          c: float64x2_t,
+                          e: float64x2_t,
+                          dest: &mut [f64]| {
+            arch_ops::vst4q_f64(dest.first_chunk_mut().unwrap(), float64x2x4_t(a, b, c, e));
+        })
+    }
+    #[inline(always)]
+    fn load_deinterleaved_2(self, src: &[f64]) -> (float64x2_t, float64x2_t) {
+        neon_call!(self, |src: &[f64]| -> (float64x2_t, float64x2_t) {
+            let r = arch_ops::vld2q_f64(src.first_chunk().unwrap());
+            (r.0, r.1)
+        })
+    }
+    #[inline(always)]
+    fn load_deinterleaved_3(self, src: &[f64]) -> (float64x2_t, float64x2_t, float64x2_t) {
+        neon_call!(
+            self,
+            |src: &[f64]| -> (float64x2_t, float64x2_t, float64x2_t) {
+                let r = arch_ops::vld3q_f64(src.first_chunk().unwrap());
+                (r.0, r.1, r.2)
+            }
+        )
+    }
+    #[inline(always)]
+    fn load_deinterleaved_4(
+        self,
+        src: &[f64],
+    ) -> (float64x2_t, float64x2_t, float64x2_t, float64x2_t) {
+        neon_call!(self, |src: &[f64]| -> (
+            float64x2_t,
+            float64x2_t,
+            float64x2_t,
+            float64x2_t
+        ) {
+            let r = arch_ops::vld4q_f64(src.first_chunk().unwrap());
+            (r.0, r.1, r.2, r.3)
+        })
+    }
+}
+
+impl crate::SimdVec<f64, NeonDescriptor> {
+    /// Returns the underlying native SIMD register.
+    #[inline(always)]
+    pub fn raw(self) -> float64x2_t {
+        self.0
+    }
+
+    /// Wraps a native SIMD register with its descriptor token.
+    #[inline(always)]
+    pub fn from_raw(d: NeonDescriptor, raw: float64x2_t) -> Self {
+        Self(raw, d)
+    }
+}
+
+impl CompareBackend<f64> for NeonDescriptor {
+    #[inline(always)]
+    fn eq(self, a: float64x2_t, b: float64x2_t) -> uint64x2_t {
+        neon_call!(self, |a: float64x2_t, b: float64x2_t| -> uint64x2_t {
+            vceqq_f64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn gt(self, a: float64x2_t, b: float64x2_t) -> uint64x2_t {
+        neon_call!(self, |a: float64x2_t, b: float64x2_t| -> uint64x2_t {
+            vcgtq_f64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn eq_zero(self, a: float64x2_t) -> uint64x2_t {
+        neon_call!(self, |a: float64x2_t| -> uint64x2_t { vceqzq_f64(a) })
+    }
+    #[inline(always)]
+    fn min(self, a: float64x2_t, b: float64x2_t) -> float64x2_t {
+        neon_call!(self, |a: float64x2_t, b: float64x2_t| -> float64x2_t {
+            vminnmq_f64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn max(self, a: float64x2_t, b: float64x2_t) -> float64x2_t {
+        neon_call!(self, |a: float64x2_t, b: float64x2_t| -> float64x2_t {
+            vmaxnmq_f64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn mask_select(
+        self,
+        mask: uint64x2_t,
+        if_true: float64x2_t,
+        if_false: float64x2_t,
+    ) -> float64x2_t {
+        neon_call!(self, |mask: uint64x2_t,
+                          if_true: float64x2_t,
+                          if_false: float64x2_t|
+         -> float64x2_t {
+            vbslq_f64(mask, if_true, if_false)
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: uint64x2_t, if_true: float64x2_t) -> float64x2_t {
+        neon_call!(self, |mask: uint64x2_t,
+                          if_true: float64x2_t|
+         -> float64x2_t {
+            vreinterpretq_f64_u64(vandq_u64(mask, vreinterpretq_u64_f64(if_true)))
+        })
+    }
+    #[inline(always)]
+    fn mask_zero_select(self, mask: uint64x2_t, if_false: float64x2_t) -> float64x2_t {
+        neon_call!(self, |mask: uint64x2_t,
+                          if_false: float64x2_t|
+         -> float64x2_t {
+            vreinterpretq_f64_u64(vbicq_u64(vreinterpretq_u64_f64(if_false), mask))
+        })
+    }
+}
+
+impl ArithBackend<f64> for NeonDescriptor {
+    #[inline(always)]
+    fn add(self, a: float64x2_t, b: float64x2_t) -> float64x2_t {
+        neon_call!(self, |a: float64x2_t, b: float64x2_t| -> float64x2_t {
+            vaddq_f64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sub(self, a: float64x2_t, b: float64x2_t) -> float64x2_t {
+        neon_call!(self, |a: float64x2_t, b: float64x2_t| -> float64x2_t {
+            vsubq_f64(a, b)
+        })
+    }
+}
+
+impl MulBackend<f64> for NeonDescriptor {
+    #[inline(always)]
+    fn mul(self, a: float64x2_t, b: float64x2_t) -> float64x2_t {
+        neon_call!(self, |a: float64x2_t, b: float64x2_t| -> float64x2_t {
+            vmulq_f64(a, b)
+        })
+    }
+}
+
+impl SignedBackend<f64> for NeonDescriptor {
+    #[inline(always)]
+    fn neg(self, a: float64x2_t) -> float64x2_t {
+        neon_call!(self, |a: float64x2_t| -> float64x2_t { vnegq_f64(a) })
+    }
+    #[inline(always)]
+    fn abs(self, a: float64x2_t) -> float64x2_t {
+        neon_call!(self, |a: float64x2_t| -> float64x2_t { vabsq_f64(a) })
+    }
+    #[inline(always)]
+    fn lt_zero(self, a: float64x2_t) -> uint64x2_t {
+        neon_call!(self, |a: float64x2_t| -> uint64x2_t { vcltzq_f64(a) })
+    }
+}
+
+impl FloatBackend<f64> for NeonDescriptor {
+    #[inline(always)]
+    fn div(self, a: float64x2_t, b: float64x2_t) -> float64x2_t {
+        neon_call!(self, |a: float64x2_t, b: float64x2_t| -> float64x2_t {
+            vdivq_f64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn mul_add(self, a: float64x2_t, mul: float64x2_t, add: float64x2_t) -> float64x2_t {
+        neon_call!(self, |a: float64x2_t,
+                          mul: float64x2_t,
+                          add: float64x2_t|
+         -> float64x2_t { vfmaq_f64(add, a, mul) })
+    }
+    #[inline(always)]
+    fn neg_mul_add(self, a: float64x2_t, mul: float64x2_t, add: float64x2_t) -> float64x2_t {
+        neon_call!(self, |a: float64x2_t,
+                          mul: float64x2_t,
+                          add: float64x2_t|
+         -> float64x2_t { vfmsq_f64(add, a, mul) })
+    }
+    #[inline(always)]
+    fn sqrt(self, a: float64x2_t) -> float64x2_t {
+        neon_call!(self, |a: float64x2_t| -> float64x2_t { vsqrtq_f64(a) })
+    }
+    #[inline(always)]
+    fn floor(self, a: float64x2_t) -> float64x2_t {
+        neon_call!(self, |a: float64x2_t| -> float64x2_t { vrndmq_f64(a) })
+    }
+    #[inline(always)]
+    fn ceil(self, a: float64x2_t) -> float64x2_t {
+        neon_call!(self, |a: float64x2_t| -> float64x2_t { vrndpq_f64(a) })
+    }
+    #[inline(always)]
+    fn round(self, a: float64x2_t) -> float64x2_t {
+        neon_call!(self, |a: float64x2_t| -> float64x2_t { vrndnq_f64(a) })
+    }
+    #[inline(always)]
+    fn trunc(self, a: float64x2_t) -> float64x2_t {
+        neon_call!(self, |a: float64x2_t| -> float64x2_t { vrndq_f64(a) })
+    }
+    #[inline(always)]
+    fn copysign(self, a: float64x2_t, sign: float64x2_t) -> float64x2_t {
+        neon_call!(self, |a: float64x2_t, sign: float64x2_t| -> float64x2_t {
+            vbslq_f64(vdupq_n_u64(0x8000_0000_0000_0000), sign, a)
+        })
+    }
+}
+
+impl LaneBackend<i8> for NeonDescriptor {
+    type Raw = int8x16_t;
+    type Array = [i8; 16];
+
+    #[inline(always)]
+    fn zero(self) -> int8x16_t {
+        neon_call!(self, || -> int8x16_t { vdupq_n_s8(0) })
+    }
+    #[inline(always)]
+    fn splat(self, v: i8) -> int8x16_t {
+        neon_call!(self, |v: i8| -> int8x16_t { vdupq_n_s8(v) })
+    }
+    #[inline(always)]
+    fn extract_lane0(self, a: int8x16_t) -> i8 {
+        neon_call!(self, |a: int8x16_t| -> i8 { vgetq_lane_s8::<0>(a) })
+    }
+    #[inline(always)]
+    fn load(self, mem: &[i8]) -> int8x16_t {
+        let chunk: &[i8; 16] = mem.first_chunk::<16>().unwrap();
+        neon_call!(self, |chunk: &[i8; 16]| -> int8x16_t {
+            arch_ops::vld1q_s8(chunk)
+        })
+    }
+    #[inline(always)]
+    fn store(self, a: int8x16_t, dest: &mut [i8]) {
+        let chunk: &mut [i8; 16] = dest.first_chunk_mut::<16>().unwrap();
+        neon_call!(self, |chunk: &mut [i8; 16], a: int8x16_t| {
+            arch_ops::vst1q_s8(chunk, a)
+        });
+    }
+    #[inline(always)]
+    fn load_array(self, mem: &[i8; 16]) -> int8x16_t {
+        neon_call!(self, |mem: &[i8; 16]| -> int8x16_t {
+            arch_ops::vld1q_s8(mem)
+        })
+    }
+    #[inline(always)]
+    fn store_array(self, a: int8x16_t, dest: &mut [i8; 16]) {
+        neon_call!(self, |dest: &mut [i8; 16], a: int8x16_t| {
+            arch_ops::vst1q_s8(dest, a)
+        });
+    }
+    #[inline(always)]
+    fn zero_array() -> [i8; 16] {
+        [i8::ZERO; 16]
+    }
+    #[inline(always)]
+    fn slice_as_array(slice: &[i8]) -> &[[i8; 16]] {
+        generic_ops::chunks(slice)
+    }
+    #[inline(always)]
+    fn slice_as_array_mut(slice: &mut [i8]) -> &mut [[i8; 16]] {
+        generic_ops::chunks_mut(slice)
+    }
+    #[inline(always)]
+    fn to_raw_bytes(self, a: int8x16_t) -> uint8x16_t {
+        neon_call!(self, |a: int8x16_t| -> uint8x16_t {
+            vreinterpretq_u8_s8(a)
+        })
+    }
+    #[inline(always)]
+    fn from_raw_bytes(self, a: uint8x16_t) -> int8x16_t {
+        neon_call!(self, |a: uint8x16_t| -> int8x16_t {
+            vreinterpretq_s8_u8(a)
+        })
+    }
+    #[inline(always)]
+    fn interleave_lo(self, a: int8x16_t, b: int8x16_t) -> int8x16_t {
+        neon_call!(self, |a: int8x16_t, b: int8x16_t| -> int8x16_t {
+            vzip1q_s8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn interleave_hi(self, a: int8x16_t, b: int8x16_t) -> int8x16_t {
+        neon_call!(self, |a: int8x16_t, b: int8x16_t| -> int8x16_t {
+            vzip2q_s8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn store_interleaved_2(self, a: int8x16_t, b: int8x16_t, dest: &mut [i8]) {
+        neon_call!(self, |a: int8x16_t, b: int8x16_t, dest: &mut [i8]| {
+            arch_ops::vst2q_s8(dest.first_chunk_mut().unwrap(), int8x16x2_t(a, b));
+        })
+    }
+    #[inline(always)]
+    fn store_interleaved_3(self, a: int8x16_t, b: int8x16_t, c: int8x16_t, dest: &mut [i8]) {
+        neon_call!(self, |a: int8x16_t,
+                          b: int8x16_t,
+                          c: int8x16_t,
+                          dest: &mut [i8]| {
+            arch_ops::vst3q_s8(dest.first_chunk_mut().unwrap(), int8x16x3_t(a, b, c));
+        })
+    }
+    #[inline(always)]
+    fn store_interleaved_4(
+        self,
+        a: int8x16_t,
+        b: int8x16_t,
+        c: int8x16_t,
+        e: int8x16_t,
+        dest: &mut [i8],
+    ) {
+        neon_call!(self, |a: int8x16_t,
+                          b: int8x16_t,
+                          c: int8x16_t,
+                          e: int8x16_t,
+                          dest: &mut [i8]| {
+            arch_ops::vst4q_s8(dest.first_chunk_mut().unwrap(), int8x16x4_t(a, b, c, e));
+        })
+    }
+    #[inline(always)]
+    fn load_deinterleaved_2(self, src: &[i8]) -> (int8x16_t, int8x16_t) {
+        neon_call!(self, |src: &[i8]| -> (int8x16_t, int8x16_t) {
+            let r = arch_ops::vld2q_s8(src.first_chunk().unwrap());
+            (r.0, r.1)
+        })
+    }
+    #[inline(always)]
+    fn load_deinterleaved_3(self, src: &[i8]) -> (int8x16_t, int8x16_t, int8x16_t) {
+        neon_call!(self, |src: &[i8]| -> (int8x16_t, int8x16_t, int8x16_t) {
+            let r = arch_ops::vld3q_s8(src.first_chunk().unwrap());
+            (r.0, r.1, r.2)
+        })
+    }
+    #[inline(always)]
+    fn load_deinterleaved_4(self, src: &[i8]) -> (int8x16_t, int8x16_t, int8x16_t, int8x16_t) {
+        neon_call!(
+            self,
+            |src: &[i8]| -> (int8x16_t, int8x16_t, int8x16_t, int8x16_t) {
+                let r = arch_ops::vld4q_s8(src.first_chunk().unwrap());
+                (r.0, r.1, r.2, r.3)
+            }
+        )
+    }
+}
+
+impl crate::SimdVec<i8, NeonDescriptor> {
+    /// Returns the underlying native SIMD register.
+    #[inline(always)]
+    pub fn raw(self) -> int8x16_t {
+        self.0
+    }
+
+    /// Wraps a native SIMD register with its descriptor token.
+    #[inline(always)]
+    pub fn from_raw(d: NeonDescriptor, raw: int8x16_t) -> Self {
+        Self(raw, d)
+    }
+}
+
+impl CompareBackend<i8> for NeonDescriptor {
+    #[inline(always)]
+    fn eq(self, a: int8x16_t, b: int8x16_t) -> uint8x16_t {
+        neon_call!(self, |a: int8x16_t, b: int8x16_t| -> uint8x16_t {
+            vceqq_s8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn gt(self, a: int8x16_t, b: int8x16_t) -> uint8x16_t {
+        neon_call!(self, |a: int8x16_t, b: int8x16_t| -> uint8x16_t {
+            vcgtq_s8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn eq_zero(self, a: int8x16_t) -> uint8x16_t {
+        neon_call!(self, |a: int8x16_t| -> uint8x16_t { vceqzq_s8(a) })
+    }
+    #[inline(always)]
+    fn min(self, a: int8x16_t, b: int8x16_t) -> int8x16_t {
+        neon_call!(self, |a: int8x16_t, b: int8x16_t| -> int8x16_t {
+            vminq_s8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn max(self, a: int8x16_t, b: int8x16_t) -> int8x16_t {
+        neon_call!(self, |a: int8x16_t, b: int8x16_t| -> int8x16_t {
+            vmaxq_s8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn mask_select(self, mask: uint8x16_t, if_true: int8x16_t, if_false: int8x16_t) -> int8x16_t {
+        neon_call!(self, |mask: uint8x16_t,
+                          if_true: int8x16_t,
+                          if_false: int8x16_t|
+         -> int8x16_t {
+            vbslq_s8(mask, if_true, if_false)
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: uint8x16_t, if_true: int8x16_t) -> int8x16_t {
+        neon_call!(self, |mask: uint8x16_t, if_true: int8x16_t| -> int8x16_t {
+            vandq_s8(vreinterpretq_s8_u8(mask), if_true)
+        })
+    }
+    #[inline(always)]
+    fn mask_zero_select(self, mask: uint8x16_t, if_false: int8x16_t) -> int8x16_t {
+        neon_call!(self, |mask: uint8x16_t, if_false: int8x16_t| -> int8x16_t {
+            vbicq_s8(if_false, vreinterpretq_s8_u8(mask))
+        })
+    }
+}
+
+impl ArithBackend<i8> for NeonDescriptor {
+    #[inline(always)]
+    fn add(self, a: int8x16_t, b: int8x16_t) -> int8x16_t {
+        neon_call!(self, |a: int8x16_t, b: int8x16_t| -> int8x16_t {
+            vaddq_s8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sub(self, a: int8x16_t, b: int8x16_t) -> int8x16_t {
+        neon_call!(self, |a: int8x16_t, b: int8x16_t| -> int8x16_t {
+            vsubq_s8(a, b)
+        })
+    }
+}
+
+impl MulBackend<i8> for NeonDescriptor {
+    #[inline(always)]
+    fn mul(self, a: int8x16_t, b: int8x16_t) -> int8x16_t {
+        neon_call!(self, |a: int8x16_t, b: int8x16_t| -> int8x16_t {
+            vmulq_s8(a, b)
+        })
+    }
+}
+
+impl SignedBackend<i8> for NeonDescriptor {
+    #[inline(always)]
+    fn neg(self, a: int8x16_t) -> int8x16_t {
+        neon_call!(self, |a: int8x16_t| -> int8x16_t { vnegq_s8(a) })
+    }
+    #[inline(always)]
+    fn abs(self, a: int8x16_t) -> int8x16_t {
+        neon_call!(self, |a: int8x16_t| -> int8x16_t { vabsq_s8(a) })
+    }
+    #[inline(always)]
+    fn lt_zero(self, a: int8x16_t) -> uint8x16_t {
+        neon_call!(self, |a: int8x16_t| -> uint8x16_t { vcltzq_s8(a) })
+    }
+}
+
+impl IntBitBackend<i8> for NeonDescriptor {
+    #[inline(always)]
+    fn bit_and(self, a: int8x16_t, b: int8x16_t) -> int8x16_t {
+        neon_call!(self, |a: int8x16_t, b: int8x16_t| -> int8x16_t {
+            vandq_s8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_or(self, a: int8x16_t, b: int8x16_t) -> int8x16_t {
+        neon_call!(self, |a: int8x16_t, b: int8x16_t| -> int8x16_t {
+            vorrq_s8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_xor(self, a: int8x16_t, b: int8x16_t) -> int8x16_t {
+        neon_call!(self, |a: int8x16_t, b: int8x16_t| -> int8x16_t {
+            veorq_s8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_not(self, a: int8x16_t) -> int8x16_t {
+        neon_call!(self, |a: int8x16_t| -> int8x16_t { vmvnq_s8(a) })
+    }
+    #[inline(always)]
+    fn andnot(self, not_a: int8x16_t, b: int8x16_t) -> int8x16_t {
+        neon_call!(self, |not_a: int8x16_t, b: int8x16_t| -> int8x16_t {
+            vbicq_s8(b, not_a)
+        })
+    }
+    #[inline(always)]
+    fn shl<const AMOUNT: u32>(self, a: int8x16_t) -> int8x16_t {
+        neon_shift!(self, AMOUNT, |a: int8x16_t| -> int8x16_t {
+            vshlq_s8(a, vdupq_n_s8((AMOUNT as i32) as i8))
+        })
+    }
+    #[inline(always)]
+    fn shr<const AMOUNT: u32>(self, a: int8x16_t) -> int8x16_t {
+        neon_shift!(self, AMOUNT, |a: int8x16_t| -> int8x16_t {
+            vshlq_s8(a, vdupq_n_s8((-(AMOUNT as i32)) as i8))
+        })
+    }
+    #[inline(always)]
+    fn shl_vec(self, a: int8x16_t, counts: int8x16_t) -> int8x16_t {
+        neon_call!(self, |a: int8x16_t, counts: int8x16_t| -> int8x16_t {
+            vshlq_s8(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn shr_vec(self, a: int8x16_t, counts: int8x16_t) -> int8x16_t {
+        neon_call!(self, |a: int8x16_t, counts: int8x16_t| -> int8x16_t {
+            vshlq_s8(a, vnegq_s8(counts))
+        })
+    }
+}
+
+impl SatBackend<i8> for NeonDescriptor {
+    #[inline(always)]
+    fn sat_add(self, a: int8x16_t, b: int8x16_t) -> int8x16_t {
+        neon_call!(self, |a: int8x16_t, b: int8x16_t| -> int8x16_t {
+            vqaddq_s8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: int8x16_t, b: int8x16_t) -> int8x16_t {
+        neon_call!(self, |a: int8x16_t, b: int8x16_t| -> int8x16_t {
+            vqsubq_s8(a, b)
         })
     }
 }
@@ -580,6 +1242,32 @@ impl LaneBackend<u8> for NeonDescriptor {
             arch_ops::vst4q_u8(dest.first_chunk_mut().unwrap(), uint8x16x4_t(a, b, c, e));
         })
     }
+    #[inline(always)]
+    fn load_deinterleaved_2(self, src: &[u8]) -> (uint8x16_t, uint8x16_t) {
+        neon_call!(self, |src: &[u8]| -> (uint8x16_t, uint8x16_t) {
+            let r = arch_ops::vld2q_u8(src.first_chunk().unwrap());
+            (r.0, r.1)
+        })
+    }
+    #[inline(always)]
+    fn load_deinterleaved_3(self, src: &[u8]) -> (uint8x16_t, uint8x16_t, uint8x16_t) {
+        neon_call!(self, |src: &[u8]| -> (uint8x16_t, uint8x16_t, uint8x16_t) {
+            let r = arch_ops::vld3q_u8(src.first_chunk().unwrap());
+            (r.0, r.1, r.2)
+        })
+    }
+    #[inline(always)]
+    fn load_deinterleaved_4(self, src: &[u8]) -> (uint8x16_t, uint8x16_t, uint8x16_t, uint8x16_t) {
+        neon_call!(self, |src: &[u8]| -> (
+            uint8x16_t,
+            uint8x16_t,
+            uint8x16_t,
+            uint8x16_t
+        ) {
+            let r = arch_ops::vld4q_u8(src.first_chunk().unwrap());
+            (r.0, r.1, r.2, r.3)
+        })
+    }
 }
 
 impl crate::SimdVec<u8, NeonDescriptor> {
@@ -638,6 +1326,12 @@ impl CompareBackend<u8> for NeonDescriptor {
          -> uint8x16_t {
             vbslq_u8(mask, if_true, if_false)
         })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: uint8x16_t, if_true: uint8x16_t) -> uint8x16_t {
+        neon_call!(self, |mask: uint8x16_t,
+                          if_true: uint8x16_t|
+         -> uint8x16_t { vandq_u8(mask, if_true) })
     }
     #[inline(always)]
     fn mask_zero_select(self, mask: uint8x16_t, if_false: uint8x16_t) -> uint8x16_t {
@@ -710,6 +1404,33 @@ impl IntBitBackend<u8> for NeonDescriptor {
     fn shr<const AMOUNT: u32>(self, a: uint8x16_t) -> uint8x16_t {
         neon_shift!(self, AMOUNT, |a: uint8x16_t| -> uint8x16_t {
             vshlq_u8(a, vdupq_n_s8((-(AMOUNT as i32)) as i8))
+        })
+    }
+    #[inline(always)]
+    fn shl_vec(self, a: uint8x16_t, counts: uint8x16_t) -> uint8x16_t {
+        neon_call!(self, |a: uint8x16_t, counts: uint8x16_t| -> uint8x16_t {
+            vshlq_u8(a, vreinterpretq_s8_u8(counts))
+        })
+    }
+    #[inline(always)]
+    fn shr_vec(self, a: uint8x16_t, counts: uint8x16_t) -> uint8x16_t {
+        neon_call!(self, |a: uint8x16_t, counts: uint8x16_t| -> uint8x16_t {
+            vshlq_u8(a, vnegq_s8(vreinterpretq_s8_u8(counts)))
+        })
+    }
+}
+
+impl SatBackend<u8> for NeonDescriptor {
+    #[inline(always)]
+    fn sat_add(self, a: uint8x16_t, b: uint8x16_t) -> uint8x16_t {
+        neon_call!(self, |a: uint8x16_t, b: uint8x16_t| -> uint8x16_t {
+            vqaddq_u8(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: uint8x16_t, b: uint8x16_t) -> uint8x16_t {
+        neon_call!(self, |a: uint8x16_t, b: uint8x16_t| -> uint8x16_t {
+            vqsubq_u8(a, b)
         })
     }
 }
@@ -824,6 +1545,30 @@ impl LaneBackend<i16> for NeonDescriptor {
             arch_ops::vst4q_s16(dest.first_chunk_mut().unwrap(), int16x8x4_t(a, b, c, e));
         })
     }
+    #[inline(always)]
+    fn load_deinterleaved_2(self, src: &[i16]) -> (int16x8_t, int16x8_t) {
+        neon_call!(self, |src: &[i16]| -> (int16x8_t, int16x8_t) {
+            let r = arch_ops::vld2q_s16(src.first_chunk().unwrap());
+            (r.0, r.1)
+        })
+    }
+    #[inline(always)]
+    fn load_deinterleaved_3(self, src: &[i16]) -> (int16x8_t, int16x8_t, int16x8_t) {
+        neon_call!(self, |src: &[i16]| -> (int16x8_t, int16x8_t, int16x8_t) {
+            let r = arch_ops::vld3q_s16(src.first_chunk().unwrap());
+            (r.0, r.1, r.2)
+        })
+    }
+    #[inline(always)]
+    fn load_deinterleaved_4(self, src: &[i16]) -> (int16x8_t, int16x8_t, int16x8_t, int16x8_t) {
+        neon_call!(
+            self,
+            |src: &[i16]| -> (int16x8_t, int16x8_t, int16x8_t, int16x8_t) {
+                let r = arch_ops::vld4q_s16(src.first_chunk().unwrap());
+                (r.0, r.1, r.2, r.3)
+            }
+        )
+    }
 }
 
 impl crate::SimdVec<i16, NeonDescriptor> {
@@ -876,6 +1621,12 @@ impl CompareBackend<i16> for NeonDescriptor {
                           if_false: int16x8_t|
          -> int16x8_t {
             vbslq_s16(mask, if_true, if_false)
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: uint16x8_t, if_true: int16x8_t) -> int16x8_t {
+        neon_call!(self, |mask: uint16x8_t, if_true: int16x8_t| -> int16x8_t {
+            vandq_s16(vreinterpretq_s16_u16(mask), if_true)
         })
     }
     #[inline(always)]
@@ -964,6 +1715,33 @@ impl IntBitBackend<i16> for NeonDescriptor {
     fn shr<const AMOUNT: u32>(self, a: int16x8_t) -> int16x8_t {
         neon_shift!(self, AMOUNT, |a: int16x8_t| -> int16x8_t {
             vshlq_s16(a, vdupq_n_s16((-(AMOUNT as i32)) as i16))
+        })
+    }
+    #[inline(always)]
+    fn shl_vec(self, a: int16x8_t, counts: int16x8_t) -> int16x8_t {
+        neon_call!(self, |a: int16x8_t, counts: int16x8_t| -> int16x8_t {
+            vshlq_s16(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn shr_vec(self, a: int16x8_t, counts: int16x8_t) -> int16x8_t {
+        neon_call!(self, |a: int16x8_t, counts: int16x8_t| -> int16x8_t {
+            vshlq_s16(a, vnegq_s16(counts))
+        })
+    }
+}
+
+impl SatBackend<i16> for NeonDescriptor {
+    #[inline(always)]
+    fn sat_add(self, a: int16x8_t, b: int16x8_t) -> int16x8_t {
+        neon_call!(self, |a: int16x8_t, b: int16x8_t| -> int16x8_t {
+            vqaddq_s16(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: int16x8_t, b: int16x8_t) -> int16x8_t {
+        neon_call!(self, |a: int16x8_t, b: int16x8_t| -> int16x8_t {
+            vqsubq_s16(a, b)
         })
     }
 }
@@ -1078,6 +1856,35 @@ impl LaneBackend<u16> for NeonDescriptor {
             arch_ops::vst4q_u16(dest.first_chunk_mut().unwrap(), uint16x8x4_t(a, b, c, e));
         })
     }
+    #[inline(always)]
+    fn load_deinterleaved_2(self, src: &[u16]) -> (uint16x8_t, uint16x8_t) {
+        neon_call!(self, |src: &[u16]| -> (uint16x8_t, uint16x8_t) {
+            let r = arch_ops::vld2q_u16(src.first_chunk().unwrap());
+            (r.0, r.1)
+        })
+    }
+    #[inline(always)]
+    fn load_deinterleaved_3(self, src: &[u16]) -> (uint16x8_t, uint16x8_t, uint16x8_t) {
+        neon_call!(
+            self,
+            |src: &[u16]| -> (uint16x8_t, uint16x8_t, uint16x8_t) {
+                let r = arch_ops::vld3q_u16(src.first_chunk().unwrap());
+                (r.0, r.1, r.2)
+            }
+        )
+    }
+    #[inline(always)]
+    fn load_deinterleaved_4(self, src: &[u16]) -> (uint16x8_t, uint16x8_t, uint16x8_t, uint16x8_t) {
+        neon_call!(self, |src: &[u16]| -> (
+            uint16x8_t,
+            uint16x8_t,
+            uint16x8_t,
+            uint16x8_t
+        ) {
+            let r = arch_ops::vld4q_u16(src.first_chunk().unwrap());
+            (r.0, r.1, r.2, r.3)
+        })
+    }
 }
 
 impl crate::SimdVec<u16, NeonDescriptor> {
@@ -1136,6 +1943,12 @@ impl CompareBackend<u16> for NeonDescriptor {
          -> uint16x8_t {
             vbslq_u16(mask, if_true, if_false)
         })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: uint16x8_t, if_true: uint16x8_t) -> uint16x8_t {
+        neon_call!(self, |mask: uint16x8_t,
+                          if_true: uint16x8_t|
+         -> uint16x8_t { vandq_u16(mask, if_true) })
     }
     #[inline(always)]
     fn mask_zero_select(self, mask: uint16x8_t, if_false: uint16x8_t) -> uint16x8_t {
@@ -1208,6 +2021,33 @@ impl IntBitBackend<u16> for NeonDescriptor {
     fn shr<const AMOUNT: u32>(self, a: uint16x8_t) -> uint16x8_t {
         neon_shift!(self, AMOUNT, |a: uint16x8_t| -> uint16x8_t {
             vshlq_u16(a, vdupq_n_s16((-(AMOUNT as i32)) as i16))
+        })
+    }
+    #[inline(always)]
+    fn shl_vec(self, a: uint16x8_t, counts: uint16x8_t) -> uint16x8_t {
+        neon_call!(self, |a: uint16x8_t, counts: uint16x8_t| -> uint16x8_t {
+            vshlq_u16(a, vreinterpretq_s16_u16(counts))
+        })
+    }
+    #[inline(always)]
+    fn shr_vec(self, a: uint16x8_t, counts: uint16x8_t) -> uint16x8_t {
+        neon_call!(self, |a: uint16x8_t, counts: uint16x8_t| -> uint16x8_t {
+            vshlq_u16(a, vnegq_s16(vreinterpretq_s16_u16(counts)))
+        })
+    }
+}
+
+impl SatBackend<u16> for NeonDescriptor {
+    #[inline(always)]
+    fn sat_add(self, a: uint16x8_t, b: uint16x8_t) -> uint16x8_t {
+        neon_call!(self, |a: uint16x8_t, b: uint16x8_t| -> uint16x8_t {
+            vqaddq_u16(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sat_sub(self, a: uint16x8_t, b: uint16x8_t) -> uint16x8_t {
+        neon_call!(self, |a: uint16x8_t, b: uint16x8_t| -> uint16x8_t {
+            vqsubq_u16(a, b)
         })
     }
 }
@@ -1322,6 +2162,30 @@ impl LaneBackend<i32> for NeonDescriptor {
             arch_ops::vst4q_s32(dest.first_chunk_mut().unwrap(), int32x4x4_t(a, b, c, e));
         })
     }
+    #[inline(always)]
+    fn load_deinterleaved_2(self, src: &[i32]) -> (int32x4_t, int32x4_t) {
+        neon_call!(self, |src: &[i32]| -> (int32x4_t, int32x4_t) {
+            let r = arch_ops::vld2q_s32(src.first_chunk().unwrap());
+            (r.0, r.1)
+        })
+    }
+    #[inline(always)]
+    fn load_deinterleaved_3(self, src: &[i32]) -> (int32x4_t, int32x4_t, int32x4_t) {
+        neon_call!(self, |src: &[i32]| -> (int32x4_t, int32x4_t, int32x4_t) {
+            let r = arch_ops::vld3q_s32(src.first_chunk().unwrap());
+            (r.0, r.1, r.2)
+        })
+    }
+    #[inline(always)]
+    fn load_deinterleaved_4(self, src: &[i32]) -> (int32x4_t, int32x4_t, int32x4_t, int32x4_t) {
+        neon_call!(
+            self,
+            |src: &[i32]| -> (int32x4_t, int32x4_t, int32x4_t, int32x4_t) {
+                let r = arch_ops::vld4q_s32(src.first_chunk().unwrap());
+                (r.0, r.1, r.2, r.3)
+            }
+        )
+    }
 }
 
 impl crate::SimdVec<i32, NeonDescriptor> {
@@ -1374,6 +2238,12 @@ impl CompareBackend<i32> for NeonDescriptor {
                           if_false: int32x4_t|
          -> int32x4_t {
             vbslq_s32(mask, if_true, if_false)
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: uint32x4_t, if_true: int32x4_t) -> int32x4_t {
+        neon_call!(self, |mask: uint32x4_t, if_true: int32x4_t| -> int32x4_t {
+            vandq_s32(vreinterpretq_s32_u32(mask), if_true)
         })
     }
     #[inline(always)]
@@ -1462,6 +2332,18 @@ impl IntBitBackend<i32> for NeonDescriptor {
     fn shr<const AMOUNT: u32>(self, a: int32x4_t) -> int32x4_t {
         neon_shift!(self, AMOUNT, |a: int32x4_t| -> int32x4_t {
             vshlq_s32(a, vdupq_n_s32((-(AMOUNT as i32)) as i32))
+        })
+    }
+    #[inline(always)]
+    fn shl_vec(self, a: int32x4_t, counts: int32x4_t) -> int32x4_t {
+        neon_call!(self, |a: int32x4_t, counts: int32x4_t| -> int32x4_t {
+            vshlq_s32(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn shr_vec(self, a: int32x4_t, counts: int32x4_t) -> int32x4_t {
+        neon_call!(self, |a: int32x4_t, counts: int32x4_t| -> int32x4_t {
+            vshlq_s32(a, vnegq_s32(counts))
         })
     }
 }
@@ -1576,6 +2458,35 @@ impl LaneBackend<u32> for NeonDescriptor {
             arch_ops::vst4q_u32(dest.first_chunk_mut().unwrap(), uint32x4x4_t(a, b, c, e));
         })
     }
+    #[inline(always)]
+    fn load_deinterleaved_2(self, src: &[u32]) -> (uint32x4_t, uint32x4_t) {
+        neon_call!(self, |src: &[u32]| -> (uint32x4_t, uint32x4_t) {
+            let r = arch_ops::vld2q_u32(src.first_chunk().unwrap());
+            (r.0, r.1)
+        })
+    }
+    #[inline(always)]
+    fn load_deinterleaved_3(self, src: &[u32]) -> (uint32x4_t, uint32x4_t, uint32x4_t) {
+        neon_call!(
+            self,
+            |src: &[u32]| -> (uint32x4_t, uint32x4_t, uint32x4_t) {
+                let r = arch_ops::vld3q_u32(src.first_chunk().unwrap());
+                (r.0, r.1, r.2)
+            }
+        )
+    }
+    #[inline(always)]
+    fn load_deinterleaved_4(self, src: &[u32]) -> (uint32x4_t, uint32x4_t, uint32x4_t, uint32x4_t) {
+        neon_call!(self, |src: &[u32]| -> (
+            uint32x4_t,
+            uint32x4_t,
+            uint32x4_t,
+            uint32x4_t
+        ) {
+            let r = arch_ops::vld4q_u32(src.first_chunk().unwrap());
+            (r.0, r.1, r.2, r.3)
+        })
+    }
 }
 
 impl crate::SimdVec<u32, NeonDescriptor> {
@@ -1634,6 +2545,12 @@ impl CompareBackend<u32> for NeonDescriptor {
          -> uint32x4_t {
             vbslq_u32(mask, if_true, if_false)
         })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: uint32x4_t, if_true: uint32x4_t) -> uint32x4_t {
+        neon_call!(self, |mask: uint32x4_t,
+                          if_true: uint32x4_t|
+         -> uint32x4_t { vandq_u32(mask, if_true) })
     }
     #[inline(always)]
     fn mask_zero_select(self, mask: uint32x4_t, if_false: uint32x4_t) -> uint32x4_t {
@@ -1706,6 +2623,327 @@ impl IntBitBackend<u32> for NeonDescriptor {
     fn shr<const AMOUNT: u32>(self, a: uint32x4_t) -> uint32x4_t {
         neon_shift!(self, AMOUNT, |a: uint32x4_t| -> uint32x4_t {
             vshlq_u32(a, vdupq_n_s32((-(AMOUNT as i32)) as i32))
+        })
+    }
+    #[inline(always)]
+    fn shl_vec(self, a: uint32x4_t, counts: uint32x4_t) -> uint32x4_t {
+        neon_call!(self, |a: uint32x4_t, counts: uint32x4_t| -> uint32x4_t {
+            vshlq_u32(a, vreinterpretq_s32_u32(counts))
+        })
+    }
+    #[inline(always)]
+    fn shr_vec(self, a: uint32x4_t, counts: uint32x4_t) -> uint32x4_t {
+        neon_call!(self, |a: uint32x4_t, counts: uint32x4_t| -> uint32x4_t {
+            vshlq_u32(a, vnegq_s32(vreinterpretq_s32_u32(counts)))
+        })
+    }
+}
+
+impl LaneBackend<i64> for NeonDescriptor {
+    type Raw = int64x2_t;
+    type Array = [i64; 2];
+
+    #[inline(always)]
+    fn zero(self) -> int64x2_t {
+        neon_call!(self, || -> int64x2_t { vdupq_n_s64(0) })
+    }
+    #[inline(always)]
+    fn splat(self, v: i64) -> int64x2_t {
+        neon_call!(self, |v: i64| -> int64x2_t { vdupq_n_s64(v) })
+    }
+    #[inline(always)]
+    fn extract_lane0(self, a: int64x2_t) -> i64 {
+        neon_call!(self, |a: int64x2_t| -> i64 { vgetq_lane_s64::<0>(a) })
+    }
+    #[inline(always)]
+    fn load(self, mem: &[i64]) -> int64x2_t {
+        let chunk: &[i64; 2] = mem.first_chunk::<2>().unwrap();
+        neon_call!(self, |chunk: &[i64; 2]| -> int64x2_t {
+            arch_ops::vld1q_s64(chunk)
+        })
+    }
+    #[inline(always)]
+    fn store(self, a: int64x2_t, dest: &mut [i64]) {
+        let chunk: &mut [i64; 2] = dest.first_chunk_mut::<2>().unwrap();
+        neon_call!(self, |chunk: &mut [i64; 2], a: int64x2_t| {
+            arch_ops::vst1q_s64(chunk, a)
+        });
+    }
+    #[inline(always)]
+    fn load_array(self, mem: &[i64; 2]) -> int64x2_t {
+        neon_call!(self, |mem: &[i64; 2]| -> int64x2_t {
+            arch_ops::vld1q_s64(mem)
+        })
+    }
+    #[inline(always)]
+    fn store_array(self, a: int64x2_t, dest: &mut [i64; 2]) {
+        neon_call!(self, |dest: &mut [i64; 2], a: int64x2_t| {
+            arch_ops::vst1q_s64(dest, a)
+        });
+    }
+    #[inline(always)]
+    fn zero_array() -> [i64; 2] {
+        [i64::ZERO; 2]
+    }
+    #[inline(always)]
+    fn slice_as_array(slice: &[i64]) -> &[[i64; 2]] {
+        generic_ops::chunks(slice)
+    }
+    #[inline(always)]
+    fn slice_as_array_mut(slice: &mut [i64]) -> &mut [[i64; 2]] {
+        generic_ops::chunks_mut(slice)
+    }
+    #[inline(always)]
+    fn to_raw_bytes(self, a: int64x2_t) -> uint8x16_t {
+        neon_call!(self, |a: int64x2_t| -> uint8x16_t {
+            vreinterpretq_u8_s64(a)
+        })
+    }
+    #[inline(always)]
+    fn from_raw_bytes(self, a: uint8x16_t) -> int64x2_t {
+        neon_call!(self, |a: uint8x16_t| -> int64x2_t {
+            vreinterpretq_s64_u8(a)
+        })
+    }
+    #[inline(always)]
+    fn interleave_lo(self, a: int64x2_t, b: int64x2_t) -> int64x2_t {
+        neon_call!(self, |a: int64x2_t, b: int64x2_t| -> int64x2_t {
+            vzip1q_s64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn interleave_hi(self, a: int64x2_t, b: int64x2_t) -> int64x2_t {
+        neon_call!(self, |a: int64x2_t, b: int64x2_t| -> int64x2_t {
+            vzip2q_s64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn store_interleaved_2(self, a: int64x2_t, b: int64x2_t, dest: &mut [i64]) {
+        neon_call!(self, |a: int64x2_t, b: int64x2_t, dest: &mut [i64]| {
+            arch_ops::vst2q_s64(dest.first_chunk_mut().unwrap(), int64x2x2_t(a, b));
+        })
+    }
+    #[inline(always)]
+    fn store_interleaved_3(self, a: int64x2_t, b: int64x2_t, c: int64x2_t, dest: &mut [i64]) {
+        neon_call!(self, |a: int64x2_t,
+                          b: int64x2_t,
+                          c: int64x2_t,
+                          dest: &mut [i64]| {
+            arch_ops::vst3q_s64(dest.first_chunk_mut().unwrap(), int64x2x3_t(a, b, c));
+        })
+    }
+    #[inline(always)]
+    fn store_interleaved_4(
+        self,
+        a: int64x2_t,
+        b: int64x2_t,
+        c: int64x2_t,
+        e: int64x2_t,
+        dest: &mut [i64],
+    ) {
+        neon_call!(self, |a: int64x2_t,
+                          b: int64x2_t,
+                          c: int64x2_t,
+                          e: int64x2_t,
+                          dest: &mut [i64]| {
+            arch_ops::vst4q_s64(dest.first_chunk_mut().unwrap(), int64x2x4_t(a, b, c, e));
+        })
+    }
+    #[inline(always)]
+    fn load_deinterleaved_2(self, src: &[i64]) -> (int64x2_t, int64x2_t) {
+        neon_call!(self, |src: &[i64]| -> (int64x2_t, int64x2_t) {
+            let r = arch_ops::vld2q_s64(src.first_chunk().unwrap());
+            (r.0, r.1)
+        })
+    }
+    #[inline(always)]
+    fn load_deinterleaved_3(self, src: &[i64]) -> (int64x2_t, int64x2_t, int64x2_t) {
+        neon_call!(self, |src: &[i64]| -> (int64x2_t, int64x2_t, int64x2_t) {
+            let r = arch_ops::vld3q_s64(src.first_chunk().unwrap());
+            (r.0, r.1, r.2)
+        })
+    }
+    #[inline(always)]
+    fn load_deinterleaved_4(self, src: &[i64]) -> (int64x2_t, int64x2_t, int64x2_t, int64x2_t) {
+        neon_call!(
+            self,
+            |src: &[i64]| -> (int64x2_t, int64x2_t, int64x2_t, int64x2_t) {
+                let r = arch_ops::vld4q_s64(src.first_chunk().unwrap());
+                (r.0, r.1, r.2, r.3)
+            }
+        )
+    }
+}
+
+impl crate::SimdVec<i64, NeonDescriptor> {
+    /// Returns the underlying native SIMD register.
+    #[inline(always)]
+    pub fn raw(self) -> int64x2_t {
+        self.0
+    }
+
+    /// Wraps a native SIMD register with its descriptor token.
+    #[inline(always)]
+    pub fn from_raw(d: NeonDescriptor, raw: int64x2_t) -> Self {
+        Self(raw, d)
+    }
+}
+
+impl CompareBackend<i64> for NeonDescriptor {
+    #[inline(always)]
+    fn eq(self, a: int64x2_t, b: int64x2_t) -> uint64x2_t {
+        neon_call!(self, |a: int64x2_t, b: int64x2_t| -> uint64x2_t {
+            vceqq_s64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn gt(self, a: int64x2_t, b: int64x2_t) -> uint64x2_t {
+        neon_call!(self, |a: int64x2_t, b: int64x2_t| -> uint64x2_t {
+            vcgtq_s64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn eq_zero(self, a: int64x2_t) -> uint64x2_t {
+        neon_call!(self, |a: int64x2_t| -> uint64x2_t { vceqzq_s64(a) })
+    }
+    #[inline(always)]
+    fn min(self, a: int64x2_t, b: int64x2_t) -> int64x2_t {
+        neon_call!(self, |a: int64x2_t, b: int64x2_t| -> int64x2_t {
+            vbslq_s64(vcgtq_s64(a, b), b, a)
+        })
+    }
+    #[inline(always)]
+    fn max(self, a: int64x2_t, b: int64x2_t) -> int64x2_t {
+        neon_call!(self, |a: int64x2_t, b: int64x2_t| -> int64x2_t {
+            vbslq_s64(vcgtq_s64(a, b), a, b)
+        })
+    }
+    #[inline(always)]
+    fn mask_select(self, mask: uint64x2_t, if_true: int64x2_t, if_false: int64x2_t) -> int64x2_t {
+        neon_call!(self, |mask: uint64x2_t,
+                          if_true: int64x2_t,
+                          if_false: int64x2_t|
+         -> int64x2_t {
+            vbslq_s64(mask, if_true, if_false)
+        })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: uint64x2_t, if_true: int64x2_t) -> int64x2_t {
+        neon_call!(self, |mask: uint64x2_t, if_true: int64x2_t| -> int64x2_t {
+            vandq_s64(vreinterpretq_s64_u64(mask), if_true)
+        })
+    }
+    #[inline(always)]
+    fn mask_zero_select(self, mask: uint64x2_t, if_false: int64x2_t) -> int64x2_t {
+        neon_call!(self, |mask: uint64x2_t, if_false: int64x2_t| -> int64x2_t {
+            vbicq_s64(if_false, vreinterpretq_s64_u64(mask))
+        })
+    }
+}
+
+impl ArithBackend<i64> for NeonDescriptor {
+    #[inline(always)]
+    fn add(self, a: int64x2_t, b: int64x2_t) -> int64x2_t {
+        neon_call!(self, |a: int64x2_t, b: int64x2_t| -> int64x2_t {
+            vaddq_s64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn sub(self, a: int64x2_t, b: int64x2_t) -> int64x2_t {
+        neon_call!(self, |a: int64x2_t, b: int64x2_t| -> int64x2_t {
+            vsubq_s64(a, b)
+        })
+    }
+}
+
+impl MulBackend<i64> for NeonDescriptor {
+    #[inline(always)]
+    fn mul(self, a: int64x2_t, b: int64x2_t) -> int64x2_t {
+        neon_call!(self, |a: int64x2_t, b: int64x2_t| -> int64x2_t {
+            let (au, bu) = (vreinterpretq_u64_s64(a), vreinterpretq_u64_s64(b));
+            vreinterpretq_s64_u64({
+                let a_lo = vmovn_u64(au);
+                let b_lo = vmovn_u64(bu);
+                let lo = vmull_u32(a_lo, b_lo);
+                let hi = vmlal_u32(
+                    vmull_u32(vmovn_u64(vshrq_n_u64::<32>(au)), b_lo),
+                    a_lo,
+                    vmovn_u64(vshrq_n_u64::<32>(bu)),
+                );
+                vaddq_u64(lo, vshlq_n_u64::<32>(hi))
+            })
+        })
+    }
+}
+
+impl SignedBackend<i64> for NeonDescriptor {
+    #[inline(always)]
+    fn neg(self, a: int64x2_t) -> int64x2_t {
+        neon_call!(self, |a: int64x2_t| -> int64x2_t { vnegq_s64(a) })
+    }
+    #[inline(always)]
+    fn abs(self, a: int64x2_t) -> int64x2_t {
+        neon_call!(self, |a: int64x2_t| -> int64x2_t { vabsq_s64(a) })
+    }
+    #[inline(always)]
+    fn lt_zero(self, a: int64x2_t) -> uint64x2_t {
+        neon_call!(self, |a: int64x2_t| -> uint64x2_t { vcltzq_s64(a) })
+    }
+}
+
+impl IntBitBackend<i64> for NeonDescriptor {
+    #[inline(always)]
+    fn bit_and(self, a: int64x2_t, b: int64x2_t) -> int64x2_t {
+        neon_call!(self, |a: int64x2_t, b: int64x2_t| -> int64x2_t {
+            vandq_s64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_or(self, a: int64x2_t, b: int64x2_t) -> int64x2_t {
+        neon_call!(self, |a: int64x2_t, b: int64x2_t| -> int64x2_t {
+            vorrq_s64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_xor(self, a: int64x2_t, b: int64x2_t) -> int64x2_t {
+        neon_call!(self, |a: int64x2_t, b: int64x2_t| -> int64x2_t {
+            veorq_s64(a, b)
+        })
+    }
+    #[inline(always)]
+    fn bit_not(self, a: int64x2_t) -> int64x2_t {
+        neon_call!(self, |a: int64x2_t| -> int64x2_t {
+            vreinterpretq_s64_u32(vmvnq_u32(vreinterpretq_u32_s64(a)))
+        })
+    }
+    #[inline(always)]
+    fn andnot(self, not_a: int64x2_t, b: int64x2_t) -> int64x2_t {
+        neon_call!(self, |not_a: int64x2_t, b: int64x2_t| -> int64x2_t {
+            vbicq_s64(b, not_a)
+        })
+    }
+    #[inline(always)]
+    fn shl<const AMOUNT: u32>(self, a: int64x2_t) -> int64x2_t {
+        neon_shift!(self, AMOUNT, |a: int64x2_t| -> int64x2_t {
+            vshlq_s64(a, vdupq_n_s64((AMOUNT as i32) as i64))
+        })
+    }
+    #[inline(always)]
+    fn shr<const AMOUNT: u32>(self, a: int64x2_t) -> int64x2_t {
+        neon_shift!(self, AMOUNT, |a: int64x2_t| -> int64x2_t {
+            vshlq_s64(a, vdupq_n_s64((-(AMOUNT as i32)) as i64))
+        })
+    }
+    #[inline(always)]
+    fn shl_vec(self, a: int64x2_t, counts: int64x2_t) -> int64x2_t {
+        neon_call!(self, |a: int64x2_t, counts: int64x2_t| -> int64x2_t {
+            vshlq_s64(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn shr_vec(self, a: int64x2_t, counts: int64x2_t) -> int64x2_t {
+        neon_call!(self, |a: int64x2_t, counts: int64x2_t| -> int64x2_t {
+            vshlq_s64(a, vnegq_s64(counts))
         })
     }
 }
@@ -1820,6 +3058,35 @@ impl LaneBackend<u64> for NeonDescriptor {
             arch_ops::vst4q_u64(dest.first_chunk_mut().unwrap(), uint64x2x4_t(a, b, c, e));
         })
     }
+    #[inline(always)]
+    fn load_deinterleaved_2(self, src: &[u64]) -> (uint64x2_t, uint64x2_t) {
+        neon_call!(self, |src: &[u64]| -> (uint64x2_t, uint64x2_t) {
+            let r = arch_ops::vld2q_u64(src.first_chunk().unwrap());
+            (r.0, r.1)
+        })
+    }
+    #[inline(always)]
+    fn load_deinterleaved_3(self, src: &[u64]) -> (uint64x2_t, uint64x2_t, uint64x2_t) {
+        neon_call!(
+            self,
+            |src: &[u64]| -> (uint64x2_t, uint64x2_t, uint64x2_t) {
+                let r = arch_ops::vld3q_u64(src.first_chunk().unwrap());
+                (r.0, r.1, r.2)
+            }
+        )
+    }
+    #[inline(always)]
+    fn load_deinterleaved_4(self, src: &[u64]) -> (uint64x2_t, uint64x2_t, uint64x2_t, uint64x2_t) {
+        neon_call!(self, |src: &[u64]| -> (
+            uint64x2_t,
+            uint64x2_t,
+            uint64x2_t,
+            uint64x2_t
+        ) {
+            let r = arch_ops::vld4q_u64(src.first_chunk().unwrap());
+            (r.0, r.1, r.2, r.3)
+        })
+    }
 }
 
 impl crate::SimdVec<u64, NeonDescriptor> {
@@ -1878,6 +3145,12 @@ impl CompareBackend<u64> for NeonDescriptor {
          -> uint64x2_t {
             vbslq_u64(mask, if_true, if_false)
         })
+    }
+    #[inline(always)]
+    fn mask_select_zero(self, mask: uint64x2_t, if_true: uint64x2_t) -> uint64x2_t {
+        neon_call!(self, |mask: uint64x2_t,
+                          if_true: uint64x2_t|
+         -> uint64x2_t { vandq_u64(mask, if_true) })
     }
     #[inline(always)]
     fn mask_zero_select(self, mask: uint64x2_t, if_false: uint64x2_t) -> uint64x2_t {
@@ -1962,6 +3235,18 @@ impl IntBitBackend<u64> for NeonDescriptor {
             vshlq_u64(a, vdupq_n_s64((-(AMOUNT as i32)) as i64))
         })
     }
+    #[inline(always)]
+    fn shl_vec(self, a: uint64x2_t, counts: uint64x2_t) -> uint64x2_t {
+        neon_call!(self, |a: uint64x2_t, counts: uint64x2_t| -> uint64x2_t {
+            vshlq_u64(a, vreinterpretq_s64_u64(counts))
+        })
+    }
+    #[inline(always)]
+    fn shr_vec(self, a: uint64x2_t, counts: uint64x2_t) -> uint64x2_t {
+        neon_call!(self, |a: uint64x2_t, counts: uint64x2_t| -> uint64x2_t {
+            vshlq_u64(a, vnegq_s64(vreinterpretq_s64_u64(counts)))
+        })
+    }
 }
 
 impl F32ExtraBackend for NeonDescriptor {
@@ -1998,6 +3283,38 @@ impl F32ExtraBackend for NeonDescriptor {
         neon_call!(self, |a: float32x4_t, dest: &mut [u16]| {
             arch_ops::vst1_u16(dest.first_chunk_mut().unwrap(), arch_ops::fcvtn_f16_f32(a));
         });
+    }
+}
+
+impl F64ExtraBackend for NeonDescriptor {
+    #[inline(always)]
+    fn f64_as_i64(self, a: float64x2_t) -> int64x2_t {
+        neon_call!(self, |a: float64x2_t| -> int64x2_t { vcvtq_s64_f64(a) })
+    }
+    #[inline(always)]
+    fn f64_from_f32_lo(self, a: float32x4_t) -> float64x2_t {
+        neon_call!(self, |a: float32x4_t| -> float64x2_t {
+            vcvt_f64_f32(vget_low_f32(a))
+        })
+    }
+    #[inline(always)]
+    fn f64_from_f32_hi(self, a: float32x4_t) -> float64x2_t {
+        neon_call!(self, |a: float32x4_t| -> float64x2_t {
+            vcvt_high_f64_f32(a)
+        })
+    }
+    #[inline(always)]
+    fn f64_to_f32(self, lo: float64x2_t, hi: float64x2_t) -> float32x4_t {
+        neon_call!(self, |lo: float64x2_t, hi: float64x2_t| -> float32x4_t {
+            vcvt_high_f32_f64(vcvt_f32_f64(lo), hi)
+        })
+    }
+}
+
+impl I64ExtraBackend for NeonDescriptor {
+    #[inline(always)]
+    fn i64_as_f64(self, a: int64x2_t) -> float64x2_t {
+        neon_call!(self, |a: int64x2_t| -> float64x2_t { vcvtq_f64_s64(a) })
     }
 }
 

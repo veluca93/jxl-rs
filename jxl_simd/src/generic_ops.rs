@@ -8,7 +8,10 @@
 
 use std::fmt::Debug;
 
-use super::sealed::{Element, LaneBackend};
+use super::sealed::{
+    ComparableElement, CompareBackend, Element, IntBitBackend, IntElement, LaneBackend,
+    U8ExtraBackend,
+};
 use super::{
     F32Vec, I32Vec, SimdDescriptor, SimdDescriptor128, SimdVec, U8Vec, U16Vec, U32Vec, U64Vec,
 };
@@ -357,6 +360,498 @@ pub(crate) fn f32_store_interleaved_8<D: SimdDescriptor>(
     for (k, out) in outs.into_iter().enumerate() {
         out.store(&mut dest[k * len..]);
     }
+}
+
+#[inline(always)]
+fn deinterleave_2_vecs<T: Copy + Default + Debug + 'static, D: SimdDescriptor + LaneBackend<T>>(
+    d: D,
+    v0: <D as LaneBackend<T>>::Raw,
+    v1: <D as LaneBackend<T>>::Raw,
+) -> (<D as LaneBackend<T>>::Raw, <D as LaneBackend<T>>::Raw) {
+    let (mut w0, mut w1) = if D::BYTES == 16 {
+        (v0, v1)
+    } else {
+        let b0 = <D as LaneBackend<T>>::to_raw_bytes(d, v0);
+        let b1 = <D as LaneBackend<T>>::to_raw_bytes(d, v1);
+        let (u0, u1) = if D::BYTES == 64 {
+            let (x, y) = d.interleave_256_halves(b0, b1);
+            d.interleave_128_halves(x, y)
+        } else {
+            d.interleave_128_halves(b0, b1)
+        };
+        (
+            <D as LaneBackend<T>>::from_raw_bytes(d, u0),
+            <D as LaneBackend<T>>::from_raw_bytes(d, u1),
+        )
+    };
+    let steps = (16 / std::mem::size_of::<T>()).ilog2();
+    for _ in 0..steps {
+        let lo = <D as LaneBackend<T>>::interleave_lo(d, w0, w1);
+        let hi = <D as LaneBackend<T>>::interleave_hi(d, w0, w1);
+        w0 = lo;
+        w1 = hi;
+    }
+    (w0, w1)
+}
+
+#[inline(always)]
+pub(crate) fn load_deinterleaved_2<
+    T: Copy + Default + Debug + 'static,
+    D: SimdDescriptor + LaneBackend<T>,
+>(
+    d: D,
+    src: &[T],
+) -> (<D as LaneBackend<T>>::Raw, <D as LaneBackend<T>>::Raw) {
+    let len = D::BYTES / std::mem::size_of::<T>();
+    assert!(src.len() >= 2 * len);
+    if D::IS_EMULATED {
+        let mut a = <D as LaneBackend<T>>::zero_array();
+        let mut b = <D as LaneBackend<T>>::zero_array();
+        for i in 0..len {
+            a.as_mut()[i] = src[2 * i];
+            b.as_mut()[i] = src[2 * i + 1];
+        }
+        return (
+            <D as LaneBackend<T>>::load_array(d, &a),
+            <D as LaneBackend<T>>::load_array(d, &b),
+        );
+    }
+    deinterleave_2_vecs::<T, D>(
+        d,
+        <D as LaneBackend<T>>::load(d, src),
+        <D as LaneBackend<T>>::load(d, &src[len..]),
+    )
+}
+
+const fn deinterleave3_u64s<T>(ch: usize, in_vec: usize) -> (u64, u64) {
+    let elem_bytes = std::mem::size_of::<T>();
+    let mut m = [0x80u8; 16];
+    let mut i = 0;
+    while i < 16 {
+        let lane = i / elem_bytes;
+        let r = i % elem_bytes;
+        let src_pos = (lane * 3 + ch) * elem_bytes + r;
+        if src_pos / 16 == in_vec {
+            m[i] = (src_pos % 16) as u8;
+        }
+        i += 1;
+    }
+    swizzle_mask_u64s(m)
+}
+
+#[inline(always)]
+pub(crate) fn load_deinterleaved_3<
+    T: Copy + Default + Debug + 'static,
+    D: SimdDescriptor + LaneBackend<T>,
+>(
+    d: D,
+    src: &[T],
+) -> (
+    <D as LaneBackend<T>>::Raw,
+    <D as LaneBackend<T>>::Raw,
+    <D as LaneBackend<T>>::Raw,
+) {
+    let elem_bytes = std::mem::size_of::<T>();
+    let len = D::BYTES / elem_bytes;
+    assert!(src.len() >= 3 * len);
+    if D::IS_EMULATED {
+        let mut a = <D as LaneBackend<T>>::zero_array();
+        let mut b = <D as LaneBackend<T>>::zero_array();
+        let mut c = <D as LaneBackend<T>>::zero_array();
+        for i in 0..len {
+            a.as_mut()[i] = src[3 * i];
+            b.as_mut()[i] = src[3 * i + 1];
+            c.as_mut()[i] = src[3 * i + 2];
+        }
+        return (
+            <D as LaneBackend<T>>::load_array(d, &a),
+            <D as LaneBackend<T>>::load_array(d, &b),
+            <D as LaneBackend<T>>::load_array(d, &c),
+        );
+    }
+
+    let in0 = <D as LaneBackend<T>>::to_raw_bytes(d, <D as LaneBackend<T>>::load(d, src));
+    let in1 = <D as LaneBackend<T>>::to_raw_bytes(d, <D as LaneBackend<T>>::load(d, &src[len..]));
+    let in2 =
+        <D as LaneBackend<T>>::to_raw_bytes(d, <D as LaneBackend<T>>::load(d, &src[2 * len..]));
+
+    let (u0, u1, u2) = if D::BYTES == 64 {
+        let (_, hi1) = d.interleave_256_halves(in1, in1);
+        let (u0, _) = d.interleave_256_halves(in0, hi1);
+        let (lo2, hi2) = d.interleave_256_halves(in2, in2);
+        let (_, u1) = d.interleave_256_halves(in0, lo2);
+        let (u2, _) = d.interleave_256_halves(in1, hi2);
+        (u0, u1, u2)
+    } else {
+        (in0, in1, in2)
+    };
+
+    let (t0, t1, t2) = if D::BYTES >= 32 {
+        let (a, b) = d.interleave_128_halves(u0, u1);
+        let (t1, _) = d.interleave_128_halves(b, u2);
+        let (_, t2) = d.interleave_128_halves(a, u2);
+        let (_, b3) = d.interleave_128_halves(b, b);
+        let (t0, _) = d.interleave_128_halves(a, b3);
+        (t0, t1, t2)
+    } else {
+        (u0, u1, u2)
+    };
+
+    let t0u = <D as LaneBackend<u8>>::from_raw_bytes(d, t0);
+    let t1u = <D as LaneBackend<u8>>::from_raw_bytes(d, t1);
+    let t2u = <D as LaneBackend<u8>>::from_raw_bytes(d, t2);
+    macro_rules! extract {
+        ($ch:literal) => {{
+            let m0 = splat_swizzle_u64s(d, const { deinterleave3_u64s::<T>($ch, 0) }).0;
+            let m1 = splat_swizzle_u64s(d, const { deinterleave3_u64s::<T>($ch, 1) }).0;
+            let m2 = splat_swizzle_u64s(d, const { deinterleave3_u64s::<T>($ch, 2) }).0;
+            let s0 = <D as U8ExtraBackend>::u8_swizzle_128_or_zero(d, t0u, m0);
+            let s1 = <D as U8ExtraBackend>::u8_swizzle_128_or_zero(d, t1u, m1);
+            let s2 = <D as U8ExtraBackend>::u8_swizzle_128_or_zero(d, t2u, m2);
+            let out = <D as IntBitBackend<u8>>::bit_or(
+                d,
+                <D as IntBitBackend<u8>>::bit_or(d, s0, s1),
+                s2,
+            );
+            <D as LaneBackend<T>>::from_raw_bytes(d, <D as LaneBackend<u8>>::to_raw_bytes(d, out))
+        }};
+    }
+    (extract!(0), extract!(1), extract!(2))
+}
+
+#[inline(always)]
+pub(crate) fn load_deinterleaved_4<
+    T: Copy + Default + Debug + 'static,
+    D: SimdDescriptor + LaneBackend<T>,
+>(
+    d: D,
+    src: &[T],
+) -> (
+    <D as LaneBackend<T>>::Raw,
+    <D as LaneBackend<T>>::Raw,
+    <D as LaneBackend<T>>::Raw,
+    <D as LaneBackend<T>>::Raw,
+) {
+    let len = D::BYTES / std::mem::size_of::<T>();
+    assert!(src.len() >= 4 * len);
+    if D::IS_EMULATED {
+        let mut a = <D as LaneBackend<T>>::zero_array();
+        let mut b = <D as LaneBackend<T>>::zero_array();
+        let mut c = <D as LaneBackend<T>>::zero_array();
+        let mut e = <D as LaneBackend<T>>::zero_array();
+        for i in 0..len {
+            a.as_mut()[i] = src[4 * i];
+            b.as_mut()[i] = src[4 * i + 1];
+            c.as_mut()[i] = src[4 * i + 2];
+            e.as_mut()[i] = src[4 * i + 3];
+        }
+        return (
+            <D as LaneBackend<T>>::load_array(d, &a),
+            <D as LaneBackend<T>>::load_array(d, &b),
+            <D as LaneBackend<T>>::load_array(d, &c),
+            <D as LaneBackend<T>>::load_array(d, &e),
+        );
+    }
+    let (e01, o01) = deinterleave_2_vecs::<T, D>(
+        d,
+        <D as LaneBackend<T>>::load(d, src),
+        <D as LaneBackend<T>>::load(d, &src[len..]),
+    );
+    let (e23, o23) = deinterleave_2_vecs::<T, D>(
+        d,
+        <D as LaneBackend<T>>::load(d, &src[2 * len..]),
+        <D as LaneBackend<T>>::load(d, &src[3 * len..]),
+    );
+    let (c0, c2) = deinterleave_2_vecs::<T, D>(d, e01, e23);
+    let (c1, c3) = deinterleave_2_vecs::<T, D>(d, o01, o23);
+    (c0, c1, c2, c3)
+}
+
+#[inline(always)]
+pub(crate) fn shl_vec_default<T, D>(
+    d: D,
+    mut v: <D as LaneBackend<T>>::Raw,
+    counts: <D as LaneBackend<T>>::Raw,
+) -> <D as LaneBackend<T>>::Raw
+where
+    T: IntElement,
+    D: SimdDescriptor + IntBitBackend<T>,
+{
+    macro_rules! step {
+        ($b:literal) => {
+            if T::BITS > $b {
+                let c = <D as LaneBackend<T>>::splat(d, T::from_u8($b));
+                let m = <D as CompareBackend<T>>::eq_zero(
+                    d,
+                    <D as IntBitBackend<T>>::bit_and(d, counts, c),
+                );
+                v = <D as CompareBackend<T>>::mask_select(
+                    d,
+                    m,
+                    v,
+                    <D as IntBitBackend<T>>::shl::<$b>(d, v),
+                );
+            }
+        };
+    }
+    step!(1);
+    step!(2);
+    step!(4);
+    step!(8);
+    step!(16);
+    step!(32);
+    v
+}
+
+#[inline(always)]
+pub(crate) fn shr_vec_default<T, D>(
+    d: D,
+    mut v: <D as LaneBackend<T>>::Raw,
+    counts: <D as LaneBackend<T>>::Raw,
+) -> <D as LaneBackend<T>>::Raw
+where
+    T: IntElement,
+    D: SimdDescriptor + IntBitBackend<T>,
+{
+    macro_rules! step {
+        ($b:literal) => {
+            if T::BITS > $b {
+                let c = <D as LaneBackend<T>>::splat(d, T::from_u8($b));
+                let m = <D as CompareBackend<T>>::eq_zero(
+                    d,
+                    <D as IntBitBackend<T>>::bit_and(d, counts, c),
+                );
+                v = <D as CompareBackend<T>>::mask_select(
+                    d,
+                    m,
+                    v,
+                    <D as IntBitBackend<T>>::shr::<$b>(d, v),
+                );
+            }
+        };
+    }
+    step!(1);
+    step!(2);
+    step!(4);
+    step!(8);
+    step!(16);
+    step!(32);
+    v
+}
+
+const POPCNT_LUT: [u8; 16] = [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4];
+const CLZ_LUT: [u8; 16] = [4, 3, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0];
+
+#[inline(always)]
+fn u8_count_ones<D: SimdDescriptor>(d: D, v: U8Vec<D>) -> U8Vec<D> {
+    let lut = splat_swizzle_u64s(d, const { swizzle_mask_u64s(POPCNT_LUT) });
+    let lo = lut.table_lookup_bytes_or_zero(v & U8Vec::splat(d, 0x0F));
+    let hi = lut.table_lookup_bytes_or_zero(crate::shr!(v, 4));
+    lo + hi
+}
+
+#[inline(always)]
+fn u8_leading_zeros<D: SimdDescriptor>(d: D, v: U8Vec<D>) -> U8Vec<D> {
+    let lut = splat_swizzle_u64s(d, const { swizzle_mask_u64s(CLZ_LUT) });
+    let hi_nib = crate::shr!(v, 4);
+    let hi_clz = lut.table_lookup_bytes_or_zero(hi_nib);
+    let lo_clz = lut.table_lookup_bytes_or_zero(v & U8Vec::splat(d, 0x0F)) + U8Vec::splat(d, 4);
+    hi_nib.eq_zero().if_then_else(lo_clz, hi_clz)
+}
+
+#[inline(always)]
+pub(crate) fn int_count_ones<T: crate::IntElement, D: SimdDescriptor>(
+    v: SimdVec<T, D>,
+) -> SimdVec<T, D> {
+    let d = v.descriptor();
+    let p8 = u8_count_ones(d, v.bitcast::<u8>());
+    match std::mem::size_of::<T>() {
+        1 => p8.bitcast::<T>(),
+        2 => {
+            let p = p8.bitcast::<u16>();
+            ((p + crate::shr!(p, 8)) & U16Vec::splat(d, 0x00FF)).bitcast::<T>()
+        }
+        4 => {
+            let p = p8.bitcast::<u32>();
+            let p = (p + crate::shr!(p, 8)) & U32Vec::splat(d, 0x00FF_00FF);
+            ((p + crate::shr!(p, 16)) & U32Vec::splat(d, 0x0000_FFFF)).bitcast::<T>()
+        }
+        8 => {
+            let p = p8.bitcast::<u64>();
+            let p = (p + crate::shr!(p, 8)) & U64Vec::splat(d, 0x00FF_00FF_00FF_00FF);
+            let p = (p + crate::shr!(p, 16)) & U64Vec::splat(d, 0x0000_FFFF_0000_FFFF);
+            ((p + crate::shr!(p, 32)) & U64Vec::splat(d, 0x0000_0000_FFFF_FFFF)).bitcast::<T>()
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[inline(always)]
+pub(crate) fn int_leading_zeros<T: crate::IntElement, D: SimdDescriptor>(
+    v: SimdVec<T, D>,
+) -> SimdVec<T, D> {
+    let d = v.descriptor();
+    let clz8 = u8_leading_zeros(d, v.bitcast::<u8>());
+    if std::mem::size_of::<T>() == 1 {
+        return clz8.bitcast::<T>();
+    }
+    let u16v = v.bitcast::<u16>();
+    let c16 = clz8.bitcast::<u16>();
+    let clz16 = crate::shr!(u16v, 8).eq_zero().if_then_else(
+        (c16 & U16Vec::splat(d, 0xFF)) + U16Vec::splat(d, 8),
+        crate::shr!(c16, 8),
+    );
+    if std::mem::size_of::<T>() == 2 {
+        return clz16.bitcast::<T>();
+    }
+    let u32v = v.bitcast::<u32>();
+    let c32 = clz16.bitcast::<u32>();
+    let clz32 = crate::shr!(u32v, 16).eq_zero().if_then_else(
+        (c32 & U32Vec::splat(d, 0xFFFF)) + U32Vec::splat(d, 16),
+        crate::shr!(c32, 16),
+    );
+    if std::mem::size_of::<T>() == 4 {
+        return clz32.bitcast::<T>();
+    }
+    let u64v = v.bitcast::<u64>();
+    let c64 = clz32.bitcast::<u64>();
+    crate::shr!(u64v, 32)
+        .eq_zero()
+        .if_then_else(
+            (c64 & U64Vec::splat(d, 0xFFFF_FFFF)) + U64Vec::splat(d, 32),
+            crate::shr!(c64, 32),
+        )
+        .bitcast::<T>()
+}
+
+#[inline(always)]
+pub(crate) fn int_trailing_zeros<T: crate::IntElement, D: SimdDescriptor>(
+    v: SimdVec<T, D>,
+) -> SimdVec<T, D> {
+    let d = v.descriptor();
+    (!v & (v - SimdVec::splat(d, <T as IntElement>::ONE))).count_ones()
+}
+
+#[inline(always)]
+fn promote_int_pair<S: IntElement, W: Element, D: SimdDescriptor>(
+    d: D,
+    a: S::Raw<D>,
+) -> (W::Raw<D>, W::Raw<D>) {
+    let ext = if S::IS_SIGNED {
+        let neg_one = S::sub(d, S::zero(d), S::splat(d, S::ONE));
+        S::mask_select_zero(d, S::gt(d, S::zero(d), a), neg_one)
+    } else {
+        S::zero(d)
+    };
+    let p = S::to_raw_bytes(d, S::interleave_lo(d, a, ext));
+    let q = S::to_raw_bytes(d, S::interleave_hi(d, a, ext));
+    let (lo, hi) = if D::BYTES == 16 {
+        (p, q)
+    } else if D::BYTES == 32 {
+        d.interleave_128_halves(p, q)
+    } else {
+        let (r0, r1) = d.interleave_128_halves(p, q);
+        d.interleave_256_halves(r0, r1)
+    };
+    (W::from_raw_bytes(d, lo), W::from_raw_bytes(d, hi))
+}
+
+#[inline(always)]
+pub(crate) fn promote_int_lo<S: IntElement, W: Element, D: SimdDescriptor>(
+    d: D,
+    a: S::Raw<D>,
+    as_w: fn(S) -> W,
+) -> W::Raw<D> {
+    if D::IS_EMULATED {
+        let mut src = S::zero_array::<D>();
+        let mut dst = W::zero_array::<D>();
+        S::store_array(d, a, &mut src);
+        for (o, &x) in dst.as_mut().iter_mut().zip(src.as_ref().iter()) {
+            *o = as_w(x);
+        }
+        return W::load_array(d, &dst);
+    }
+    promote_int_pair::<S, W, D>(d, a).0
+}
+
+#[inline(always)]
+pub(crate) fn promote_int_hi<S: IntElement, W: Element, D: SimdDescriptor>(
+    d: D,
+    a: S::Raw<D>,
+    as_w: fn(S) -> W,
+) -> W::Raw<D> {
+    if D::IS_EMULATED {
+        let mut src = S::zero_array::<D>();
+        let mut dst = W::zero_array::<D>();
+        S::store_array(d, a, &mut src);
+        let half = src.as_ref().len() / 2;
+        for (o, &x) in dst.as_mut().iter_mut().zip(src.as_ref()[half..].iter()) {
+            *o = as_w(x);
+        }
+        return W::load_array(d, &dst);
+    }
+    promote_int_pair::<S, W, D>(d, a).1
+}
+
+#[inline(always)]
+pub(crate) fn demote_int<W: ComparableElement, N: Element, D: SimdDescriptor + LaneBackend<N>>(
+    d: D,
+    lo: W::Raw<D>,
+    hi: W::Raw<D>,
+    lo_bound: W,
+    hi_bound: W,
+    clamp_n: fn(W) -> N,
+) -> D::RawBytes {
+    if D::IS_EMULATED {
+        let mut a = W::zero_array::<D>();
+        let mut b = W::zero_array::<D>();
+        let mut dst = N::zero_array::<D>();
+        W::store_array(d, lo, &mut a);
+        W::store_array(d, hi, &mut b);
+        let half = a.as_ref().len();
+        for (i, &x) in a.as_ref().iter().enumerate() {
+            dst.as_mut()[i] = clamp_n(x);
+        }
+        for (i, &x) in b.as_ref().iter().enumerate() {
+            dst.as_mut()[half + i] = clamp_n(x);
+        }
+        return N::to_raw_bytes(d, N::load_array(d, &dst));
+    }
+    let lb = W::splat(d, lo_bound);
+    let hb = W::splat(d, hi_bound);
+    let c0 = W::min(d, W::max(d, lo, lb), hb);
+    let c1 = W::min(d, W::max(d, hi, lb), hb);
+    let b0 = <D as LaneBackend<N>>::from_raw_bytes(d, W::to_raw_bytes(d, c0));
+    let b1 = <D as LaneBackend<N>>::from_raw_bytes(d, W::to_raw_bytes(d, c1));
+    <D as LaneBackend<N>>::to_raw_bytes(d, deinterleave_2_vecs::<N, D>(d, b0, b1).0)
+}
+
+#[inline(always)]
+pub(crate) fn f64_as_i64_sw<D: SimdDescriptor>(
+    d: D,
+    a: <D as LaneBackend<f64>>::Raw,
+) -> <D as LaneBackend<i64>>::Raw {
+    let mut src = <D as LaneBackend<f64>>::zero_array();
+    let mut dst = <D as LaneBackend<i64>>::zero_array();
+    <D as LaneBackend<f64>>::store_array(d, a, &mut src);
+    for (o, &x) in dst.as_mut().iter_mut().zip(src.as_ref().iter()) {
+        *o = x as i64;
+    }
+    <D as LaneBackend<i64>>::load_array(d, &dst)
+}
+
+#[inline(always)]
+pub(crate) fn i64_as_f64_sw<D: SimdDescriptor>(
+    d: D,
+    a: <D as LaneBackend<i64>>::Raw,
+) -> <D as LaneBackend<f64>>::Raw {
+    let mut src = <D as LaneBackend<i64>>::zero_array();
+    let mut dst = <D as LaneBackend<f64>>::zero_array();
+    <D as LaneBackend<i64>>::store_array(d, a, &mut src);
+    for (o, &x) in dst.as_mut().iter_mut().zip(src.as_ref().iter()) {
+        *o = x as f64;
+    }
+    <D as LaneBackend<f64>>::load_array(d, &dst)
 }
 
 #[inline(always)]

@@ -82,6 +82,18 @@ pub trait Element: Copy + Default + Debug + Send + Sync + 'static {
         e: Self::Raw<D>,
         dest: &mut [Self],
     );
+    fn load_deinterleaved_2<D: crate::SimdDescriptor>(
+        d: D,
+        src: &[Self],
+    ) -> (Self::Raw<D>, Self::Raw<D>);
+    fn load_deinterleaved_3<D: crate::SimdDescriptor>(
+        d: D,
+        src: &[Self],
+    ) -> (Self::Raw<D>, Self::Raw<D>, Self::Raw<D>);
+    fn load_deinterleaved_4<D: crate::SimdDescriptor>(
+        d: D,
+        src: &[Self],
+    ) -> (Self::Raw<D>, Self::Raw<D>, Self::Raw<D>, Self::Raw<D>);
 }
 
 pub trait ComparableElement: Element {
@@ -107,6 +119,11 @@ pub trait ComparableElement: Element {
         mask: <Self::Mask as MaskWidth>::Raw<D>,
         if_true: Self::Raw<D>,
         if_false: Self::Raw<D>,
+    ) -> Self::Raw<D>;
+    fn mask_select_zero<D: crate::SimdDescriptor>(
+        d: D,
+        mask: <Self::Mask as MaskWidth>::Raw<D>,
+        if_true: Self::Raw<D>,
     ) -> Self::Raw<D>;
     fn mask_zero_select<D: crate::SimdDescriptor>(
         d: D,
@@ -151,6 +168,7 @@ pub trait FloatElement: SignedElement + MulElement {
     fn floor<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> Self::Raw<D>;
     fn ceil<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> Self::Raw<D>;
     fn round<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> Self::Raw<D>;
+    fn trunc<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> Self::Raw<D>;
     fn copysign<D: crate::SimdDescriptor>(
         d: D,
         a: Self::Raw<D>,
@@ -159,7 +177,10 @@ pub trait FloatElement: SignedElement + MulElement {
 }
 
 pub trait IntElement: ComparableElement + ArithElement + MulElement {
+    const BITS: u32;
+    const IS_SIGNED: bool;
     const ONE: Self;
+    fn from_u8(v: u8) -> Self;
     fn bit_and<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>) -> Self::Raw<D>;
     fn bit_or<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>) -> Self::Raw<D>;
     fn bit_xor<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>) -> Self::Raw<D>;
@@ -168,6 +189,30 @@ pub trait IntElement: ComparableElement + ArithElement + MulElement {
     -> Self::Raw<D>;
     fn shl<D: crate::SimdDescriptor, const AMOUNT: u32>(d: D, a: Self::Raw<D>) -> Self::Raw<D>;
     fn shr<D: crate::SimdDescriptor, const AMOUNT: u32>(d: D, a: Self::Raw<D>) -> Self::Raw<D>;
+    fn shl_vec<D: crate::SimdDescriptor>(
+        d: D,
+        a: Self::Raw<D>,
+        counts: Self::Raw<D>,
+    ) -> Self::Raw<D>;
+    fn shr_vec<D: crate::SimdDescriptor>(
+        d: D,
+        a: Self::Raw<D>,
+        counts: Self::Raw<D>,
+    ) -> Self::Raw<D>;
+}
+
+pub trait SatElement: IntElement {
+    fn sat_add<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>) -> Self::Raw<D>;
+    fn sat_sub<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>) -> Self::Raw<D>;
+}
+
+pub trait PromoteElement<W: Element>: Element {
+    fn promote_lo<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> W::Raw<D>;
+    fn promote_hi<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> W::Raw<D>;
+}
+
+pub trait DemoteElement<N: Element>: Element {
+    fn demote_to<D: crate::SimdDescriptor>(d: D, lo: Self::Raw<D>, hi: Self::Raw<D>) -> N::Raw<D>;
 }
 
 pub trait MaskBackend<W: MaskWidth>: Copy {
@@ -254,6 +299,45 @@ pub trait LaneBackend<T: Copy + Default + Debug + 'static>: BytesBackend {
     {
         generic_ops::store_interleaved_4(self, a, b, c, e, dest);
     }
+    #[inline(always)]
+    fn load_deinterleaved_2(
+        self,
+        src: &[T],
+    ) -> (<Self as LaneBackend<T>>::Raw, <Self as LaneBackend<T>>::Raw)
+    where
+        Self: crate::SimdDescriptor,
+    {
+        generic_ops::load_deinterleaved_2(self, src)
+    }
+    #[inline(always)]
+    fn load_deinterleaved_3(
+        self,
+        src: &[T],
+    ) -> (
+        <Self as LaneBackend<T>>::Raw,
+        <Self as LaneBackend<T>>::Raw,
+        <Self as LaneBackend<T>>::Raw,
+    )
+    where
+        Self: crate::SimdDescriptor,
+    {
+        generic_ops::load_deinterleaved_3(self, src)
+    }
+    #[inline(always)]
+    fn load_deinterleaved_4(
+        self,
+        src: &[T],
+    ) -> (
+        <Self as LaneBackend<T>>::Raw,
+        <Self as LaneBackend<T>>::Raw,
+        <Self as LaneBackend<T>>::Raw,
+        <Self as LaneBackend<T>>::Raw,
+    )
+    where
+        Self: crate::SimdDescriptor,
+    {
+        generic_ops::load_deinterleaved_4(self, src)
+    }
 }
 
 pub trait CompareBackend<T: ComparableElement>: LaneBackend<T> + MaskBackend<T::Mask> {
@@ -267,6 +351,11 @@ pub trait CompareBackend<T: ComparableElement>: LaneBackend<T> + MaskBackend<T::
         mask: <Self as MaskBackend<T::Mask>>::MaskRaw,
         if_true: Self::Raw,
         if_false: Self::Raw,
+    ) -> Self::Raw;
+    fn mask_select_zero(
+        self,
+        mask: <Self as MaskBackend<T::Mask>>::MaskRaw,
+        if_true: Self::Raw,
     ) -> Self::Raw;
     fn mask_zero_select(
         self,
@@ -298,6 +387,7 @@ pub trait FloatBackend<T: FloatElement>: SignedBackend<T> + MulBackend<T> {
     fn floor(self, a: Self::Raw) -> Self::Raw;
     fn ceil(self, a: Self::Raw) -> Self::Raw;
     fn round(self, a: Self::Raw) -> Self::Raw;
+    fn trunc(self, a: Self::Raw) -> Self::Raw;
     fn copysign(self, a: Self::Raw, sign: Self::Raw) -> Self::Raw;
 }
 
@@ -309,6 +399,33 @@ pub trait IntBitBackend<T: IntElement>: CompareBackend<T> + MulBackend<T> {
     fn andnot(self, not_a: Self::Raw, b: Self::Raw) -> Self::Raw;
     fn shl<const AMOUNT: u32>(self, a: Self::Raw) -> Self::Raw;
     fn shr<const AMOUNT: u32>(self, a: Self::Raw) -> Self::Raw;
+    #[inline(always)]
+    fn shl_vec(
+        self,
+        a: <Self as LaneBackend<T>>::Raw,
+        counts: <Self as LaneBackend<T>>::Raw,
+    ) -> <Self as LaneBackend<T>>::Raw
+    where
+        Self: crate::SimdDescriptor,
+    {
+        generic_ops::shl_vec_default::<T, Self>(self, a, counts)
+    }
+    #[inline(always)]
+    fn shr_vec(
+        self,
+        a: <Self as LaneBackend<T>>::Raw,
+        counts: <Self as LaneBackend<T>>::Raw,
+    ) -> <Self as LaneBackend<T>>::Raw
+    where
+        Self: crate::SimdDescriptor,
+    {
+        generic_ops::shr_vec_default::<T, Self>(self, a, counts)
+    }
+}
+
+pub trait SatBackend<T: SatElement>: IntBitBackend<T> {
+    fn sat_add(self, a: Self::Raw, b: Self::Raw) -> Self::Raw;
+    fn sat_sub(self, a: Self::Raw, b: Self::Raw) -> Self::Raw;
 }
 
 pub trait F32ExtraBackend: LaneBackend<f32> + LaneBackend<i32> {
@@ -317,6 +434,19 @@ pub trait F32ExtraBackend: LaneBackend<f32> + LaneBackend<i32> {
     fn f32_round_store_u16(self, a: <Self as LaneBackend<f32>>::Raw, dest: &mut [u16]);
     fn f32_load_f16_bits(self, mem: &[u16]) -> <Self as LaneBackend<f32>>::Raw;
     fn f32_store_f16_bits(self, a: <Self as LaneBackend<f32>>::Raw, dest: &mut [u16]);
+}
+
+pub trait F64ExtraBackend: LaneBackend<f64> + LaneBackend<f32> + LaneBackend<i64> {
+    fn f64_as_i64(self, a: <Self as LaneBackend<f64>>::Raw) -> <Self as LaneBackend<i64>>::Raw;
+    fn f64_from_f32_lo(self, a: <Self as LaneBackend<f32>>::Raw)
+    -> <Self as LaneBackend<f64>>::Raw;
+    fn f64_from_f32_hi(self, a: <Self as LaneBackend<f32>>::Raw)
+    -> <Self as LaneBackend<f64>>::Raw;
+    fn f64_to_f32(
+        self,
+        lo: <Self as LaneBackend<f64>>::Raw,
+        hi: <Self as LaneBackend<f64>>::Raw,
+    ) -> <Self as LaneBackend<f32>>::Raw;
 }
 
 pub trait I32ExtraBackend: LaneBackend<i32> + LaneBackend<f32> {
@@ -330,6 +460,10 @@ pub trait I32ExtraBackend: LaneBackend<i32> + LaneBackend<f32> {
         a: <Self as LaneBackend<i32>>::Raw,
         b: <Self as LaneBackend<i32>>::Raw,
     ) -> <Self as LaneBackend<i32>>::Raw;
+}
+
+pub trait I64ExtraBackend: LaneBackend<i64> + LaneBackend<f64> {
+    fn i64_as_f64(self, a: <Self as LaneBackend<i64>>::Raw) -> <Self as LaneBackend<f64>>::Raw;
 }
 
 pub trait I16ExtraBackend: LaneBackend<i16> {
@@ -356,45 +490,69 @@ pub trait DescriptorSealed:
     + MaskBackend<W32>
     + MaskBackend<W64>
     + LaneBackend<f32>
+    + LaneBackend<f64>
+    + LaneBackend<i8>
     + LaneBackend<u8>
     + LaneBackend<i16>
     + LaneBackend<u16>
     + LaneBackend<i32>
     + LaneBackend<u32>
+    + LaneBackend<i64>
     + LaneBackend<u64>
     + CompareBackend<f32>
+    + CompareBackend<f64>
+    + CompareBackend<i8>
     + CompareBackend<u8>
     + CompareBackend<i16>
     + CompareBackend<u16>
     + CompareBackend<i32>
     + CompareBackend<u32>
+    + CompareBackend<i64>
     + CompareBackend<u64>
     + ArithBackend<f32>
+    + ArithBackend<f64>
+    + ArithBackend<i8>
     + ArithBackend<u8>
     + ArithBackend<i16>
     + ArithBackend<u16>
     + ArithBackend<i32>
     + ArithBackend<u32>
+    + ArithBackend<i64>
     + ArithBackend<u64>
     + MulBackend<f32>
+    + MulBackend<f64>
+    + MulBackend<i8>
     + MulBackend<u8>
     + MulBackend<i16>
     + MulBackend<u16>
     + MulBackend<i32>
     + MulBackend<u32>
+    + MulBackend<i64>
     + MulBackend<u64>
     + SignedBackend<f32>
+    + SignedBackend<f64>
+    + SignedBackend<i8>
     + SignedBackend<i16>
     + SignedBackend<i32>
+    + SignedBackend<i64>
     + FloatBackend<f32>
+    + FloatBackend<f64>
+    + IntBitBackend<i8>
     + IntBitBackend<u8>
     + IntBitBackend<i16>
     + IntBitBackend<u16>
     + IntBitBackend<i32>
     + IntBitBackend<u32>
+    + IntBitBackend<i64>
     + IntBitBackend<u64>
+    + SatBackend<i8>
+    + SatBackend<u8>
+    + SatBackend<i16>
+    + SatBackend<u16>
     + F32ExtraBackend
+    + F64ExtraBackend
     + I32ExtraBackend
+    + I64ExtraBackend
     + I16ExtraBackend
     + U8ExtraBackend
     + Sized
@@ -453,16 +611,22 @@ macro_rules! impl_elements {
             #[inline(always)] fn store_interleaved_2<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>, dest: &mut [Self]) { <D as LaneBackend<$t>>::store_interleaved_2(d, a, b, dest); }
             #[inline(always)] fn store_interleaved_3<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>, c: Self::Raw<D>, dest: &mut [Self]) { <D as LaneBackend<$t>>::store_interleaved_3(d, a, b, c, dest); }
             #[inline(always)] fn store_interleaved_4<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>, c: Self::Raw<D>, e: Self::Raw<D>, dest: &mut [Self]) { <D as LaneBackend<$t>>::store_interleaved_4(d, a, b, c, e, dest); }
+            #[inline(always)] fn load_deinterleaved_2<D: crate::SimdDescriptor>(d: D, src: &[Self]) -> (Self::Raw<D>, Self::Raw<D>) { <D as LaneBackend<$t>>::load_deinterleaved_2(d, src) }
+            #[inline(always)] fn load_deinterleaved_3<D: crate::SimdDescriptor>(d: D, src: &[Self]) -> (Self::Raw<D>, Self::Raw<D>, Self::Raw<D>) { <D as LaneBackend<$t>>::load_deinterleaved_3(d, src) }
+            #[inline(always)] fn load_deinterleaved_4<D: crate::SimdDescriptor>(d: D, src: &[Self]) -> (Self::Raw<D>, Self::Raw<D>, Self::Raw<D>, Self::Raw<D>) { <D as LaneBackend<$t>>::load_deinterleaved_4(d, src) }
         })*
     };
 }
 impl_elements!(
     (f32, 0.0),
+    (f64, 0.0),
+    (i8, 0),
     (u8, 0),
     (i16, 0),
     (u16, 0),
     (i32, 0),
     (u32, 0),
+    (i64, 0),
     (u64, 0)
 );
 
@@ -476,17 +640,21 @@ macro_rules! impl_comparable {
             #[inline(always)] fn min<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>) -> Self::Raw<D> { <D as CompareBackend<Self>>::min(d, a, b) }
             #[inline(always)] fn max<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>) -> Self::Raw<D> { <D as CompareBackend<Self>>::max(d, a, b) }
             #[inline(always)] fn mask_select<D: crate::SimdDescriptor>(d: D, m: <Self::Mask as MaskWidth>::Raw<D>, t: Self::Raw<D>, f: Self::Raw<D>) -> Self::Raw<D> { <D as CompareBackend<Self>>::mask_select(d, m, t, f) }
+            #[inline(always)] fn mask_select_zero<D: crate::SimdDescriptor>(d: D, m: <Self::Mask as MaskWidth>::Raw<D>, t: Self::Raw<D>) -> Self::Raw<D> { <D as CompareBackend<Self>>::mask_select_zero(d, m, t) }
             #[inline(always)] fn mask_zero_select<D: crate::SimdDescriptor>(d: D, m: <Self::Mask as MaskWidth>::Raw<D>, f: Self::Raw<D>) -> Self::Raw<D> { <D as CompareBackend<Self>>::mask_zero_select(d, m, f) }
         })*
     };
 }
 impl_comparable!(
     (f32, W32),
+    (f64, W64),
+    (i8, W8),
     (u8, W8),
     (i16, W16),
     (u16, W16),
     (i32, W32),
     (u32, W32),
+    (i64, W64),
     (u64, W64)
 );
 
@@ -498,7 +666,7 @@ macro_rules! impl_arith {
         })*
     };
 }
-impl_arith!(f32, u8, i16, u16, i32, u32, u64);
+impl_arith!(f32, f64, i8, u8, i16, u16, i32, u32, i64, u64);
 
 macro_rules! impl_mul {
     ($($t:ty),*) => {
@@ -507,7 +675,7 @@ macro_rules! impl_mul {
         })*
     };
 }
-impl_mul!(f32, u8, i16, u16, i32, u32, u64);
+impl_mul!(f32, f64, i8, u8, i16, u16, i32, u32, i64, u64);
 
 macro_rules! impl_signed {
     ($($t:ty),*) => {
@@ -518,7 +686,7 @@ macro_rules! impl_signed {
         })*
     };
 }
-impl_signed!(f32, i16, i32);
+impl_signed!(f32, f64, i8, i16, i32, i64);
 
 macro_rules! impl_float {
     ($($t:ty),*) => {
@@ -530,16 +698,20 @@ macro_rules! impl_float {
             #[inline(always)] fn floor<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> Self::Raw<D> { <D as FloatBackend<Self>>::floor(d, a) }
             #[inline(always)] fn ceil<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> Self::Raw<D> { <D as FloatBackend<Self>>::ceil(d, a) }
             #[inline(always)] fn round<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> Self::Raw<D> { <D as FloatBackend<Self>>::round(d, a) }
+            #[inline(always)] fn trunc<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> Self::Raw<D> { <D as FloatBackend<Self>>::trunc(d, a) }
             #[inline(always)] fn copysign<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, s: Self::Raw<D>) -> Self::Raw<D> { <D as FloatBackend<Self>>::copysign(d, a, s) }
         })*
     };
 }
-impl_float!(f32);
+impl_float!(f32, f64);
 
 macro_rules! impl_int {
-    ($($t:ty),*) => {
+    ($(($t:ty, $s:expr)),*) => {
         $(impl IntElement for $t {
+            const BITS: u32 = <$t>::BITS;
+            const IS_SIGNED: bool = $s;
             const ONE: Self = 1;
+            #[inline(always)] fn from_u8(v: u8) -> Self { v as $t }
             #[inline(always)] fn bit_and<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>) -> Self::Raw<D> { <D as IntBitBackend<Self>>::bit_and(d, a, b) }
             #[inline(always)] fn bit_or<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>) -> Self::Raw<D> { <D as IntBitBackend<Self>>::bit_or(d, a, b) }
             #[inline(always)] fn bit_xor<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>) -> Self::Raw<D> { <D as IntBitBackend<Self>>::bit_xor(d, a, b) }
@@ -547,7 +719,100 @@ macro_rules! impl_int {
             #[inline(always)] fn andnot<D: crate::SimdDescriptor>(d: D, na: Self::Raw<D>, b: Self::Raw<D>) -> Self::Raw<D> { <D as IntBitBackend<Self>>::andnot(d, na, b) }
             #[inline(always)] fn shl<D: crate::SimdDescriptor, const N: u32>(d: D, a: Self::Raw<D>) -> Self::Raw<D> { <D as IntBitBackend<Self>>::shl::<N>(d, a) }
             #[inline(always)] fn shr<D: crate::SimdDescriptor, const N: u32>(d: D, a: Self::Raw<D>) -> Self::Raw<D> { <D as IntBitBackend<Self>>::shr::<N>(d, a) }
+            #[inline(always)] fn shl_vec<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, c: Self::Raw<D>) -> Self::Raw<D> { <D as IntBitBackend<Self>>::shl_vec(d, a, c) }
+            #[inline(always)] fn shr_vec<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, c: Self::Raw<D>) -> Self::Raw<D> { <D as IntBitBackend<Self>>::shr_vec(d, a, c) }
         })*
     };
 }
-impl_int!(u8, i16, u16, i32, u32, u64);
+impl_int!(
+    (i8, true),
+    (u8, false),
+    (i16, true),
+    (u16, false),
+    (i32, true),
+    (u32, false),
+    (i64, true),
+    (u64, false)
+);
+
+macro_rules! impl_sat {
+    ($($t:ty),*) => {
+        $(impl SatElement for $t {
+            #[inline(always)] fn sat_add<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>) -> Self::Raw<D> { <D as SatBackend<Self>>::sat_add(d, a, b) }
+            #[inline(always)] fn sat_sub<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>) -> Self::Raw<D> { <D as SatBackend<Self>>::sat_sub(d, a, b) }
+        })*
+    };
+}
+impl_sat!(i8, u8, i16, u16);
+
+impl PromoteElement<f64> for f32 {
+    #[inline(always)]
+    fn promote_lo<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> <f64 as Element>::Raw<D> {
+        d.f64_from_f32_lo(a)
+    }
+    #[inline(always)]
+    fn promote_hi<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> <f64 as Element>::Raw<D> {
+        d.f64_from_f32_hi(a)
+    }
+}
+
+impl DemoteElement<f32> for f64 {
+    #[inline(always)]
+    fn demote_to<D: crate::SimdDescriptor>(
+        d: D,
+        lo: Self::Raw<D>,
+        hi: Self::Raw<D>,
+    ) -> <f32 as Element>::Raw<D> {
+        d.f64_to_f32(lo, hi)
+    }
+}
+
+macro_rules! impl_int_promote {
+    ($(($s:ty, $w:ty)),*) => {
+        $(impl PromoteElement<$w> for $s {
+            #[inline(always)]
+            fn promote_lo<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> <$w as Element>::Raw<D> {
+                generic_ops::promote_int_lo::<Self, $w, D>(d, a, |x| x as $w)
+            }
+            #[inline(always)]
+            fn promote_hi<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> <$w as Element>::Raw<D> {
+                generic_ops::promote_int_hi::<Self, $w, D>(d, a, |x| x as $w)
+            }
+        })*
+    };
+}
+impl_int_promote!(
+    (i8, i16),
+    (u8, u16),
+    (u8, i16),
+    (i16, i32),
+    (u16, u32),
+    (u16, i32),
+    (i32, i64),
+    (u32, u64),
+    (u32, i64)
+);
+
+macro_rules! impl_int_demote {
+    ($(($w:ty, $n:ty, $lo:expr, $hi:expr)),*) => {
+        $(impl DemoteElement<$n> for $w {
+            #[inline(always)]
+            fn demote_to<D: crate::SimdDescriptor>(d: D, lo: Self::Raw<D>, hi: Self::Raw<D>) -> <$n as Element>::Raw<D> {
+                <$n as Element>::from_raw_bytes(
+                    d,
+                    generic_ops::demote_int::<Self, $n, D>(d, lo, hi, $lo, $hi, |x| x.clamp($lo, $hi) as $n),
+                )
+            }
+        })*
+    };
+}
+impl_int_demote!(
+    (i16, i8, i8::MIN as i16, i8::MAX as i16),
+    (i16, u8, 0, u8::MAX as i16),
+    (u16, u8, 0, u8::MAX as u16),
+    (i32, i16, i16::MIN as i32, i16::MAX as i32),
+    (i32, u16, 0, u16::MAX as i32),
+    (u32, u16, 0, u16::MAX as u32),
+    (i64, i32, i32::MIN as i64, i32::MAX as i64),
+    (u64, u32, 0, u32::MAX as u64)
+);

@@ -8,9 +8,9 @@
 use std::array::from_fn;
 
 use crate::sealed::{
-    ArithBackend, BytesBackend, CompareBackend, DescriptorSealed, F32ExtraBackend, FloatBackend,
-    I16ExtraBackend, I32ExtraBackend, IntBitBackend, LaneBackend, MaskBackend, MulBackend,
-    SignedBackend, U8ExtraBackend,
+    ArithBackend, BytesBackend, CompareBackend, DescriptorSealed, F32ExtraBackend, F64ExtraBackend,
+    FloatBackend, I16ExtraBackend, I32ExtraBackend, I64ExtraBackend, IntBitBackend, LaneBackend,
+    MaskBackend, MulBackend, SatBackend, SignedBackend, U8ExtraBackend,
 };
 use crate::{SimdDescriptor, SimdDescriptor128, W8, W16, W32, W64, f16, generic_ops};
 
@@ -264,7 +264,29 @@ impl_emu_lane!(
         b[4 * i + 3]
     ]))
 );
+impl_emu_lane!(
+    f64,
+    2,
+    0.0,
+    |a: [f64; 2]| {
+        let mut out = [0u8; 16];
+        out[..8].copy_from_slice(&a[0].to_ne_bytes());
+        out[8..].copy_from_slice(&a[1].to_ne_bytes());
+        out
+    },
+    |b: [u8; 16]| [
+        f64::from_ne_bytes(b[..8].try_into().unwrap()),
+        f64::from_ne_bytes(b[8..].try_into().unwrap()),
+    ]
+);
 impl_emu_lane!(u8, 16, 0, |a| a, |b| b);
+impl_emu_lane!(
+    i8,
+    16,
+    0,
+    |a: [i8; 16]| a.map(|x| x as u8),
+    |b: [u8; 16]| b.map(|x| x as i8)
+);
 impl_emu_lane!(
     i16,
     8,
@@ -292,6 +314,13 @@ impl_emu_lane!(
     0,
     bytes_conv!(u32, 4, 4).0,
     bytes_conv!(u32, 4, 4).1
+);
+impl_emu_lane!(
+    i64,
+    2,
+    0,
+    bytes_conv!(i64, 2, 8).0,
+    bytes_conv!(i64, 2, 8).1
 );
 impl_emu_lane!(
     u64,
@@ -329,6 +358,10 @@ macro_rules! impl_emu_compare {
                 from_fn(|i| if m[i] { t[i] } else { f[i] })
             }
             #[inline(always)]
+            fn mask_select_zero(self, m: [bool; $n], t: [$t; $n]) -> [$t; $n] {
+                from_fn(|i| if m[i] { t[i] } else { $z })
+            }
+            #[inline(always)]
             fn mask_zero_select(self, m: [bool; $n], f: [$t; $n]) -> [$t; $n] {
                 from_fn(|i| if m[i] { $z } else { f[i] })
             }
@@ -336,11 +369,14 @@ macro_rules! impl_emu_compare {
     };
 }
 impl_emu_compare!(f32, 4, 0.0, f32::min, f32::max);
+impl_emu_compare!(f64, 2, 0.0, f64::min, f64::max);
+impl_emu_compare!(i8, 16, 0, Ord::min, Ord::max);
 impl_emu_compare!(u8, 16, 0, Ord::min, Ord::max);
 impl_emu_compare!(i16, 8, 0, Ord::min, Ord::max);
 impl_emu_compare!(u16, 8, 0, Ord::min, Ord::max);
 impl_emu_compare!(i32, 4, 0, Ord::min, Ord::max);
 impl_emu_compare!(u32, 4, 0, Ord::min, Ord::max);
+impl_emu_compare!(i64, 2, 0, Ord::min, Ord::max);
 impl_emu_compare!(u64, 2, 0, Ord::min, Ord::max);
 
 macro_rules! impl_emu_float_arith_signed {
@@ -405,6 +441,10 @@ macro_rules! impl_emu_float_arith_signed {
                 a.map(<$t>::round_ties_even)
             }
             #[inline(always)]
+            fn trunc(self, a: [$t; $n]) -> [$t; $n] {
+                a.map(<$t>::trunc)
+            }
+            #[inline(always)]
             fn copysign(self, a: [$t; $n], sign: [$t; $n]) -> [$t; $n] {
                 from_fn(|i| a[i].copysign(sign[i]))
             }
@@ -412,6 +452,7 @@ macro_rules! impl_emu_float_arith_signed {
     };
 }
 impl_emu_float_arith_signed!(f32, 4);
+impl_emu_float_arith_signed!(f64, 2);
 
 macro_rules! impl_emu_int_ops {
     ($(($t:ty, $n:literal)),*) => {
@@ -435,7 +476,16 @@ macro_rules! impl_emu_int_ops {
         )*
     };
 }
-impl_emu_int_ops!((u8, 16), (i16, 8), (u16, 8), (i32, 4), (u32, 4), (u64, 2));
+impl_emu_int_ops!(
+    (i8, 16),
+    (u8, 16),
+    (i16, 8),
+    (u16, 8),
+    (i32, 4),
+    (u32, 4),
+    (i64, 2),
+    (u64, 2)
+);
 
 macro_rules! impl_emu_signed_int {
     ($(($t:ty, $n:literal)),*) => {
@@ -446,7 +496,17 @@ macro_rules! impl_emu_signed_int {
         })*
     };
 }
-impl_emu_signed_int!((i16, 8), (i32, 4));
+impl_emu_signed_int!((i8, 16), (i16, 8), (i32, 4), (i64, 2));
+
+macro_rules! impl_emu_sat {
+    ($(($t:ty, $n:literal)),*) => {
+        $(impl SatBackend<$t> for Emu128Descriptor {
+            #[inline(always)] fn sat_add(self, a: [$t; $n], b: [$t; $n]) -> [$t; $n] { from_fn(|i| a[i].saturating_add(b[i])) }
+            #[inline(always)] fn sat_sub(self, a: [$t; $n], b: [$t; $n]) -> [$t; $n] { from_fn(|i| a[i].saturating_sub(b[i])) }
+        })*
+    };
+}
+impl_emu_sat!((i8, 16), (u8, 16), (i16, 8), (u16, 8));
 
 impl F32ExtraBackend for Emu128Descriptor {
     #[inline(always)]
@@ -470,6 +530,25 @@ impl F32ExtraBackend for Emu128Descriptor {
     #[inline(always)]
     fn f32_store_f16_bits(self, a: [f32; 4], dest: &mut [u16]) {
         *dest.first_chunk_mut::<4>().unwrap() = a.map(|x| f16::from_f32(x).to_bits());
+    }
+}
+
+impl F64ExtraBackend for Emu128Descriptor {
+    #[inline(always)]
+    fn f64_as_i64(self, a: [f64; 2]) -> [i64; 2] {
+        a.map(|x| x as i64)
+    }
+    #[inline(always)]
+    fn f64_from_f32_lo(self, a: [f32; 4]) -> [f64; 2] {
+        [a[0] as f64, a[1] as f64]
+    }
+    #[inline(always)]
+    fn f64_from_f32_hi(self, a: [f32; 4]) -> [f64; 2] {
+        [a[2] as f64, a[3] as f64]
+    }
+    #[inline(always)]
+    fn f64_to_f32(self, lo: [f64; 2], hi: [f64; 2]) -> [f32; 4] {
+        [lo[0] as f32, lo[1] as f32, hi[0] as f32, hi[1] as f32]
     }
 }
 
@@ -497,6 +576,13 @@ impl I32ExtraBackend for Emu128Descriptor {
     #[inline(always)]
     fn i32_mul_wide_take_high(self, a: [i32; 4], b: [i32; 4]) -> [i32; 4] {
         from_fn(|i| ((a[i] as i64 * b[i] as i64) >> 32) as i32)
+    }
+}
+
+impl I64ExtraBackend for Emu128Descriptor {
+    #[inline(always)]
+    fn i64_as_f64(self, a: [i64; 2]) -> [f64; 2] {
+        a.map(|x| x as f64)
     }
 }
 

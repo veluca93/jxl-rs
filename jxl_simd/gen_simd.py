@@ -23,11 +23,13 @@ FILE_HEADER = """\
 """
 
 CORE_INT_TYPES = [
+    ("i8", 8, True),
     ("u8", 8, False),
     ("i16", 16, True),
     ("u16", 16, False),
     ("i32", 32, True),
     ("u32", 32, False),
+    ("i64", 64, True),
     ("u64", 64, False),
 ]
 
@@ -87,6 +89,11 @@ def x86_common(bits):
       256: "_mm256_castps256_ps128(a)",
       512: "_mm512_castps512_ps128(a)",
   }[bits]
+  ext_lo_pd = {
+      128: "a",
+      256: "_mm256_castpd256_pd128(a)",
+      512: "_mm512_castpd512_pd128(a)",
+  }[bits]
 
   masks = {}
   if not is_512:
@@ -142,113 +149,130 @@ def x86_common(bits):
       }
 
   types = {}
-  mty_f32 = masks["W32"]["raw"]
-  if bits == 128:
-    f32_eq = lambda a, b: f"_mm_cmpeq_ps({a}, {b})"
-    f32_gt = lambda a, b: f"_mm_cmpgt_ps({a}, {b})"
-    f32_eqz = lambda a: f"_mm_cmpeq_ps({a}, _mm_setzero_ps())"
-    f32_ltz = lambda a: f"_mm_cmplt_ps({a}, _mm_setzero_ps())"
-  elif bits == 256:
-    f32_eq = lambda a, b: f"_mm256_cmp_ps::<_CMP_EQ_OQ>({a}, {b})"
-    f32_gt = lambda a, b: f"_mm256_cmp_ps::<_CMP_GT_OQ>({a}, {b})"
-    f32_eqz = lambda a: f"_mm256_cmp_ps::<_CMP_EQ_OQ>({a}, _mm256_setzero_ps())"
-    f32_ltz = lambda a: f"_mm256_cmp_ps::<_CMP_LT_OQ>({a}, _mm256_setzero_ps())"
-  else:
-    f32_eq = lambda a, b: f"_mm512_cmp_ps_mask::<_CMP_EQ_OQ>({a}, {b})"
-    f32_gt = lambda a, b: f"_mm512_cmp_ps_mask::<_CMP_GT_OQ>({a}, {b})"
-    f32_eqz = (
-        lambda a: f"_mm512_cmp_ps_mask::<_CMP_EQ_OQ>({a}, _mm512_setzero_ps())"
-    )
-    f32_ltz = (
-        lambda a: f"_mm512_cmp_ps_mask::<_CMP_LT_OQ>({a}, _mm512_setzero_ps())"
-    )
 
-  if not is_512:
-    f32_sel = (
-        lambda m, t, f: f"{prefix}_blendv_ps({f}, {t}, {m})"
-    )
-    f32_zsel = fn_op(f"{prefix}_andnot_ps")
-    f32_neg = lambda a: f"{prefix}_xor_ps({prefix}_set1_ps(-0.0), {a})"
-    f32_abs = lambda a: f"{prefix}_andnot_ps({prefix}_set1_ps(-0.0), {a})"
-    f32_csign = lambda a, sign: (
-        f"let m = {prefix}_set1_ps(-0.0); "
-        f"{prefix}_or_ps({prefix}_andnot_ps(m, {a}), {prefix}_and_ps(m, {sign}))"
-    )
-    f32_floor = fn_op(f"{prefix}_floor_ps")
-    f32_ceil = fn_op(f"{prefix}_ceil_ps")
-    f32_round = lambda a: (
-        f"{prefix}_round_ps::<{{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }}>({a})"
-    )
-  else:
-    f32_sel = lambda m, t, f: f"_mm512_mask_blend_ps({m}, {f}, {t})"
-    f32_zsel = lambda m, f: f"_mm512_maskz_mov_ps(!{m}, {f})"
-    s1i = "_mm512_set1_epi32(i32::MIN)"
-    f32_neg = lambda a: cast_i_to_f32(
-        f"_mm512_xor_si512({cast_f32_to_i(a)}, {s1i})"
-    )
-    f32_abs = lambda a: cast_i_to_f32(
-        f"_mm512_and_si512({cast_f32_to_i(a)}, _mm512_set1_epi32(0x7FFF_FFFF))"
-    )
-    f32_csign = lambda a, sign: (
-        f"let m = {s1i}; "
-        + cast_i_to_f32(
-            f"_mm512_or_si512(_mm512_andnot_si512(m, {cast_f32_to_i(a)}), "
-            f"_mm512_and_si512(m, {cast_f32_to_i(sign)}))"
+  def make_float_spec(vr, sfx, fsfx, wbits, mw, min_int):
+    mty = masks[mw]["raw"]
+    ext_lo = ext_lo_ps if wbits == 32 else ext_lo_pd
+    ci = cast_f32_to_i if wbits == 32 else cast_f64_to_i
+    cf = cast_i_to_f32 if wbits == 32 else cast_i_to_f64
+    if bits == 128:
+      eq = lambda a, b: f"_mm_cmpeq_{sfx}({a}, {b})"
+      gt = lambda a, b: f"_mm_cmpgt_{sfx}({a}, {b})"
+      eqz = lambda a: f"_mm_cmpeq_{sfx}({a}, _mm_setzero_{sfx}())"
+      ltz = lambda a: f"_mm_cmplt_{sfx}({a}, _mm_setzero_{sfx}())"
+    elif bits == 256:
+      eq = lambda a, b: f"_mm256_cmp_{sfx}::<_CMP_EQ_OQ>({a}, {b})"
+      gt = lambda a, b: f"_mm256_cmp_{sfx}::<_CMP_GT_OQ>({a}, {b})"
+      eqz = lambda a: f"_mm256_cmp_{sfx}::<_CMP_EQ_OQ>({a}, _mm256_setzero_{sfx}())"
+      ltz = lambda a: f"_mm256_cmp_{sfx}::<_CMP_LT_OQ>({a}, _mm256_setzero_{sfx}())"
+    else:
+      eq = lambda a, b: f"_mm512_cmp_{sfx}_mask::<_CMP_EQ_OQ>({a}, {b})"
+      gt = lambda a, b: f"_mm512_cmp_{sfx}_mask::<_CMP_GT_OQ>({a}, {b})"
+      eqz = (
+          lambda a: f"_mm512_cmp_{sfx}_mask::<_CMP_EQ_OQ>({a}, _mm512_setzero_{sfx}())"
+      )
+      ltz = (
+          lambda a: f"_mm512_cmp_{sfx}_mask::<_CMP_LT_OQ>({a}, _mm512_setzero_{sfx}())"
+      )
+
+    if not is_512:
+      sel = lambda m, t, f: f"{prefix}_blendv_{sfx}({f}, {t}, {m})"
+      selz = fn_op(f"{prefix}_and_{sfx}")
+      zsel = fn_op(f"{prefix}_andnot_{sfx}")
+      neg = lambda a: f"{prefix}_xor_{sfx}({prefix}_set1_{sfx}(-0.0), {a})"
+      abs_op = lambda a: f"{prefix}_andnot_{sfx}({prefix}_set1_{sfx}(-0.0), {a})"
+      csign = lambda a, sign: (
+          f"let m = {prefix}_set1_{sfx}(-0.0); "
+          f"{prefix}_or_{sfx}({prefix}_andnot_{sfx}(m, {a}), {prefix}_and_{sfx}(m, {sign}))"
+      )
+      floor = fn_op(f"{prefix}_floor_{sfx}")
+      ceil = fn_op(f"{prefix}_ceil_{sfx}")
+      rnd = lambda a: (
+          f"{prefix}_round_{sfx}::<{{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }}>({a})"
+      )
+      trunc = lambda a: (
+          f"{prefix}_round_{sfx}::<{{ _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC }}>({a})"
+      )
+    else:
+      sel = lambda m, t, f: f"_mm512_mask_blend_{sfx}({m}, {f}, {t})"
+      selz = fn_op(f"_mm512_maskz_mov_{sfx}")
+      zsel = lambda m, f: f"_mm512_maskz_mov_{sfx}(!{m}, {f})"
+      s1i = f"_mm512_set1_epi{wbits}({min_int})"
+      neg = lambda a: cf(f"_mm512_xor_si512({ci(a)}, {s1i})")
+      if wbits == 32:
+        abs_op = lambda a: cf(
+            f"_mm512_and_si512({ci(a)}, _mm512_set1_epi32(0x7FFF_FFFF))"
         )
-    )
-    f32_floor = lambda a: (
-        f"_mm512_roundscale_ps::<{{ _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC }}>({a})"
-    )
-    f32_ceil = lambda a: (
-        f"_mm512_roundscale_ps::<{{ _MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC }}>({a})"
-    )
-    f32_round = lambda a: (
-        f"_mm512_roundscale_ps::<{{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }}>({a})"
-    )
+      else:
+        abs_op = fn_op("_mm512_abs_pd")
+      csign = lambda a, sign: (
+          f"let m = {s1i}; "
+          + cf(
+              f"_mm512_or_si512(_mm512_andnot_si512(m, {ci(a)}), "
+              f"_mm512_and_si512(m, {ci(sign)}))"
+          )
+      )
+      floor = lambda a: (
+          f"_mm512_roundscale_{sfx}::<{{ _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC }}>({a})"
+      )
+      ceil = lambda a: (
+          f"_mm512_roundscale_{sfx}::<{{ _MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC }}>({a})"
+      )
+      rnd = lambda a: (
+          f"_mm512_roundscale_{sfx}::<{{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }}>({a})"
+      )
+      trunc = lambda a: (
+          f"_mm512_roundscale_{sfx}::<{{ _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC }}>({a})"
+      )
 
-  if bits == 128:
-    f32_fma = lambda a, m, ad: f"_mm_add_ps(_mm_mul_ps({a}, {m}), {ad})"
-    f32_fnma = lambda a, m, ad: f"_mm_sub_ps({ad}, _mm_mul_ps({a}, {m}))"
-  else:
-    f32_fma = fn_op(f"{prefix}_fmadd_ps")
-    f32_fnma = fn_op(f"{prefix}_fnmadd_ps")
+    if bits == 128:
+      fma = lambda a, m, ad: f"_mm_add_{sfx}(_mm_mul_{sfx}({a}, {m}), {ad})"
+      fnma = lambda a, m, ad: f"_mm_sub_{sfx}({ad}, _mm_mul_{sfx}({a}, {m}))"
+    else:
+      fma = fn_op(f"{prefix}_fmadd_{sfx}")
+      fnma = fn_op(f"{prefix}_fnmadd_{sfx}")
 
-  types["f32"] = {
-      "raw": f32r,
-      "lanes": w_bytes // 4,
-      "mask": "W32",
-      "mask_ty": mty_f32,
-      "zero": f"{prefix}_setzero_ps()",
-      "splat": fn_op(f"{prefix}_set1_ps"),
-      "ext0": lambda a: f"_mm_cvtss_f32({ext_lo_ps.replace('a', a)})",
-      "load": fn_op(f"arch_ops::{prefix}_loadu_ps"),
-      "store": fn_op(f"arch_ops::{prefix}_storeu_ps"),
-      "tb": cast_f32_to_i,
-      "fb": cast_i_to_f32,
-      "illo": fn_op(f"{prefix}_unpacklo_ps"),
-      "ilhi": fn_op(f"{prefix}_unpackhi_ps"),
-      "eq": f32_eq,
-      "gt": f32_gt,
-      "eqz": f32_eqz,
-      "min": fn_op(f"{prefix}_min_ps"),
-      "max": fn_op(f"{prefix}_max_ps"),
-      "sel": f32_sel,
-      "zsel": f32_zsel,
-      "add": fn_op(f"{prefix}_add_ps"),
-      "sub": fn_op(f"{prefix}_sub_ps"),
-      "mul": fn_op(f"{prefix}_mul_ps"),
-      "neg": f32_neg,
-      "abs": f32_abs,
-      "ltz": f32_ltz,
-      "div": fn_op(f"{prefix}_div_ps"),
-      "fma": f32_fma,
-      "fnma": f32_fnma,
-      "sqrt": fn_op(f"{prefix}_sqrt_ps"),
-      "floor": f32_floor,
-      "ceil": f32_ceil,
-      "round": f32_round,
-      "csign": f32_csign,
-  }
+    return {
+        "raw": vr,
+        "lanes": w_bytes // (wbits // 8),
+        "mask": mw,
+        "mask_ty": mty,
+        "zero": f"{prefix}_setzero_{sfx}()",
+        "splat": fn_op(f"{prefix}_set1_{sfx}"),
+        "ext0": lambda a: f"_mm_cvt{fsfx}_f{wbits}({ext_lo.replace('a', a)})",
+        "load": fn_op(f"arch_ops::{prefix}_loadu_{sfx}"),
+        "store": fn_op(f"arch_ops::{prefix}_storeu_{sfx}"),
+        "tb": ci,
+        "fb": cf,
+        "illo": fn_op(f"{prefix}_unpacklo_{sfx}"),
+        "ilhi": fn_op(f"{prefix}_unpackhi_{sfx}"),
+        "eq": eq,
+        "gt": gt,
+        "eqz": eqz,
+        "min": fn_op(f"{prefix}_min_{sfx}"),
+        "max": fn_op(f"{prefix}_max_{sfx}"),
+        "sel": sel,
+        "selz": selz,
+        "zsel": zsel,
+        "add": fn_op(f"{prefix}_add_{sfx}"),
+        "sub": fn_op(f"{prefix}_sub_{sfx}"),
+        "mul": fn_op(f"{prefix}_mul_{sfx}"),
+        "neg": neg,
+        "abs": abs_op,
+        "ltz": ltz,
+        "div": fn_op(f"{prefix}_div_{sfx}"),
+        "fma": fma,
+        "fnma": fnma,
+        "sqrt": fn_op(f"{prefix}_sqrt_{sfx}"),
+        "floor": floor,
+        "ceil": ceil,
+        "round": rnd,
+        "trunc": trunc,
+        "csign": csign,
+    }
+
+  types["f32"] = make_float_spec(f32r, "ps", "ss", 32, "W32", "i32::MIN")
+  types["f64"] = make_float_spec(f64r, "pd", "sd", 64, "W64", "i64::MIN")
 
   for t, w, signed in CORE_INT_TYPES:
     mw = f"W{w}"
@@ -306,6 +330,13 @@ def x86_common(bits):
         if w < 64:
           es = f"ep{'i' if signed else 'u'}{w}"
           mn_op, mx_op = fn_op(f"{prefix}_min_{es}"), fn_op(f"{prefix}_max_{es}")
+        elif signed:
+          mn_op = lambda a, b: (
+              f"{prefix}_blendv_epi8({a}, {b}, {prefix}_cmpgt_epi64({a}, {b}))"
+          )
+          mx_op = lambda a, b: (
+              f"{prefix}_blendv_epi8({b}, {a}, {prefix}_cmpgt_epi64({a}, {b}))"
+          )
         else:
           k_expr = f"{set64}(i64::MIN)"
           mn_op = lambda a, b, k=k_expr: (
@@ -324,8 +355,9 @@ def x86_common(bits):
         sel_op = lambda m, t, f, fm=from_m: (
             f"{prefix}_blendv_epi8({f}, {t}, {fm(m)})"
         )
+        selz_op = lambda m, t, fm=from_m: f"{prefix}_and_{si}({fm(m)}, {t})"
         zsel_op = lambda m, f, fm=from_m: f"{prefix}_andnot_{si}({fm(m)}, {f})"
-        return eq_op, gt_op, eqz_op, mn_op, mx_op, sel_op, zsel_op
+        return eq_op, gt_op, eqz_op, mn_op, mx_op, sel_op, selz_op, zsel_op
 
       es = f"ep{'i' if signed else 'u'}{w}"
       return (
@@ -335,12 +367,20 @@ def x86_common(bits):
           fn_op(f"_mm512_min_{es}"),
           fn_op(f"_mm512_max_{es}"),
           lambda m, t, f, w=w: f"_mm512_mask_blend_epi{w}({m}, {f}, {t})",
+          fn_op(f"_mm512_maskz_mov_epi{w}"),
           lambda m, f, w=w: f"_mm512_maskz_mov_epi{w}(!{m}, {f})",
       )
 
-    eq_op, gt_op, eqz_op, mn_op, mx_op, sel_op, zsel_op = make_cmp_helpers(
-        w, signed
-    )
+    (
+        eq_op,
+        gt_op,
+        eqz_op,
+        mn_op,
+        mx_op,
+        sel_op,
+        selz_op,
+        zsel_op,
+    ) = make_cmp_helpers(w, signed)
 
     if w == 8:
       mul_op = lambda a, b: (
@@ -385,13 +425,31 @@ def x86_common(bits):
           f"{prefix}_and_{si}({sll_n(16, 'a')}, "
           f"{prefix}_set1_epi8((0xFFu8.checked_shl(AMOUNT).unwrap_or(0)) as i8))"
       )
-      shr_op = (
-          f"{prefix}_and_{si}({srl_n(16, 'a')}, "
-          f"{prefix}_set1_epi8((0xFFu8.checked_shr(AMOUNT).unwrap_or(0)) as i8))"
-      )
+      if not signed:
+        shr_op = (
+            f"{prefix}_and_{si}({srl_n(16, 'a')}, "
+            f"{prefix}_set1_epi8((0xFFu8.checked_shr(AMOUNT).unwrap_or(0)) as i8))"
+        )
+      else:
+        shr_op = (
+            f"let b = {prefix}_set1_epi8(-128); "
+            f"{prefix}_sub_epi8("
+            f"{prefix}_and_{si}({srl_n(16, f'{prefix}_xor_{si}(a, b)')}, "
+            f"{prefix}_set1_epi8((0xFFu8.checked_shr(AMOUNT).unwrap_or(0)) as i8)), "
+            f"{prefix}_set1_epi8((0x80u8.checked_shr(AMOUNT).unwrap_or(0)) as i8))"
+        )
     else:
       shl_op = sll_n(64, "a")
-      shr_op = srl_n(64, "a")
+      if not signed:
+        shr_op = srl_n(64, "a")
+      elif is_512:
+        shr_op = "_mm512_srai_epi64::<AMOUNT>(a)"
+      else:
+        shr_op = (
+            f"let b = {set64}(i64::MIN); "
+            f"{prefix}_sub_epi64({srl_n(64, f'{prefix}_xor_{si}(a, b)')}, "
+            f"{set64}((0x8000_0000_0000_0000u64.checked_shr(AMOUNT).unwrap_or(0)) as i64))"
+        )
 
     d = {
         "raw": ir,
@@ -413,6 +471,7 @@ def x86_common(bits):
         "min": mn_op,
         "max": mx_op,
         "sel": sel_op,
+        "selz": selz_op,
         "zsel": zsel_op,
         "add": fn_op(f"{prefix}_add_epi{w}"),
         "sub": fn_op(f"{prefix}_sub_epi{w}"),
@@ -425,19 +484,56 @@ def x86_common(bits):
         "shl": shl_op,
         "shr": shr_op,
     }
+    if bits == 256 and w == 32:
+      d["shlv"] = fn_op("_mm256_sllv_epi32")
+      d["shrv"] = fn_op("_mm256_srav_epi32" if signed else "_mm256_srlv_epi32")
+    elif bits == 256 and w == 64:
+      d["shlv"] = fn_op("_mm256_sllv_epi64")
+      d["shrv"] = (
+          fn_op("_mm256_srlv_epi64")
+          if not signed
+          else (
+              lambda a, c: (
+                  f"let b = _mm256_set1_epi64x(i64::MIN); "
+                  f"_mm256_sub_epi64(_mm256_srlv_epi64(_mm256_xor_si256({a}, b), {c}), "
+                  f"_mm256_srlv_epi64(b, {c}))"
+              )
+          )
+      )
+    elif is_512 and w >= 16:
+      d["shlv"] = fn_op(f"_mm512_sllv_epi{w}")
+      d["shrv"] = fn_op(f"_mm512_{'srav' if signed else 'srlv'}_epi{w}")
+
     if signed:
       d["neg"] = lambda a, w=w, z=zero_expr: f"{prefix}_sub_epi{w}({z}, {a})"
-      d["abs"] = fn_op(f"{prefix}_abs_epi{w}")
-      if not is_512:
-        d["ltz"] = lambda a, w=w, z=zero_expr: (
-            cast_i_to_f32(f"{prefix}_cmpgt_epi{w}({z}, {a})")
-            if w == 32
-            else f"{prefix}_cmpgt_epi{w}({z}, {a})"
+      if w < 64 or is_512:
+        d["abs"] = fn_op(f"{prefix}_abs_epi{w}")
+      else:
+        d["abs"] = lambda a, z=zero_expr: (
+            f"let n = {prefix}_sub_epi64({z}, {a}); "
+            f"{prefix}_blendv_epi8({a}, n, {prefix}_cmpgt_epi64({z}, {a}))"
         )
+      if not is_512:
+        if w == 32:
+          d["ltz"] = lambda a, z=zero_expr: cast_i_to_f32(
+              f"{prefix}_cmpgt_epi32({z}, {a})"
+          )
+        elif w == 64:
+          d["ltz"] = lambda a, z=zero_expr: cast_i_to_f64(
+              f"{prefix}_cmpgt_epi64({z}, {a})"
+          )
+        else:
+          d["ltz"] = lambda a, w=w, z=zero_expr: (
+              f"{prefix}_cmpgt_epi{w}({z}, {a})"
+          )
       else:
         d["ltz"] = lambda a, w=w: (
             f"_mm512_cmpgt_epi{w}_mask(_mm512_setzero_si512(), {a})"
         )
+    if w in (8, 16):
+      es = f"ep{'i' if signed else 'u'}{w}"
+      d["sadd"] = fn_op(f"{prefix}_adds_{es}")
+      d["ssub"] = fn_op(f"{prefix}_subs_{es}")
     types[t] = d
 
   extra_specs = {
@@ -464,6 +560,19 @@ def x86_common(bits):
           "f32_store_f16_bits": (
               "direct",
               lambda a, dest: f"generic_ops::store_f16_bits_sw(crate::SimdVec({a}, self), {dest});",
+          ),
+          "f64_as_i64": (
+              "direct",
+              lambda a: f"generic_ops::f64_as_i64_sw(self, {a})",
+          ),
+          "f64_from_f32_lo": ("call", fn_op("_mm_cvtps_pd")),
+          "f64_from_f32_hi": (
+              "call",
+              lambda a: f"_mm_cvtps_pd(_mm_movehl_ps({a}, {a}))",
+          ),
+          "f64_to_f32": (
+              "call",
+              lambda lo, hi: f"_mm_movelh_ps(_mm_cvtpd_ps({lo}), _mm_cvtpd_ps({hi}))",
           ),
           "i32_as_f32": ("call", lambda a: f"_mm_cvtepi32_ps({a})"),
           "i32_load_from_i16": (
@@ -499,6 +608,10 @@ def x86_common(bits):
                   f"let h = _mm_mul_epi32(_mm_srli_epi64::<32>({a}), _mm_srli_epi64::<32>({b})); "
                   "_mm_unpackhi_epi64(_mm_unpacklo_epi32(l, h), _mm_unpackhi_epi32(l, h))"
               ),
+          ),
+          "i64_as_f64": (
+              "direct",
+              lambda a: f"generic_ops::i64_as_f64_sw(self, {a})",
           ),
           "i16_store_u8": (
               "call",
@@ -546,6 +659,25 @@ def x86_common(bits):
                   f"_mm256_cvtps_ph::<{{ _MM_FROUND_TO_NEAREST_INT }}>({a}));"
               ),
           ),
+          "f64_as_i64": (
+              "direct",
+              lambda a: f"generic_ops::f64_as_i64_sw(self, {a})",
+          ),
+          "f64_from_f32_lo": (
+              "call",
+              lambda a: f"_mm256_cvtps_pd(_mm256_castps256_ps128({a}))",
+          ),
+          "f64_from_f32_hi": (
+              "call",
+              lambda a: f"_mm256_cvtps_pd(_mm256_extractf128_ps::<1>({a}))",
+          ),
+          "f64_to_f32": (
+              "call",
+              lambda lo, hi: (
+                  f"_mm256_insertf128_ps::<1>(_mm256_castps128_ps256(_mm256_cvtpd_ps({lo})), "
+                  f"_mm256_cvtpd_ps({hi}))"
+              ),
+          ),
           "i32_as_f32": ("call", lambda a: f"_mm256_cvtepi32_ps({a})"),
           "i32_load_from_i16": (
               "call",
@@ -587,6 +719,10 @@ def x86_common(bits):
                   f"let h = _mm256_mul_epi32(_mm256_srli_epi64::<32>({a}), _mm256_srli_epi64::<32>({b})); "
                   "_mm256_unpackhi_epi64(_mm256_unpacklo_epi32(l, h), _mm256_unpackhi_epi32(l, h))"
               ),
+          ),
+          "i64_as_f64": (
+              "direct",
+              lambda a: f"generic_ops::i64_as_f64_sw(self, {a})",
           ),
           "i16_store_u8": (
               "call",
@@ -635,6 +771,29 @@ def x86_common(bits):
                   f"_mm512_cvtps_ph::<{{ _MM_FROUND_TO_NEAREST_INT }}>({a}));"
               ),
           ),
+          "f64_as_i64": (
+              "direct",
+              lambda a: f"generic_ops::f64_as_i64_sw(self, {a})",
+          ),
+          "f64_from_f32_lo": (
+              "call",
+              lambda a: f"_mm512_cvtps_pd(_mm512_castps512_ps256({a}))",
+          ),
+          "f64_from_f32_hi": (
+              "call",
+              lambda a: (
+                  "_mm512_cvtps_pd(_mm256_castsi256_ps("
+                  f"_mm512_extracti64x4_epi64::<1>(_mm512_castps_si512({a}))))"
+              ),
+          ),
+          "f64_to_f32": (
+              "call",
+              lambda lo, hi: (
+                  "_mm512_castsi512_ps(_mm512_inserti64x4::<1>("
+                  f"_mm512_castps_si512(_mm512_castps256_ps512(_mm512_cvtpd_ps({lo}))), "
+                  f"_mm256_castps_si256(_mm512_cvtpd_ps({hi}))))"
+              ),
+          ),
           "i32_as_f32": ("call", lambda a: f"_mm512_cvtepi32_ps({a})"),
           "i32_load_from_i16": (
               "call",
@@ -667,6 +826,10 @@ def x86_common(bits):
                   f"let h = _mm512_mul_epi32(_mm512_srli_epi64::<32>({a}), _mm512_srli_epi64::<32>({b})); "
                   "_mm512_permutex2var_epi32(l, _mm512_setr_epi32(1, 17, 3, 19, 5, 21, 7, 23, 9, 25, 11, 27, 13, 29, 15, 31), h)"
               ),
+          ),
+          "i64_as_f64": (
+              "direct",
+              lambda a: f"generic_ops::i64_as_f64_sw(self, {a})",
           ),
           "i16_store_u8": (
               "call",
@@ -783,48 +946,72 @@ def neon_spec():
         ),
     ]
 
+  def neon_ld(ns):
+    return [
+        lambda src, ns=ns: (
+            f"let r = arch_ops::vld2q_{ns}({src}.first_chunk().unwrap()); (r.0, r.1)"
+        ),
+        lambda src, ns=ns: (
+            f"let r = arch_ops::vld3q_{ns}({src}.first_chunk().unwrap()); (r.0, r.1, r.2)"
+        ),
+        lambda src, ns=ns: (
+            f"let r = arch_ops::vld4q_{ns}({src}.first_chunk().unwrap()); (r.0, r.1, r.2, r.3)"
+        ),
+    ]
+
+  def neon_float(w, ns, xty, mw, u_c, c_mask):
+    return {
+        "raw": f"{xty}_t",
+        "lanes": 16 // (w // 8),
+        "mask": mw,
+        "mask_ty": f"uint{w}x{16 // (w // 8)}_t",
+        "zero": f"vdupq_n_{ns}(0.0)",
+        "splat": fn_op(f"vdupq_n_{ns}"),
+        "ext0": lambda a, ns=ns: f"vgetq_lane_{ns}::<0>({a})",
+        "load": fn_op(f"arch_ops::vld1q_{ns}"),
+        "store": fn_op(f"arch_ops::vst1q_{ns}"),
+        "tb": fn_op(f"vreinterpretq_u8_{ns}"),
+        "fb": fn_op(f"vreinterpretq_{ns}_u8"),
+        "illo": fn_op(f"vzip1q_{ns}"),
+        "ilhi": fn_op(f"vzip2q_{ns}"),
+        "il": neon_il(ns, xty),
+        "ld": neon_ld(ns),
+        "eq": fn_op(f"vceqq_{ns}"),
+        "gt": fn_op(f"vcgtq_{ns}"),
+        "eqz": fn_op(f"vceqzq_{ns}"),
+        "min": fn_op(f"vminnmq_{ns}"),
+        "max": fn_op(f"vmaxnmq_{ns}"),
+        "sel": fn_op(f"vbslq_{ns}"),
+        "selz": lambda m, t, ns=ns, u_c=u_c: (
+            f"vreinterpretq_{ns}_{u_c}(vandq_{u_c}({m}, vreinterpretq_{u_c}_{ns}({t})))"
+        ),
+        "zsel": lambda m, f, ns=ns, u_c=u_c: (
+            f"vreinterpretq_{ns}_{u_c}(vbicq_{u_c}(vreinterpretq_{u_c}_{ns}({f}), {m}))"
+        ),
+        "add": fn_op(f"vaddq_{ns}"),
+        "sub": fn_op(f"vsubq_{ns}"),
+        "mul": fn_op(f"vmulq_{ns}"),
+        "neg": fn_op(f"vnegq_{ns}"),
+        "abs": fn_op(f"vabsq_{ns}"),
+        "ltz": fn_op(f"vcltzq_{ns}"),
+        "div": fn_op(f"vdivq_{ns}"),
+        "fma": lambda a, mul, add, ns=ns: f"vfmaq_{ns}({add}, {a}, {mul})",
+        "fnma": lambda a, mul, add, ns=ns: f"vfmsq_{ns}({add}, {a}, {mul})",
+        "sqrt": fn_op(f"vsqrtq_{ns}"),
+        "floor": fn_op(f"vrndmq_{ns}"),
+        "ceil": fn_op(f"vrndpq_{ns}"),
+        "round": fn_op(f"vrndnq_{ns}"),
+        "trunc": fn_op(f"vrndq_{ns}"),
+        "csign": lambda a, sign, ns=ns, u_c=u_c, c_mask=c_mask: (
+            f"vbslq_{ns}(vdupq_n_{u_c}({c_mask}), {sign}, {a})"
+        ),
+    }
+
   types = {
-      "f32": {
-          "raw": "float32x4_t",
-          "lanes": 4,
-          "mask": "W32",
-          "mask_ty": "uint32x4_t",
-          "zero": "vdupq_n_f32(0.0)",
-          "splat": fn_op("vdupq_n_f32"),
-          "ext0": lambda a: f"vgetq_lane_f32::<0>({a})",
-          "load": fn_op("arch_ops::vld1q_f32"),
-          "store": fn_op("arch_ops::vst1q_f32"),
-          "tb": fn_op("vreinterpretq_u8_f32"),
-          "fb": fn_op("vreinterpretq_f32_u8"),
-          "illo": fn_op("vzip1q_f32"),
-          "ilhi": fn_op("vzip2q_f32"),
-          "il": neon_il("f32", "float32x4"),
-          "eq": fn_op("vceqq_f32"),
-          "gt": fn_op("vcgtq_f32"),
-          "eqz": fn_op("vceqzq_f32"),
-          "min": fn_op("vminnmq_f32"),
-          "max": fn_op("vmaxnmq_f32"),
-          "sel": fn_op("vbslq_f32"),
-          "zsel": lambda m, f: (
-              f"vreinterpretq_f32_u32(vbicq_u32(vreinterpretq_u32_f32({f}), {m}))"
-          ),
-          "add": fn_op("vaddq_f32"),
-          "sub": fn_op("vsubq_f32"),
-          "mul": fn_op("vmulq_f32"),
-          "neg": fn_op("vnegq_f32"),
-          "abs": fn_op("vabsq_f32"),
-          "ltz": fn_op("vcltzq_f32"),
-          "div": fn_op("vdivq_f32"),
-          "fma": lambda a, mul, add: f"vfmaq_f32({add}, {a}, {mul})",
-          "fnma": lambda a, mul, add: f"vfmsq_f32({add}, {a}, {mul})",
-          "sqrt": fn_op("vsqrtq_f32"),
-          "floor": fn_op("vrndmq_f32"),
-          "ceil": fn_op("vrndpq_f32"),
-          "round": fn_op("vrndnq_f32"),
-          "csign": lambda a, sign: (
-              f"vbslq_f32(vdupq_n_u32(0x8000_0000), {sign}, {a})"
-          ),
-      }
+      "f32": neon_float(32, "f32", "float32x4", "W32", "u32", "0x8000_0000"),
+      "f64": neon_float(
+          64, "f64", "float64x2", "W64", "u64", "0x8000_0000_0000_0000"
+      ),
   }
 
   for t, w, signed in CORE_INT_TYPES:
@@ -837,8 +1024,14 @@ def neon_spec():
     tb = (lambda a: a) if t == "u8" else fn_op(f"vreinterpretq_u8_{ns}")
     fb = (lambda a: a) if t == "u8" else fn_op(f"vreinterpretq_{ns}_u8")
     if signed:
-      zsel = lambda m, f, ns=ns, w=w: f"vbicq_{ns}({f}, vreinterpretq_{ns}_u{w}({m}))"
+      selz = lambda m, t, ns=ns, w=w: (
+          f"vandq_{ns}(vreinterpretq_{ns}_u{w}({m}), {t})"
+      )
+      zsel = lambda m, f, ns=ns, w=w: (
+          f"vbicq_{ns}({f}, vreinterpretq_{ns}_u{w}({m}))"
+      )
     else:
+      selz = fn_op(f"vandq_{ns}")
       zsel = lambda m, f, ns=ns: f"vbicq_{ns}({f}, {m})"
 
     if w < 64:
@@ -854,14 +1047,26 @@ def neon_spec():
     if w in (8, 16, 32):
       mul_op = fn_op(f"vmulq_{ns}")
     else:
-      mul_op = lambda a, b: (
-          f"let a_lo = vmovn_u64({a}); "
-          f"let b_lo = vmovn_u64({b}); "
-          "let lo = vmull_u32(a_lo, b_lo); "
-          f"let hi = vmlal_u32(vmull_u32(vmovn_u64(vshrq_n_u64::<32>({a})), b_lo), "
-          f"a_lo, vmovn_u64(vshrq_n_u64::<32>({b}))); "
-          "vaddq_u64(lo, vshlq_n_u64::<32>(hi))"
-      )
+      def mul_u64_expr(au, bu):
+        return (
+            f"let a_lo = vmovn_u64({au}); "
+            f"let b_lo = vmovn_u64({bu}); "
+            "let lo = vmull_u32(a_lo, b_lo); "
+            f"let hi = vmlal_u32(vmull_u32(vmovn_u64(vshrq_n_u64::<32>({au})), b_lo), "
+            f"a_lo, vmovn_u64(vshrq_n_u64::<32>({bu}))); "
+            "vaddq_u64(lo, vshlq_n_u64::<32>(hi))"
+        )
+
+      if signed:
+        mul_op = lambda a, b: (
+            f"let (au, bu) = (vreinterpretq_u64_s64({a}), vreinterpretq_u64_s64({b})); "
+            f"vreinterpretq_s64_u64({{ {mul_u64_expr('au', 'bu')} }})"
+        )
+      else:
+        mul_op = mul_u64_expr
+
+    def sreg(c_expr, signed=signed, w=w):
+      return c_expr if signed else f"vreinterpretq_s{w}_u{w}({c_expr})"
 
     d = {
         "raw": vty,
@@ -878,12 +1083,14 @@ def neon_spec():
         "illo": fn_op(f"vzip1q_{ns}"),
         "ilhi": fn_op(f"vzip2q_{ns}"),
         "il": neon_il(ns, xty),
+        "ld": neon_ld(ns),
         "eq": fn_op(f"vceqq_{ns}"),
         "gt": fn_op(f"vcgtq_{ns}"),
         "eqz": fn_op(f"vceqzq_{ns}"),
         "min": mn,
         "max": mx,
         "sel": fn_op(f"vbslq_{ns}"),
+        "selz": selz,
         "zsel": zsel,
         "add": fn_op(f"vaddq_{ns}"),
         "sub": fn_op(f"vsubq_{ns}"),
@@ -895,11 +1102,18 @@ def neon_spec():
         "anot": lambda not_a, b, ns=ns: f"vbicq_{ns}({b}, {not_a})",
         "shl": f"vshlq_{ns}(a, vdupq_n_s{w}((AMOUNT as i32) as i{w}))",
         "shr": f"vshlq_{ns}(a, vdupq_n_s{w}((-(AMOUNT as i32)) as i{w}))",
+        "shlv": lambda a, c, ns=ns, sr=sreg: f"vshlq_{ns}({a}, {sr(c)})",
+        "shrv": lambda a, c, ns=ns, w=w, sr=sreg: (
+            f"vshlq_{ns}({a}, vnegq_s{w}({sr(c)}))"
+        ),
     }
     if signed:
       d["neg"] = fn_op(f"vnegq_{ns}")
       d["abs"] = fn_op(f"vabsq_{ns}")
       d["ltz"] = fn_op(f"vcltzq_{ns}")
+    if w in (8, 16):
+      d["sadd"] = fn_op(f"vqaddq_{ns}")
+      d["ssub"] = fn_op(f"vqsubq_{ns}")
     types[t] = d
 
   return {
@@ -946,6 +1160,16 @@ def neon_spec():
                   f"arch_ops::vst1_u16({dest}.first_chunk_mut().unwrap(), arch_ops::fcvtn_f16_f32({a}));"
               ),
           ),
+          "f64_as_i64": ("call", fn_op("vcvtq_s64_f64")),
+          "f64_from_f32_lo": (
+              "call",
+              lambda a: f"vcvt_f64_f32(vget_low_f32({a}))",
+          ),
+          "f64_from_f32_hi": ("call", fn_op("vcvt_high_f64_f32")),
+          "f64_to_f32": (
+              "call",
+              lambda lo, hi: f"vcvt_high_f32_f64(vcvt_f32_f64({lo}), {hi})",
+          ),
           "i32_as_f32": ("call", fn_op("vcvtq_f32_s32")),
           "i32_load_from_i16": (
               "call",
@@ -980,6 +1204,7 @@ def neon_spec():
                   "vuzp2q_s32(l, h)"
               ),
           ),
+          "i64_as_f64": ("call", fn_op("vcvtq_f64_s64")),
           "i16_store_u8": (
               "call",
               lambda a, dest: (
@@ -1039,43 +1264,51 @@ def wasm_spec():
       ]
   }
 
+  def wasm_float(w, wp, mw, cmask):
+    return {
+        "raw": "v128",
+        "lanes": 128 // w,
+        "mask": mw,
+        "mask_ty": "v128",
+        "zero": f"{wp}_splat(0.0)",
+        "splat": fn_op(f"{wp}_splat"),
+        "ext0": lambda a, wp=wp: f"{wp}_extract_lane::<0>({a})",
+        "load": fn_op(f"arch_ops::v128_load_f{w}"),
+        "store": fn_op(f"arch_ops::v128_store_f{w}"),
+        "tb": lambda a: a,
+        "fb": lambda a: a,
+        "illo": il[w][0],
+        "ilhi": il[w][1],
+        "eq": fn_op(f"{wp}_eq"),
+        "gt": fn_op(f"{wp}_gt"),
+        "eqz": lambda a, wp=wp: f"{wp}_eq({a}, {wp}_splat(0.0))",
+        "min": fn_op(f"{wp}_min"),
+        "max": fn_op(f"{wp}_max"),
+        "sel": lambda m, t, f: f"v128_bitselect({t}, {f}, {m})",
+        "selz": fn_op("v128_and"),
+        "zsel": lambda m, f: f"v128_andnot({f}, {m})",
+        "add": fn_op(f"{wp}_add"),
+        "sub": fn_op(f"{wp}_sub"),
+        "mul": fn_op(f"{wp}_mul"),
+        "neg": fn_op(f"{wp}_neg"),
+        "abs": fn_op(f"{wp}_abs"),
+        "ltz": lambda a, wp=wp: f"{wp}_lt({a}, {wp}_splat(0.0))",
+        "div": fn_op(f"{wp}_div"),
+        "fma": lambda a, m, ad, wp=wp: f"{wp}_add({wp}_mul({a}, {m}), {ad})",
+        "fnma": lambda a, m, ad, wp=wp: f"{wp}_sub({ad}, {wp}_mul({a}, {m}))",
+        "sqrt": fn_op(f"{wp}_sqrt"),
+        "floor": fn_op(f"{wp}_floor"),
+        "ceil": fn_op(f"{wp}_ceil"),
+        "round": fn_op(f"{wp}_nearest"),
+        "trunc": fn_op(f"{wp}_trunc"),
+        "csign": lambda a, sign, cmask=cmask: f"v128_bitselect({sign}, {a}, {cmask})",
+    }
+
   types = {
-      "f32": {
-          "raw": "v128",
-          "lanes": 4,
-          "mask": "W32",
-          "mask_ty": "v128",
-          "zero": "f32x4_splat(0.0)",
-          "splat": fn_op("f32x4_splat"),
-          "ext0": lambda a: f"f32x4_extract_lane::<0>({a})",
-          "load": fn_op("arch_ops::v128_load_f32"),
-          "store": fn_op("arch_ops::v128_store_f32"),
-          "tb": lambda a: a,
-          "fb": lambda a: a,
-          "illo": il[32][0],
-          "ilhi": il[32][1],
-          "eq": fn_op("f32x4_eq"),
-          "gt": fn_op("f32x4_gt"),
-          "eqz": lambda a: f"f32x4_eq({a}, f32x4_splat(0.0))",
-          "min": fn_op("f32x4_min"),
-          "max": fn_op("f32x4_max"),
-          "sel": lambda m, t, f: f"v128_bitselect({t}, {f}, {m})",
-          "zsel": lambda m, f: f"v128_andnot({f}, {m})",
-          "add": fn_op("f32x4_add"),
-          "sub": fn_op("f32x4_sub"),
-          "mul": fn_op("f32x4_mul"),
-          "neg": fn_op("f32x4_neg"),
-          "abs": fn_op("f32x4_abs"),
-          "ltz": lambda a: f"f32x4_lt({a}, f32x4_splat(0.0))",
-          "div": fn_op("f32x4_div"),
-          "fma": lambda a, m, ad: f"f32x4_add(f32x4_mul({a}, {m}), {ad})",
-          "fnma": lambda a, m, ad: f"f32x4_sub({ad}, f32x4_mul({a}, {m}))",
-          "sqrt": fn_op("f32x4_sqrt"),
-          "floor": fn_op("f32x4_floor"),
-          "ceil": fn_op("f32x4_ceil"),
-          "round": fn_op("f32x4_nearest"),
-          "csign": lambda a, sign: f"v128_bitselect({sign}, {a}, u32x4_splat(0x8000_0000))",
-      }
+      "f32": wasm_float(32, "f32x4", "W32", "u32x4_splat(0x8000_0000)"),
+      "f64": wasm_float(
+          64, "f64x2", "W64", "u64x2_splat(0x8000_0000_0000_0000)"
+      ),
   }
 
   for t, w, signed in CORE_INT_TYPES:
@@ -1094,6 +1327,10 @@ def wasm_spec():
           "let k = i64x2_splat(i64::MIN); "
           f"v128_bitselect({a}, {b}, i64x2_gt(v128_xor({a}, k), v128_xor({b}, k)))"
       )
+    elif t == "i64":
+      gt = fn_op("i64x2_gt")
+      mn = lambda a, b: f"v128_bitselect({b}, {a}, i64x2_gt({a}, {b}))"
+      mx = lambda a, b: f"v128_bitselect({a}, {b}, i64x2_gt({a}, {b}))"
     else:
       gt, mn, mx = fn_op(f"{wp}_gt"), fn_op(f"{wp}_min"), fn_op(f"{wp}_max")
 
@@ -1125,6 +1362,7 @@ def wasm_spec():
         "min": mn,
         "max": mx,
         "sel": lambda m, t_v, f_v: f"v128_bitselect({t_v}, {f_v}, {m})",
+        "selz": fn_op("v128_and"),
         "zsel": lambda m, f_v: f"v128_andnot({f_v}, {m})",
         "add": fn_op(f"{ap}_add"),
         "sub": fn_op(f"{ap}_sub"),
@@ -1141,6 +1379,9 @@ def wasm_spec():
       d["neg"] = fn_op(f"{ap}_neg")
       d["abs"] = fn_op(f"{ap}_abs")
       d["ltz"] = lambda a, ap=ap: f"{ap}_lt({a}, {ap}_splat(0))"
+    if w in (8, 16):
+      d["sadd"] = fn_op(f"{wp}_add_sat")
+      d["ssub"] = fn_op(f"{wp}_sub_sat")
     types[t] = d
 
   return {
@@ -1185,6 +1426,19 @@ def wasm_spec():
               "direct",
               lambda a, dest: f"generic_ops::store_f16_bits_sw(crate::SimdVec({a}, self), {dest});",
           ),
+          "f64_as_i64": (
+              "direct",
+              lambda a: f"generic_ops::f64_as_i64_sw(self, {a})",
+          ),
+          "f64_from_f32_lo": ("call", fn_op("f64x2_promote_low_f32x4")),
+          "f64_from_f32_hi": (
+              "call",
+              lambda a: f"f64x2_promote_low_f32x4(i64x2_shuffle::<1, 1>({a}, {a}))",
+          ),
+          "f64_to_f32": (
+              "call",
+              lambda lo, hi: f"i64x2_shuffle::<0, 2>(f32x4_demote_f64x2_zero({lo}), f32x4_demote_f64x2_zero({hi}))",
+          ),
           "i32_as_f32": ("call", fn_op("f32x4_convert_i32x4")),
           "i32_load_from_i16": (
               "call",
@@ -1215,6 +1469,10 @@ def wasm_spec():
                   f"let h = i64x2_shr(i64x2_extmul_high_i32x4({a}, {b}), 32); "
                   "i32x4_shuffle::<0, 2, 4, 6>(l, h)"
               ),
+          ),
+          "i64_as_f64": (
+              "direct",
+              lambda a: f"generic_ops::i64_as_f64_sw(self, {a})",
           ),
           "i16_store_u8": (
               "call",
@@ -1259,6 +1517,7 @@ def render_isa(spec):
   arch = spec["arch"]
   rb, tt = spec["raw_bytes"], spec["tbl_type"]
   i32r, f32r = spec["types"]["i32"]["raw"], spec["types"]["f32"]["raw"]
+  i64r, f64r = spec["types"]["i64"]["raw"], spec["types"]["f64"]["raw"]
   i16r, u8r = spec["types"]["i16"]["raw"], spec["types"]["u8"]["raw"]
 
   lines = [
@@ -1269,8 +1528,9 @@ def render_isa(spec):
       f"use super::{{{d}, {cm}, {sm}}};",
       "use crate::sealed::{",
       "    ArithBackend, BytesBackend, CompareBackend, DescriptorSealed, Element, F32ExtraBackend,",
-      "    FloatBackend, I16ExtraBackend, I32ExtraBackend, IntBitBackend, LaneBackend, MaskBackend,",
-      "    MulBackend, SignedBackend, U8ExtraBackend,",
+      "    F64ExtraBackend, FloatBackend, I16ExtraBackend, I32ExtraBackend, I64ExtraBackend,",
+      "    IntBitBackend, LaneBackend, MaskBackend, MulBackend, SatBackend, SignedBackend,",
+      "    U8ExtraBackend,",
       "};",
       "use crate::{W8, W16, W32, W64, generic_ops};",
       "",
@@ -1367,7 +1627,7 @@ def render_isa(spec):
     )
 
   # Element backends
-  for t in ["f32"] + [name for name, _, _ in CORE_INT_TYPES]:
+  for t in ["f32", "f64"] + [name for name, _, _ in CORE_INT_TYPES]:
     v = spec["types"][t]
     r, n, mty = v["raw"], v["lanes"], v["mask_ty"]
     si_methods = ""
@@ -1385,6 +1645,21 @@ def render_isa(spec):
     #[inline(always)]
     fn store_interleaved_4(self, a: {r}, b: {r}, c: {r}, e: {r}, dest: &mut [{t}]) {{
         {emit_call(cm, 'self', [('a', r), ('b', r), ('c', r), ('e', r), ('dest', f'&mut [{t}]')], None, si4('a', 'b', 'c', 'e', 'dest'))}
+    }}"""
+    if "ld" in v:
+      ld2, ld3, ld4 = v["ld"]
+      si_methods += f"""
+    #[inline(always)]
+    fn load_deinterleaved_2(self, src: &[{t}]) -> ({r}, {r}) {{
+        {emit_call(cm, 'self', [('src', f'&[{t}]')], f'({r}, {r})', ld2('src'))}
+    }}
+    #[inline(always)]
+    fn load_deinterleaved_3(self, src: &[{t}]) -> ({r}, {r}, {r}) {{
+        {emit_call(cm, 'self', [('src', f'&[{t}]')], f'({r}, {r}, {r})', ld3('src'))}
+    }}
+    #[inline(always)]
+    fn load_deinterleaved_4(self, src: &[{t}]) -> ({r}, {r}, {r}, {r}) {{
+        {emit_call(cm, 'self', [('src', f'&[{t}]')], f'({r}, {r}, {r}, {r})', ld4('src'))}
     }}"""
 
     lines.append(
@@ -1492,6 +1767,10 @@ impl CompareBackend<{t}> for {d} {{
         {emit_call(cm, 'self', [('mask', mty), ('if_true', r), ('if_false', r)], r, v['sel']('mask', 'if_true', 'if_false'))}
     }}
     #[inline(always)]
+    fn mask_select_zero(self, mask: {mty}, if_true: {r}) -> {r} {{
+        {emit_call(cm, 'self', [('mask', mty), ('if_true', r)], r, v['selz']('mask', 'if_true'))}
+    }}
+    #[inline(always)]
     fn mask_zero_select(self, mask: {mty}, if_false: {r}) -> {r} {{
         {emit_call(cm, 'self', [('mask', mty), ('if_false', r)], r, v['zsel']('mask', 'if_false'))}
     }}
@@ -1568,6 +1847,10 @@ impl MulBackend<{t}> for {d} {{
         {emit_call(cm, 'self', [('a', r)], r, v['round']('a'))}
     }}
     #[inline(always)]
+    fn trunc(self, a: {r}) -> {r} {{
+        {emit_call(cm, 'self', [('a', r)], r, v['trunc']('a'))}
+    }}
+    #[inline(always)]
     fn copysign(self, a: {r}, sign: {r}) -> {r} {{
         {emit_call(cm, 'self', [('a', r), ('sign', r)], r, v['csign']('a', 'sign'))}
     }}
@@ -1576,6 +1859,17 @@ impl MulBackend<{t}> for {d} {{
       )
 
     if "band" in v:
+      shv = ""
+      if "shlv" in v:
+        shv = f"""
+    #[inline(always)]
+    fn shl_vec(self, a: {r}, counts: {r}) -> {r} {{
+        {emit_call(cm, 'self', [('a', r), ('counts', r)], r, v['shlv']('a', 'counts'))}
+    }}
+    #[inline(always)]
+    fn shr_vec(self, a: {r}, counts: {r}) -> {r} {{
+        {emit_call(cm, 'self', [('a', r), ('counts', r)], r, v['shrv']('a', 'counts'))}
+    }}"""
       lines.append(
           f"""impl IntBitBackend<{t}> for {d} {{
     #[inline(always)]
@@ -1605,6 +1899,21 @@ impl MulBackend<{t}> for {d} {{
     #[inline(always)]
     fn shr<const AMOUNT: u32>(self, a: {r}) -> {r} {{
         {sm}!(self, AMOUNT, |a: {r}| -> {r} {{ {v['shr']} }})
+    }}{shv}
+}}
+"""
+      )
+
+    if "sadd" in v:
+      lines.append(
+          f"""impl SatBackend<{t}> for {d} {{
+    #[inline(always)]
+    fn sat_add(self, a: {r}, b: {r}) -> {r} {{
+        {emit_call(cm, 'self', [('a', r), ('b', r)], r, v['sadd']('a', 'b'))}
+    }}
+    #[inline(always)]
+    fn sat_sub(self, a: {r}, b: {r}) -> {r} {{
+        {emit_call(cm, 'self', [('a', r), ('b', r)], r, v['ssub']('a', 'b'))}
     }}
 }}
 """
@@ -1632,6 +1941,32 @@ impl MulBackend<{t}> for {d} {{
     #[inline(always)]
     fn f32_store_f16_bits(self, a: {f32r}, dest: &mut [u16]) {{
         {emit_extra_body(cm, [('a', f32r), ('dest', '&mut [u16]')], None, ex['f32_store_f16_bits'])};
+    }}
+}}
+
+impl F64ExtraBackend for {d} {{
+    #[inline(always)]
+    fn f64_as_i64(self, a: {f64r}) -> {i64r} {{
+        {emit_extra_body(cm, [('a', f64r)], i64r, ex['f64_as_i64'])}
+    }}
+    #[inline(always)]
+    fn f64_from_f32_lo(self, a: {f32r}) -> {f64r} {{
+        {emit_extra_body(cm, [('a', f32r)], f64r, ex['f64_from_f32_lo'])}
+    }}
+    #[inline(always)]
+    fn f64_from_f32_hi(self, a: {f32r}) -> {f64r} {{
+        {emit_extra_body(cm, [('a', f32r)], f64r, ex['f64_from_f32_hi'])}
+    }}
+    #[inline(always)]
+    fn f64_to_f32(self, lo: {f64r}, hi: {f64r}) -> {f32r} {{
+        {emit_extra_body(cm, [('lo', f64r), ('hi', f64r)], f32r, ex['f64_to_f32'])}
+    }}
+}}
+
+impl I64ExtraBackend for {d} {{
+    #[inline(always)]
+    fn i64_as_f64(self, a: {i64r}) -> {f64r} {{
+        {emit_extra_body(cm, [('a', i64r)], f64r, ex['i64_as_f64'])}
     }}
 }}
 
