@@ -7,6 +7,7 @@ mod idct2d;
 mod reinterpreting_dct2d;
 pub mod transform;
 pub mod transform_map;
+pub mod transpose;
 
 mod idct16;
 mod idct2;

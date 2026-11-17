@@ -42,5 +42,9 @@ simd128 = ["jxl_simd/simd128"]
 name = "dct"
 harness = false
 
+[[bench]]
+name = "transpose"
+harness = false
+
 [lints]
 workspace = true
