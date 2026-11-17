@@ -216,7 +216,6 @@ pub(crate) struct ScratchSpace {
     smooth_upsample_scratch: SmoothUpsampleScratch,
     palette_row_scratch: [Vec<i32>; 4],
     decode_row_scratch: [Vec<i32>; 3],
-    hsqueeze_i16_scratch: Box<[i16; 2048]>,
     pub(crate) lz77_window: Vec<u32>,
     tree_scratch: TreeScratch,
 }
@@ -233,7 +232,6 @@ impl ScratchSpace {
             smooth_upsample_scratch: SmoothUpsampleScratch::default(),
             palette_row_scratch: [vec![], vec![], vec![], vec![]],
             decode_row_scratch: [vec![], vec![], vec![]],
-            hsqueeze_i16_scratch: crate::util::box_array(0i16),
             lz77_window: Vec::new(),
             tree_scratch: TreeScratch::default(),
         }
