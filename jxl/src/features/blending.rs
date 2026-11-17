@@ -5,7 +5,7 @@
 
 #![allow(clippy::needless_range_loop)]
 
-use jxl_simd::{F32SimdVec, SimdDescriptor, SimdMask, simd_dispatch};
+use jxl_simd::{F32Vec, SimdDescriptor, simd_dispatch};
 
 use super::patches::{PatchBlendMode, PatchBlending};
 use crate::headers::extra_channels::{ExtraChannel, ExtraChannelInfo};
@@ -33,20 +33,20 @@ struct BlendConfig {
 }
 
 #[inline(always)]
-fn load_vec<D: SimdDescriptor>(d: D, s: &[f32], x: usize) -> D::F32Vec {
-    let lanes = D::F32Vec::LEN;
+fn load_vec<D: SimdDescriptor>(d: D, s: &[f32], x: usize) -> F32Vec<D> {
+    let lanes = F32Vec::<D>::LEN;
     if x + lanes <= s.len() {
-        D::F32Vec::load(d, &s[x..x + lanes])
+        F32Vec::load(d, &s[x..x + lanes])
     } else {
         let mut buf = [0.0; MAX_F32_LANES];
         buf[..s.len() - x].copy_from_slice(&s[x..]);
-        D::F32Vec::load(d, &buf[..lanes])
+        F32Vec::load(d, &buf[..lanes])
     }
 }
 
 #[inline(always)]
-fn store_vec<D: SimdDescriptor>(_d: D, v: D::F32Vec, s: &mut [f32], x: usize) {
-    let lanes = D::F32Vec::LEN;
+fn store_vec<D: SimdDescriptor>(_d: D, v: F32Vec<D>, s: &mut [f32], x: usize) {
+    let lanes = F32Vec::<D>::LEN;
     if x + lanes <= s.len() {
         v.store(&mut s[x..x + lanes]);
     } else {
@@ -76,9 +76,9 @@ fn blend_impl<D: SimdDescriptor>(
     } = cfg;
     let fg_on_top = order == BlendOrder::Above;
 
-    let lanes = D::F32Vec::LEN;
-    let one = D::F32Vec::splat(d, 1.0);
-    let zero = D::F32Vec::zero(d);
+    let lanes = F32Vec::<D>::LEN;
+    let one = F32Vec::splat(d, 1.0);
+    let zero = F32Vec::zero(d);
 
     let [bg_c0, bg_c1, bg_c2] = bg_color else {
         unreachable!()
@@ -100,7 +100,7 @@ fn blend_impl<D: SimdDescriptor>(
     } else {
         (&bg_alpha_old[..xsize], &fg_alpha[..xsize])
     };
-    let maybe_clamp_vec = |v: D::F32Vec| if clamp { v.max(zero).min(one) } else { v };
+    let maybe_clamp_vec = |v: F32Vec<D>| if clamp { v.max(zero).min(one) } else { v };
 
     for k in 0..xsize.div_ceil(lanes) {
         let x = k * lanes;
@@ -108,7 +108,7 @@ fn blend_impl<D: SimdDescriptor>(
         let bottom_a = load_vec(d, bottom_alpha, x);
         let one_minus_top_a = one - top_a;
         let new_a = one - one_minus_top_a * (one - bottom_a);
-        let reciprocal_a = new_a.gt(zero).if_then_else_f32(one / new_a, zero);
+        let reciprocal_a = new_a.gt(zero).if_then_else(one / new_a, zero);
         for c in 0..3 {
             let bg_v = load_vec(d, bg_c[c], x);
             let fg_v = load_vec(d, fg_c[c], x);
@@ -138,13 +138,13 @@ fn blend_alpha_impl<D: SimdDescriptor>(
 ) {
     let clamp = cfg.clamp;
     let fg_on_top = cfg.order == BlendOrder::Above;
-    let lanes = D::F32Vec::LEN;
-    let one = D::F32Vec::splat(d, 1.0);
-    let zero = D::F32Vec::zero(d);
+    let lanes = F32Vec::<D>::LEN;
+    let one = F32Vec::splat(d, 1.0);
+    let zero = F32Vec::zero(d);
 
     let bg_alpha = &mut bg_alpha[..xsize];
     let fg_alpha = &fg_alpha[..xsize];
-    let maybe_clamp_vec = |v: D::F32Vec| if clamp { v.max(zero).min(one) } else { v };
+    let maybe_clamp_vec = |v: F32Vec<D>| if clamp { v.max(zero).min(one) } else { v };
 
     for k in 0..xsize.div_ceil(lanes) {
         let x = k * lanes;
@@ -162,7 +162,7 @@ fn blend_alpha_impl<D: SimdDescriptor>(
 
 #[simd_dispatch(add)]
 fn add_impl<D: SimdDescriptor>(d: D, dst: &mut [f32], src: &[f32], xsize: usize) {
-    let lanes = D::F32Vec::LEN;
+    let lanes = F32Vec::<D>::LEN;
     let dst = &mut dst[..xsize];
     let src = &src[..xsize];
     for k in 0..xsize.div_ceil(lanes) {
@@ -173,12 +173,12 @@ fn add_impl<D: SimdDescriptor>(d: D, dst: &mut [f32], src: &[f32], xsize: usize)
 
 #[simd_dispatch(mul)]
 fn mul_impl<D: SimdDescriptor>(d: D, dst: &mut [f32], src: &[f32], xsize: usize, clamp: bool) {
-    let lanes = D::F32Vec::LEN;
-    let one = D::F32Vec::splat(d, 1.0);
-    let zero = D::F32Vec::zero(d);
+    let lanes = F32Vec::<D>::LEN;
+    let one = F32Vec::splat(d, 1.0);
+    let zero = F32Vec::zero(d);
     let dst = &mut dst[..xsize];
     let src = &src[..xsize];
-    let maybe_clamp_vec = |v: D::F32Vec| if clamp { v.max(zero).min(one) } else { v };
+    let maybe_clamp_vec = |v: F32Vec<D>| if clamp { v.max(zero).min(one) } else { v };
     for k in 0..xsize.div_ceil(lanes) {
         let x = k * lanes;
         let s = maybe_clamp_vec(load_vec(d, src, x));
@@ -199,13 +199,13 @@ fn alpha_weighted_add_impl<D: SimdDescriptor>(
 ) {
     let clamp = cfg.clamp;
     let fg_on_top = cfg.order == BlendOrder::Above;
-    let lanes = D::F32Vec::LEN;
-    let one = D::F32Vec::splat(d, 1.0);
-    let zero = D::F32Vec::zero(d);
+    let lanes = F32Vec::<D>::LEN;
+    let one = F32Vec::splat(d, 1.0);
+    let zero = F32Vec::zero(d);
     let dst = &mut dst[..xsize];
     let src = &src[..xsize];
     let weight = &weight[..xsize];
-    let maybe_clamp_vec = |v: D::F32Vec| if clamp { v.max(zero).min(one) } else { v };
+    let maybe_clamp_vec = |v: F32Vec<D>| if clamp { v.max(zero).min(one) } else { v };
     for k in 0..xsize.div_ceil(lanes) {
         let x = k * lanes;
         let w = maybe_clamp_vec(load_vec(d, weight, x));
