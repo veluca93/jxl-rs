@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-#![allow(unsafe_code)]
+#![allow(unsafe_code, unused_unsafe)]
 #![allow(clippy::identity_op)]
 
 pub(super) mod arch_ops;
@@ -82,6 +82,18 @@ impl SimdDescriptor for Sse42Descriptor {
     }
 
     #[inline(always)]
+    fn prefetch_t0<T: ?Sized>(self, r: &T) {
+        // SAFETY: descriptor invariant guarantees `sse4.2` (which implies `sse`).
+        unsafe { arch_ops::prefetch_t0(r) };
+    }
+
+    #[inline(always)]
+    fn prefetch_et0<T: ?Sized>(self, r: &T) {
+        // SAFETY: descriptor invariant guarantees `sse4.2` (which implies `sse`).
+        unsafe { arch_ops::prefetch_et0(r) };
+    }
+
+    #[inline(always)]
     fn try_sse42<F: TypeFamily<Self> + TypeFamily<Sse42Descriptor>, P, IndRet>(
         self,
         p: P,
@@ -106,7 +118,7 @@ pub struct AvxDescriptor(());
 #[cfg(feature = "avx")]
 impl AvxDescriptor {
     /// # Safety
-    /// Caller must guarantee `avx2,fma,f16c` features are available.
+    /// Caller must guarantee `avx2,fma,f16c,bmi1,bmi2,lzcnt` features are available.
     pub unsafe fn new_unchecked() -> Self {
         Self(())
     }
@@ -130,10 +142,16 @@ impl SimdDescriptor for AvxDescriptor {
         if cfg!(all(
             target_feature = "avx2",
             target_feature = "fma",
-            target_feature = "f16c"
+            target_feature = "f16c",
+            target_feature = "bmi1",
+            target_feature = "bmi2",
+            target_feature = "lzcnt",
         )) || (std::arch::is_x86_feature_detected!("avx2")
             && std::arch::is_x86_feature_detected!("fma")
-            && std::arch::is_x86_feature_detected!("f16c"))
+            && std::arch::is_x86_feature_detected!("f16c")
+            && std::arch::is_x86_feature_detected!("bmi1")
+            && std::arch::is_x86_feature_detected!("bmi2")
+            && std::arch::is_x86_feature_detected!("lzcnt"))
         {
             // SAFETY: target features were verified via `cfg!` or runtime detection.
             Some(unsafe { Self::new_unchecked() })
@@ -153,24 +171,36 @@ impl SimdDescriptor for AvxDescriptor {
     }
 
     fn call<R>(self, f: impl FnOnce(Self) -> R) -> R {
-        #[target_feature(enable = "avx2,fma,f16c")]
+        #[target_feature(enable = "avx2,fma,f16c,bmi1,bmi2,lzcnt")]
         #[inline(never)]
         fn inner<R>(d: AvxDescriptor, f: impl FnOnce(AvxDescriptor) -> R) -> R {
             f(d)
         }
-        // SAFETY: descriptor invariant guarantees `avx2,fma,f16c`.
+        // SAFETY: descriptor invariant guarantees `avx2,fma,f16c,bmi1,bmi2,lzcnt`.
         unsafe { inner(self, f) }
     }
 
     #[inline(always)]
     fn call_inlined<R>(self, f: impl FnOnce(Self) -> R) -> R {
-        #[target_feature(enable = "avx2,fma,f16c")]
+        #[target_feature(enable = "avx2,fma,f16c,bmi1,bmi2,lzcnt")]
         #[inline]
         fn inner<R>(d: AvxDescriptor, f: impl FnOnce(AvxDescriptor) -> R) -> R {
             f(d)
         }
-        // SAFETY: descriptor invariant guarantees `avx2,fma,f16c`.
+        // SAFETY: descriptor invariant guarantees `avx2,fma,f16c,bmi1,bmi2,lzcnt`.
         unsafe { inner(self, f) }
+    }
+
+    #[inline(always)]
+    fn prefetch_t0<T: ?Sized>(self, r: &T) {
+        // SAFETY: descriptor invariant guarantees `sse4.2` (which implies `sse`).
+        unsafe { arch_ops::prefetch_t0(r) };
+    }
+
+    #[inline(always)]
+    fn prefetch_et0<T: ?Sized>(self, r: &T) {
+        // SAFETY: descriptor invariant guarantees `sse4.2` (which implies `sse`).
+        unsafe { arch_ops::prefetch_et0(r) };
     }
 
     #[inline(always)]
@@ -198,14 +228,14 @@ pub struct Avx512Descriptor(());
 #[cfg(feature = "avx512")]
 impl Avx512Descriptor {
     /// # Safety
-    /// Caller must guarantee `avx512f,avx512bw,avx2,fma,f16c` features are available.
+    /// Caller must guarantee `avx512f,avx512bw,avx2,fma,f16c,bmi1,bmi2,lzcnt` features are available.
     pub unsafe fn new_unchecked() -> Self {
         Self(())
     }
 
     #[inline(always)]
     pub fn as_avx(&self) -> AvxDescriptor {
-        // SAFETY: `Avx512Descriptor` invariant includes `avx2,fma,f16c`.
+        // SAFETY: `Avx512Descriptor` invariant includes `avx2,fma,f16c,bmi1,bmi2,lzcnt`.
         unsafe { AvxDescriptor::new_unchecked() }
     }
 }
@@ -224,12 +254,18 @@ impl SimdDescriptor for Avx512Descriptor {
             target_feature = "avx512bw",
             target_feature = "avx2",
             target_feature = "fma",
-            target_feature = "f16c"
+            target_feature = "f16c",
+            target_feature = "bmi1",
+            target_feature = "bmi2",
+            target_feature = "lzcnt",
         )) || (std::arch::is_x86_feature_detected!("avx512f")
             && std::arch::is_x86_feature_detected!("avx512bw")
             && std::arch::is_x86_feature_detected!("avx2")
             && std::arch::is_x86_feature_detected!("fma")
-            && std::arch::is_x86_feature_detected!("f16c"))
+            && std::arch::is_x86_feature_detected!("f16c")
+            && std::arch::is_x86_feature_detected!("bmi1")
+            && std::arch::is_x86_feature_detected!("bmi2")
+            && std::arch::is_x86_feature_detected!("lzcnt"))
         {
             // SAFETY: target features were verified via `cfg!` or runtime detection.
             Some(unsafe { Self::new_unchecked() })
@@ -249,24 +285,36 @@ impl SimdDescriptor for Avx512Descriptor {
     }
 
     fn call<R>(self, f: impl FnOnce(Self) -> R) -> R {
-        #[target_feature(enable = "avx512f,avx512bw,avx2,fma,f16c")]
+        #[target_feature(enable = "avx512f,avx512bw,avx2,fma,f16c,bmi1,bmi2,lzcnt")]
         #[inline(never)]
         fn inner<R>(d: Avx512Descriptor, f: impl FnOnce(Avx512Descriptor) -> R) -> R {
             f(d)
         }
-        // SAFETY: descriptor invariant guarantees `avx512f,avx512bw,avx2,fma,f16c`.
+        // SAFETY: descriptor invariant guarantees `avx512f,avx512bw,avx2,fma,f16c,bmi1,bmi2,lzcnt`.
         unsafe { inner(self, f) }
     }
 
     #[inline(always)]
     fn call_inlined<R>(self, f: impl FnOnce(Self) -> R) -> R {
-        #[target_feature(enable = "avx512f,avx512bw,avx2,fma,f16c")]
+        #[target_feature(enable = "avx512f,avx512bw,avx2,fma,f16c,bmi1,bmi2,lzcnt")]
         #[inline]
         fn inner<R>(d: Avx512Descriptor, f: impl FnOnce(Avx512Descriptor) -> R) -> R {
             f(d)
         }
-        // SAFETY: descriptor invariant guarantees `avx512f,avx512bw,avx2,fma,f16c`.
+        // SAFETY: descriptor invariant guarantees `avx512f,avx512bw,avx2,fma,f16c,bmi1,bmi2,lzcnt`.
         unsafe { inner(self, f) }
+    }
+
+    #[inline(always)]
+    fn prefetch_t0<T: ?Sized>(self, r: &T) {
+        // SAFETY: descriptor invariant guarantees `sse4.2` (which implies `sse`).
+        unsafe { arch_ops::prefetch_t0(r) };
+    }
+
+    #[inline(always)]
+    fn prefetch_et0<T: ?Sized>(self, r: &T) {
+        // SAFETY: descriptor invariant guarantees `sse4.2` (which implies `sse`).
+        unsafe { arch_ops::prefetch_et0(r) };
     }
 
     #[inline(always)]
@@ -296,7 +344,7 @@ macro_rules! impl_x86_call {
         fn inner() -> $ret $body
         let _d: $crate::x86_64::$descr = $d;
         // SAFETY: descriptor invariant guarantees required target features.
-        #[allow(unsafe_code)]
+        #[allow(unsafe_code, unused_unsafe)]
         unsafe { inner() }
     }};
     ($descr:ident, $feat:literal, $d:expr, |$($arg:ident : $aty:ty),+ $(,)?| $(-> $ret:ty)? $body:block) => {{
@@ -305,7 +353,7 @@ macro_rules! impl_x86_call {
         fn inner($($arg: $aty),+) $(-> $ret)? $body
         let _d: $crate::x86_64::$descr = $d;
         // SAFETY: descriptor invariant guarantees required target features.
-        #[allow(unsafe_code)]
+        #[allow(unsafe_code, unused_unsafe)]
         unsafe { inner($($arg),+) }
     }};
 }
@@ -327,7 +375,7 @@ macro_rules! sse42_shift {
         fn inner<const $amt: u32>($a: $aty) -> $ret $body
         let _d: $crate::x86_64::Sse42Descriptor = $d;
         // SAFETY: descriptor invariant guarantees `sse4.2`.
-        #[allow(unsafe_code)]
+        #[allow(unsafe_code, unused_unsafe)]
         unsafe { inner::<$amt>($a) }
     }};
 }
@@ -340,7 +388,7 @@ pub(super) use {sse42_call, sse42_shift};
 #[allow(unused_macros)]
 macro_rules! avx_call {
     ($d:expr, $($rest:tt)*) => {
-        $crate::x86_64::impl_x86_call!(AvxDescriptor, "avx2,fma,f16c", $d, $($rest)*)
+        $crate::x86_64::impl_x86_call!(AvxDescriptor, "avx2,fma,f16c,bmi1,bmi2,lzcnt", $d, $($rest)*)
     };
 }
 
@@ -348,12 +396,12 @@ macro_rules! avx_call {
 #[allow(unused_macros)]
 macro_rules! avx_shift {
     ($d:expr, $amt:ident, |$a:ident : $aty:ty| -> $ret:ty $body:block) => {{
-        #[target_feature(enable = "avx2,fma,f16c")]
+        #[target_feature(enable = "avx2,fma,f16c,bmi1,bmi2,lzcnt")]
         #[inline]
         fn inner<const $amt: u32>($a: $aty) -> $ret $body
         let _d: $crate::x86_64::AvxDescriptor = $d;
-        // SAFETY: descriptor invariant guarantees `avx2,fma,f16c`.
-        #[allow(unsafe_code)]
+        // SAFETY: descriptor invariant guarantees `avx2,fma,f16c,bmi1,bmi2,lzcnt`.
+        #[allow(unsafe_code, unused_unsafe)]
         unsafe { inner::<$amt>($a) }
     }};
 }
@@ -366,7 +414,7 @@ pub(super) use {avx_call, avx_shift};
 #[allow(unused_macros)]
 macro_rules! avx512_call {
     ($d:expr, $($rest:tt)*) => {
-        $crate::x86_64::impl_x86_call!(Avx512Descriptor, "avx512f,avx512bw,avx2,fma,f16c", $d, $($rest)*)
+        $crate::x86_64::impl_x86_call!(Avx512Descriptor, "avx512f,avx512bw,avx2,fma,f16c,bmi1,bmi2,lzcnt", $d, $($rest)*)
     };
 }
 
@@ -374,12 +422,12 @@ macro_rules! avx512_call {
 #[allow(unused_macros)]
 macro_rules! avx512_shift {
     ($d:expr, $amt:ident, |$a:ident : $aty:ty| -> $ret:ty $body:block) => {{
-        #[target_feature(enable = "avx512f,avx512bw,avx2,fma,f16c")]
+        #[target_feature(enable = "avx512f,avx512bw,avx2,fma,f16c,bmi1,bmi2,lzcnt")]
         #[inline]
         fn inner<const $amt: u32>($a: $aty) -> $ret $body
         let _d: $crate::x86_64::Avx512Descriptor = $d;
-        // SAFETY: descriptor invariant guarantees `avx512f,avx512bw,avx2,fma,f16c`.
-        #[allow(unsafe_code)]
+        // SAFETY: descriptor invariant guarantees `avx512f,avx512bw,avx2,fma,f16c,bmi1,bmi2,lzcnt`.
+        #[allow(unsafe_code, unused_unsafe)]
         unsafe { inner::<$amt>($a) }
     }};
 }

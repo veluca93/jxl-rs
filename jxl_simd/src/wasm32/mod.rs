@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-#![allow(unsafe_code)]
+#![allow(unsafe_code, unused_unsafe)]
 
 pub(super) mod arch_ops;
 #[cfg(feature = "simd128")]
@@ -95,7 +95,7 @@ macro_rules! simd128_call {
         fn inner() -> $ret $body
         let _d: $crate::wasm32::Simd128Descriptor = $d;
         // SAFETY: descriptor invariant guarantees `simd128`.
-        #[allow(unsafe_code)]
+        #[allow(unsafe_code, unused_unsafe)]
         unsafe { inner() }
     }};
     ($d:expr, |$($arg:ident : $aty:ty),+ $(,)?| $(-> $ret:ty)? $body:block) => {{
@@ -104,7 +104,7 @@ macro_rules! simd128_call {
         fn inner($($arg: $aty),+) $(-> $ret)? $body
         let _d: $crate::wasm32::Simd128Descriptor = $d;
         // SAFETY: descriptor invariant guarantees `simd128`.
-        #[allow(unsafe_code)]
+        #[allow(unsafe_code, unused_unsafe)]
         unsafe { inner($($arg),+) }
     }};
 }
@@ -118,7 +118,7 @@ macro_rules! simd128_shift {
         fn inner<const $amt: u32>($a: $aty) -> $ret $body
         let _d: $crate::wasm32::Simd128Descriptor = $d;
         // SAFETY: descriptor invariant guarantees `simd128`.
-        #[allow(unsafe_code)]
+        #[allow(unsafe_code, unused_unsafe)]
         unsafe { inner::<$amt>($a) }
     }};
 }

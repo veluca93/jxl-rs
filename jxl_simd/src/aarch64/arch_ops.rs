@@ -171,3 +171,47 @@ pub fn fcvtn_f16_f32(f32_vals: float32x4_t) -> uint16x4_t {
     }
     f16_bits
 }
+
+#[inline]
+#[target_feature(enable = "neon")]
+pub fn prefetch_t0<T: ?Sized>(r: &T) {
+    #[cfg(miri)]
+    let _ = r;
+    #[cfg(not(miri))]
+    {
+        let base = (r as *const T).cast::<u8>();
+        for i in (0..core::mem::size_of_val(r)).step_by(64) {
+            let p = base.wrapping_add(i);
+            // SAFETY: `prfm` is a non-faulting cache hint that preserves architectural state.
+            unsafe {
+                core::arch::asm!(
+                    "prfm pldl1keep, [{p}]",
+                    p = in(reg) p,
+                    options(nostack, preserves_flags, readonly),
+                );
+            }
+        }
+    }
+}
+
+#[inline]
+#[target_feature(enable = "neon")]
+pub fn prefetch_et0<T: ?Sized>(r: &T) {
+    #[cfg(miri)]
+    let _ = r;
+    #[cfg(not(miri))]
+    {
+        let base = (r as *const T).cast::<u8>();
+        for i in (0..core::mem::size_of_val(r)).step_by(64) {
+            let p = base.wrapping_add(i);
+            // SAFETY: `prfm` is a non-faulting cache hint that preserves architectural state.
+            unsafe {
+                core::arch::asm!(
+                    "prfm pstl1keep, [{p}]",
+                    p = in(reg) p,
+                    options(nostack, preserves_flags, readonly),
+                );
+            }
+        }
+    }
+}

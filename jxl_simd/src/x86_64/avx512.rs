@@ -21,6 +21,126 @@ use crate::{W8, W16, W32, W64, generic_ops};
 impl BytesBackend for Avx512Descriptor {
     type RawBytes = __m512i;
     #[inline(always)]
+    fn combine_shift_right_bytes(self, lo: __m512i, hi: __m512i, offset: usize) -> __m512i {
+        if offset.is_multiple_of(4) {
+            return match offset / 4 {
+                1 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                    _mm512_alignr_epi32::<1>(hi, lo)
+                }),
+                2 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                    _mm512_alignr_epi32::<2>(hi, lo)
+                }),
+                3 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                    _mm512_alignr_epi32::<3>(hi, lo)
+                }),
+                4 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                    _mm512_alignr_epi32::<4>(hi, lo)
+                }),
+                5 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                    _mm512_alignr_epi32::<5>(hi, lo)
+                }),
+                6 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                    _mm512_alignr_epi32::<6>(hi, lo)
+                }),
+                7 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                    _mm512_alignr_epi32::<7>(hi, lo)
+                }),
+                8 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                    _mm512_alignr_epi32::<8>(hi, lo)
+                }),
+                9 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                    _mm512_alignr_epi32::<9>(hi, lo)
+                }),
+                10 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                    _mm512_alignr_epi32::<10>(hi, lo)
+                }),
+                11 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                    _mm512_alignr_epi32::<11>(hi, lo)
+                }),
+                12 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                    _mm512_alignr_epi32::<12>(hi, lo)
+                }),
+                13 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                    _mm512_alignr_epi32::<13>(hi, lo)
+                }),
+                14 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                    _mm512_alignr_epi32::<14>(hi, lo)
+                }),
+                15 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                    _mm512_alignr_epi32::<15>(hi, lo)
+                }),
+                _ => unreachable!(),
+            };
+        }
+        let block = offset / 16;
+        let rem = offset % 16;
+        let y = match block {
+            0 => lo,
+            1 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                _mm512_alignr_epi64::<2>(hi, lo)
+            }),
+            2 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                _mm512_alignr_epi64::<4>(hi, lo)
+            }),
+            3 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                _mm512_alignr_epi64::<6>(hi, lo)
+            }),
+            _ => unreachable!(),
+        };
+        let x = match block {
+            0 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                _mm512_alignr_epi64::<2>(hi, lo)
+            }),
+            1 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                _mm512_alignr_epi64::<4>(hi, lo)
+            }),
+            2 => avx512_call!(self, |lo: __m512i, hi: __m512i| -> __m512i {
+                _mm512_alignr_epi64::<6>(hi, lo)
+            }),
+            3 => hi,
+            _ => unreachable!(),
+        };
+        match rem {
+            1 => avx512_call!(self, |x: __m512i, y: __m512i| -> __m512i {
+                _mm512_alignr_epi8::<1>(x, y)
+            }),
+            2 => avx512_call!(self, |x: __m512i, y: __m512i| -> __m512i {
+                _mm512_alignr_epi8::<2>(x, y)
+            }),
+            3 => avx512_call!(self, |x: __m512i, y: __m512i| -> __m512i {
+                _mm512_alignr_epi8::<3>(x, y)
+            }),
+            5 => avx512_call!(self, |x: __m512i, y: __m512i| -> __m512i {
+                _mm512_alignr_epi8::<5>(x, y)
+            }),
+            6 => avx512_call!(self, |x: __m512i, y: __m512i| -> __m512i {
+                _mm512_alignr_epi8::<6>(x, y)
+            }),
+            7 => avx512_call!(self, |x: __m512i, y: __m512i| -> __m512i {
+                _mm512_alignr_epi8::<7>(x, y)
+            }),
+            9 => avx512_call!(self, |x: __m512i, y: __m512i| -> __m512i {
+                _mm512_alignr_epi8::<9>(x, y)
+            }),
+            10 => avx512_call!(self, |x: __m512i, y: __m512i| -> __m512i {
+                _mm512_alignr_epi8::<10>(x, y)
+            }),
+            11 => avx512_call!(self, |x: __m512i, y: __m512i| -> __m512i {
+                _mm512_alignr_epi8::<11>(x, y)
+            }),
+            13 => avx512_call!(self, |x: __m512i, y: __m512i| -> __m512i {
+                _mm512_alignr_epi8::<13>(x, y)
+            }),
+            14 => avx512_call!(self, |x: __m512i, y: __m512i| -> __m512i {
+                _mm512_alignr_epi8::<14>(x, y)
+            }),
+            15 => avx512_call!(self, |x: __m512i, y: __m512i| -> __m512i {
+                _mm512_alignr_epi8::<15>(x, y)
+            }),
+            _ => unreachable!(),
+        }
+    }
+    #[inline(always)]
     fn interleave_128_halves(self, a: __m512i, b: __m512i) -> (__m512i, __m512i) {
         avx512_call!(self, |a: __m512i, b: __m512i| -> (__m512i, __m512i) {
             (
@@ -89,6 +209,10 @@ impl MaskBackend<W8> for Avx512Descriptor {
     fn mask_any(self, a: u64) -> bool {
         avx512_call!(self, |a: u64| -> bool { a != 0 })
     }
+    #[inline(always)]
+    fn mask_to_bitmask(self, a: u64) -> u64 {
+        avx512_call!(self, |a: u64| -> u64 { a })
+    }
 }
 
 impl MaskBackend<W16> for Avx512Descriptor {
@@ -121,6 +245,10 @@ impl MaskBackend<W16> for Avx512Descriptor {
     #[inline(always)]
     fn mask_any(self, a: u32) -> bool {
         avx512_call!(self, |a: u32| -> bool { a != 0 })
+    }
+    #[inline(always)]
+    fn mask_to_bitmask(self, a: u32) -> u64 {
+        avx512_call!(self, |a: u32| -> u64 { a as u64 })
     }
 }
 
@@ -155,6 +283,10 @@ impl MaskBackend<W32> for Avx512Descriptor {
     fn mask_any(self, a: u16) -> bool {
         avx512_call!(self, |a: u16| -> bool { a != 0 })
     }
+    #[inline(always)]
+    fn mask_to_bitmask(self, a: u16) -> u64 {
+        avx512_call!(self, |a: u16| -> u64 { a as u64 })
+    }
 }
 
 impl MaskBackend<W64> for Avx512Descriptor {
@@ -187,6 +319,10 @@ impl MaskBackend<W64> for Avx512Descriptor {
     #[inline(always)]
     fn mask_any(self, a: u8) -> bool {
         avx512_call!(self, |a: u8| -> bool { a != 0 })
+    }
+    #[inline(always)]
+    fn mask_to_bitmask(self, a: u8) -> u64 {
+        avx512_call!(self, |a: u8| -> u64 { a as u64 })
     }
 }
 
@@ -347,6 +483,21 @@ impl ArithBackend<f32> for Avx512Descriptor {
     fn sub(self, a: __m512, b: __m512) -> __m512 {
         avx512_call!(self, |a: __m512, b: __m512| -> __m512 {
             _mm512_sub_ps(a, b)
+        })
+    }
+    #[inline(always)]
+    fn reduce_add(self, a: __m512) -> f32 {
+        avx512_call!(self, |a: __m512| -> f32 {
+            let v256 = _mm256_add_ps(
+                _mm512_castps512_ps256(a),
+                _mm256_castsi256_ps(_mm512_extracti64x4_epi64::<1>(_mm512_castps_si512(a))),
+            );
+            let v = _mm_add_ps(
+                _mm256_castps256_ps128(v256),
+                _mm256_extractf128_ps::<1>(v256),
+            );
+            let s = _mm_add_ps(v, _mm_movehl_ps(v, v));
+            _mm_cvtss_f32(_mm_add_ss(s, _mm_shuffle_ps::<0x55>(s, s)))
         })
     }
 }
@@ -605,6 +756,17 @@ impl ArithBackend<f64> for Avx512Descriptor {
             _mm512_sub_pd(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: __m512d) -> f64 {
+        avx512_call!(self, |a: __m512d| -> f64 {
+            let v256 = _mm256_add_pd(_mm512_castpd512_pd256(a), _mm512_extractf64x4_pd::<1>(a));
+            let v = _mm_add_pd(
+                _mm256_castpd256_pd128(v256),
+                _mm256_extractf128_pd::<1>(v256),
+            );
+            _mm_cvtsd_f64(_mm_add_sd(v, _mm_unpackhi_pd(v, v)))
+        })
+    }
 }
 
 impl MulBackend<f64> for Avx512Descriptor {
@@ -856,6 +1018,19 @@ impl ArithBackend<i8> for Avx512Descriptor {
             _mm512_sub_epi8(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: __m512i) -> i8 {
+        avx512_call!(self, |a: __m512i| -> i8 {
+            let v256 =
+                _mm256_add_epi8(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_add_epi8(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let s = _mm_sad_epu8(v, _mm_setzero_si128());
+            (_mm_cvtsi128_si64(s).wrapping_add(_mm_extract_epi64::<1>(s))) as i8
+        })
+    }
 }
 
 impl MulBackend<i8> for Avx512Descriptor {
@@ -942,6 +1117,38 @@ impl IntBitBackend<i8> for Avx512Descriptor {
                 ),
                 _mm512_set1_epi8((0x80u8.checked_shr(AMOUNT).unwrap_or(0)) as i8),
             )
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: __m512i) -> i8 {
+        avx512_call!(self, |a: __m512i| -> i8 {
+            let v256 =
+                _mm256_or_si256(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_or_si128(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let q = (_mm_cvtsi128_si64(v) | _mm_extract_epi64::<1>(v)) as u64;
+            let q = q | (q >> 32);
+            let q = q | (q >> 16);
+            let q = q | (q >> 8);
+            q as i8
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: __m512i) -> i8 {
+        avx512_call!(self, |a: __m512i| -> i8 {
+            let v256 =
+                _mm256_and_si256(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_and_si128(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let q = (_mm_cvtsi128_si64(v) & _mm_extract_epi64::<1>(v)) as u64;
+            let q = q & (q >> 32);
+            let q = q & (q >> 16);
+            let q = q & (q >> 8);
+            q as i8
         })
     }
 }
@@ -1120,6 +1327,19 @@ impl ArithBackend<u8> for Avx512Descriptor {
             _mm512_sub_epi8(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: __m512i) -> u8 {
+        avx512_call!(self, |a: __m512i| -> u8 {
+            let v256 =
+                _mm256_add_epi8(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_add_epi8(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let s = _mm_sad_epu8(v, _mm_setzero_si128());
+            (_mm_cvtsi128_si64(s).wrapping_add(_mm_extract_epi64::<1>(s))) as u8
+        })
+    }
 }
 
 impl MulBackend<u8> for Avx512Descriptor {
@@ -1183,6 +1403,38 @@ impl IntBitBackend<u8> for Avx512Descriptor {
                 _mm512_srli_epi16::<AMOUNT>(a),
                 _mm512_set1_epi8((0xFFu8.checked_shr(AMOUNT).unwrap_or(0)) as i8),
             )
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: __m512i) -> u8 {
+        avx512_call!(self, |a: __m512i| -> u8 {
+            let v256 =
+                _mm256_or_si256(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_or_si128(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let q = (_mm_cvtsi128_si64(v) | _mm_extract_epi64::<1>(v)) as u64;
+            let q = q | (q >> 32);
+            let q = q | (q >> 16);
+            let q = q | (q >> 8);
+            q as u8
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: __m512i) -> u8 {
+        avx512_call!(self, |a: __m512i| -> u8 {
+            let v256 =
+                _mm256_and_si256(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_and_si128(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let q = (_mm_cvtsi128_si64(v) & _mm_extract_epi64::<1>(v)) as u64;
+            let q = q & (q >> 32);
+            let q = q & (q >> 16);
+            let q = q & (q >> 8);
+            q as u8
         })
     }
 }
@@ -1361,6 +1613,21 @@ impl ArithBackend<i16> for Avx512Descriptor {
             _mm512_sub_epi16(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: __m512i) -> i16 {
+        avx512_call!(self, |a: __m512i| -> i16 {
+            let v256 =
+                _mm256_add_epi16(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_add_epi16(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let s = _mm_add_epi16(v, _mm_shuffle_epi32::<0x4E>(v));
+            let s = _mm_add_epi16(s, _mm_shuffle_epi32::<0xB1>(s));
+            let x = _mm_cvtsi128_si32(s) as u32;
+            (x as u16).wrapping_add((x >> 16) as u16) as i16
+        })
+    }
 }
 
 impl MulBackend<i16> for Avx512Descriptor {
@@ -1444,6 +1711,36 @@ impl IntBitBackend<i16> for Avx512Descriptor {
     fn shr_vec(self, a: __m512i, counts: __m512i) -> __m512i {
         avx512_call!(self, |a: __m512i, counts: __m512i| -> __m512i {
             _mm512_srav_epi16(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: __m512i) -> i16 {
+        avx512_call!(self, |a: __m512i| -> i16 {
+            let v256 =
+                _mm256_or_si256(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_or_si128(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let q = (_mm_cvtsi128_si64(v) | _mm_extract_epi64::<1>(v)) as u64;
+            let q = q | (q >> 32);
+            let q = q | (q >> 16);
+            q as i16
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: __m512i) -> i16 {
+        avx512_call!(self, |a: __m512i| -> i16 {
+            let v256 =
+                _mm256_and_si256(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_and_si128(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let q = (_mm_cvtsi128_si64(v) & _mm_extract_epi64::<1>(v)) as u64;
+            let q = q & (q >> 32);
+            let q = q & (q >> 16);
+            q as i16
         })
     }
 }
@@ -1622,6 +1919,21 @@ impl ArithBackend<u16> for Avx512Descriptor {
             _mm512_sub_epi16(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: __m512i) -> u16 {
+        avx512_call!(self, |a: __m512i| -> u16 {
+            let v256 =
+                _mm256_add_epi16(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_add_epi16(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let s = _mm_add_epi16(v, _mm_shuffle_epi32::<0x4E>(v));
+            let s = _mm_add_epi16(s, _mm_shuffle_epi32::<0xB1>(s));
+            let x = _mm_cvtsi128_si32(s) as u32;
+            (x as u16).wrapping_add((x >> 16) as u16)
+        })
+    }
 }
 
 impl MulBackend<u16> for Avx512Descriptor {
@@ -1686,6 +1998,36 @@ impl IntBitBackend<u16> for Avx512Descriptor {
     fn shr_vec(self, a: __m512i, counts: __m512i) -> __m512i {
         avx512_call!(self, |a: __m512i, counts: __m512i| -> __m512i {
             _mm512_srlv_epi16(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: __m512i) -> u16 {
+        avx512_call!(self, |a: __m512i| -> u16 {
+            let v256 =
+                _mm256_or_si256(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_or_si128(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let q = (_mm_cvtsi128_si64(v) | _mm_extract_epi64::<1>(v)) as u64;
+            let q = q | (q >> 32);
+            let q = q | (q >> 16);
+            q as u16
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: __m512i) -> u16 {
+        avx512_call!(self, |a: __m512i| -> u16 {
+            let v256 =
+                _mm256_and_si256(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_and_si128(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let q = (_mm_cvtsi128_si64(v) & _mm_extract_epi64::<1>(v)) as u64;
+            let q = q & (q >> 32);
+            let q = q & (q >> 16);
+            q as u16
         })
     }
 }
@@ -1864,6 +2206,20 @@ impl ArithBackend<i32> for Avx512Descriptor {
             _mm512_sub_epi32(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: __m512i) -> i32 {
+        avx512_call!(self, |a: __m512i| -> i32 {
+            let v256 =
+                _mm256_add_epi32(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_add_epi32(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let s = _mm_add_epi32(v, _mm_shuffle_epi32::<0x4E>(v));
+            let s = _mm_add_epi32(s, _mm_shuffle_epi32::<0xB1>(s));
+            _mm_cvtsi128_si32(s)
+        })
+    }
 }
 
 impl MulBackend<i32> for Avx512Descriptor {
@@ -1947,6 +2303,34 @@ impl IntBitBackend<i32> for Avx512Descriptor {
     fn shr_vec(self, a: __m512i, counts: __m512i) -> __m512i {
         avx512_call!(self, |a: __m512i, counts: __m512i| -> __m512i {
             _mm512_srav_epi32(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: __m512i) -> i32 {
+        avx512_call!(self, |a: __m512i| -> i32 {
+            let v256 =
+                _mm256_or_si256(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_or_si128(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let q = (_mm_cvtsi128_si64(v) | _mm_extract_epi64::<1>(v)) as u64;
+            let q = q | (q >> 32);
+            q as i32
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: __m512i) -> i32 {
+        avx512_call!(self, |a: __m512i| -> i32 {
+            let v256 =
+                _mm256_and_si256(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_and_si128(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let q = (_mm_cvtsi128_si64(v) & _mm_extract_epi64::<1>(v)) as u64;
+            let q = q & (q >> 32);
+            q as i32
         })
     }
 }
@@ -2110,6 +2494,20 @@ impl ArithBackend<u32> for Avx512Descriptor {
             _mm512_sub_epi32(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: __m512i) -> u32 {
+        avx512_call!(self, |a: __m512i| -> u32 {
+            let v256 =
+                _mm256_add_epi32(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_add_epi32(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let s = _mm_add_epi32(v, _mm_shuffle_epi32::<0x4E>(v));
+            let s = _mm_add_epi32(s, _mm_shuffle_epi32::<0xB1>(s));
+            _mm_cvtsi128_si32(s) as u32
+        })
+    }
 }
 
 impl MulBackend<u32> for Avx512Descriptor {
@@ -2174,6 +2572,34 @@ impl IntBitBackend<u32> for Avx512Descriptor {
     fn shr_vec(self, a: __m512i, counts: __m512i) -> __m512i {
         avx512_call!(self, |a: __m512i, counts: __m512i| -> __m512i {
             _mm512_srlv_epi32(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: __m512i) -> u32 {
+        avx512_call!(self, |a: __m512i| -> u32 {
+            let v256 =
+                _mm256_or_si256(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_or_si128(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let q = (_mm_cvtsi128_si64(v) | _mm_extract_epi64::<1>(v)) as u64;
+            let q = q | (q >> 32);
+            q as u32
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: __m512i) -> u32 {
+        avx512_call!(self, |a: __m512i| -> u32 {
+            let v256 =
+                _mm256_and_si256(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_and_si128(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let q = (_mm_cvtsi128_si64(v) & _mm_extract_epi64::<1>(v)) as u64;
+            let q = q & (q >> 32);
+            q as u32
         })
     }
 }
@@ -2337,6 +2763,19 @@ impl ArithBackend<i64> for Avx512Descriptor {
             _mm512_sub_epi64(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: __m512i) -> i64 {
+        avx512_call!(self, |a: __m512i| -> i64 {
+            let v256 =
+                _mm256_add_epi64(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_add_epi64(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let s = _mm_add_epi64(v, _mm_unpackhi_epi64(v, v));
+            _mm_cvtsi128_si64(s)
+        })
+    }
 }
 
 impl MulBackend<i64> for Avx512Descriptor {
@@ -2425,6 +2864,30 @@ impl IntBitBackend<i64> for Avx512Descriptor {
     fn shr_vec(self, a: __m512i, counts: __m512i) -> __m512i {
         avx512_call!(self, |a: __m512i, counts: __m512i| -> __m512i {
             _mm512_srav_epi64(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: __m512i) -> i64 {
+        avx512_call!(self, |a: __m512i| -> i64 {
+            let v256 =
+                _mm256_or_si256(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_or_si128(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            ((_mm_cvtsi128_si64(v) | _mm_extract_epi64::<1>(v)) as u64) as i64
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: __m512i) -> i64 {
+        avx512_call!(self, |a: __m512i| -> i64 {
+            let v256 =
+                _mm256_and_si256(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_and_si128(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            ((_mm_cvtsi128_si64(v) & _mm_extract_epi64::<1>(v)) as u64) as i64
         })
     }
 }
@@ -2588,6 +3051,19 @@ impl ArithBackend<u64> for Avx512Descriptor {
             _mm512_sub_epi64(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: __m512i) -> u64 {
+        avx512_call!(self, |a: __m512i| -> u64 {
+            let v256 =
+                _mm256_add_epi64(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_add_epi64(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            let s = _mm_add_epi64(v, _mm_unpackhi_epi64(v, v));
+            _mm_cvtsi128_si64(s) as u64
+        })
+    }
 }
 
 impl MulBackend<u64> for Avx512Descriptor {
@@ -2657,6 +3133,30 @@ impl IntBitBackend<u64> for Avx512Descriptor {
     fn shr_vec(self, a: __m512i, counts: __m512i) -> __m512i {
         avx512_call!(self, |a: __m512i, counts: __m512i| -> __m512i {
             _mm512_srlv_epi64(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: __m512i) -> u64 {
+        avx512_call!(self, |a: __m512i| -> u64 {
+            let v256 =
+                _mm256_or_si256(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_or_si128(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            (_mm_cvtsi128_si64(v) | _mm_extract_epi64::<1>(v)) as u64
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: __m512i) -> u64 {
+        avx512_call!(self, |a: __m512i| -> u64 {
+            let v256 =
+                _mm256_and_si256(_mm512_castsi512_si256(a), _mm512_extracti64x4_epi64::<1>(a));
+            let v = _mm_and_si128(
+                _mm256_castsi256_si128(v256),
+                _mm256_extracti128_si256::<1>(v256),
+            );
+            (_mm_cvtsi128_si64(v) & _mm_extract_epi64::<1>(v)) as u64
         })
     }
 }
@@ -2798,6 +3298,12 @@ impl I16ExtraBackend for Avx512Descriptor {
     fn i16_mul_wide_take_high(self, a: __m512i, b: __m512i) -> __m512i {
         avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
             _mm512_mulhi_epi16(a, b)
+        })
+    }
+    #[inline(always)]
+    fn i16_madd_to_i32(self, a: __m512i, b: __m512i) -> __m512i {
+        avx512_call!(self, |a: __m512i, b: __m512i| -> __m512i {
+            _mm512_madd_epi16(a, b)
         })
     }
 }

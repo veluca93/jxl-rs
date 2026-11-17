@@ -4,10 +4,10 @@
 // license that can be found in the LICENSE file.
 
 use crate::{
-    ComparableElement, DemoteTo, Emu128Descriptor, F32Vec, F64Vec, FloatElement, I8Vec, I16Vec,
-    I32Vec, I64Vec, IntElement, MaskWidth, MulElement, PromoteTo, SatElement, SignedElement,
-    SimdDescriptor, SimdElement, SimdMask, SimdVec, U8Vec, U16Vec, U32Vec, U64Vec, W8, W16, W32,
-    W64, simd_specialize, simd_test,
+    ArithElement, ComparableElement, DemoteTo, Emu128Descriptor, F32Vec, F64Vec, FloatElement,
+    I8Vec, I16Vec, I32Vec, I64Vec, IntElement, MaskWidth, MulElement, PromoteTo, SatElement,
+    SignedElement, SimdDescriptor, SimdElement, SimdMask, SimdVec, U8Vec, U16Vec, U32Vec, U64Vec,
+    W8, W16, W32, W64, simd_specialize, simd_test,
 };
 
 struct Rng(u64);
@@ -1339,4 +1339,514 @@ fn test_simd_specialize_vec_refs_and_mixed_params<D: SimdDescriptor>(d: D) {
     let mut out = vec![0.0f32; F32Vec::<D>::LEN];
     pick_vec::<D, &[u8], 4>(d, &local_ref, &mut vecs, 5, &arr, 99).store(&mut out);
     assert_eq!(out[0], 22.0);
+}
+
+fn check_bitmask_for_width<W, T, D>(d: D, zero: T, one: T)
+where
+    W: MaskWidth,
+    T: SimdElement + ComparableElement<Mask = W>,
+    D: SimdDescriptor,
+{
+    let len = SimdVec::<T, D>::LEN;
+    assert_eq!(SimdMask::<W, D>::LEN, len);
+    let full_mask = if len == 64 {
+        u64::MAX
+    } else {
+        (1u64 << len) - 1
+    };
+
+    let v_zero = SimdVec::splat(d, zero);
+    let v_one = SimdVec::splat(d, one);
+    assert_eq!(v_zero.eq(v_one).to_bitmask(), 0);
+    assert_eq!(v_one.eq(v_one).to_bitmask(), full_mask);
+
+    for lane in 0..len {
+        let mut buf = vec![zero; len];
+        buf[lane] = one;
+        let m = SimdVec::load(d, &buf).eq(v_one);
+        let single = 1u64 << lane;
+        assert_eq!(m.to_bitmask(), single, "single lane={lane} len={len}");
+        assert_eq!(
+            (!m).to_bitmask(),
+            full_mask ^ single,
+            "inverted lane={lane} len={len}"
+        );
+    }
+
+    for pat in [
+        0x5555_5555_5555_5555u64,
+        0xAAAA_AAAA_AAAA_AAAAu64,
+        0x8000_0001_8000_0001u64,
+        0xF00F_0FF0_C33C_3CC3u64,
+        0x8000_0000_0000_0000u64,
+        0x0000_0000_8000_0000u64,
+    ] {
+        let expected = pat & full_mask;
+        let buf: Vec<T> = (0..len)
+            .map(|i| {
+                if ((expected >> i) & 1) != 0 {
+                    one
+                } else {
+                    zero
+                }
+            })
+            .collect();
+        let m = SimdVec::load(d, &buf).eq(v_one);
+        assert_eq!(m.to_bitmask(), expected, "pattern={pat:#x} len={len}");
+    }
+
+    #[cfg(not(miri))]
+    arbtest::arbtest(|u| {
+        let raw: u64 = u.arbitrary()?;
+        let expected = raw & full_mask;
+        let buf: Vec<T> = (0..len)
+            .map(|i| {
+                if ((expected >> i) & 1) != 0 {
+                    one
+                } else {
+                    zero
+                }
+            })
+            .collect();
+        let m = SimdVec::load(d, &buf).eq(v_one);
+        assert_eq!(m.to_bitmask(), expected);
+        Ok(())
+    });
+}
+
+#[simd_test]
+fn test_mask_to_bitmask<D: SimdDescriptor>(d: D) {
+    check_bitmask_for_width::<W8, u8, D>(d, 0, 1);
+    check_bitmask_for_width::<W16, u16, D>(d, 0, 1);
+    check_bitmask_for_width::<W32, u32, D>(d, 0, 1);
+    check_bitmask_for_width::<W64, u64, D>(d, 0, 1);
+
+    // Also test float comparison masks (`__m128`/`__m256`/`__mmask*` on x86).
+    check_bitmask_for_width::<W32, f32, D>(d, 0.0, 1.0);
+    check_bitmask_for_width::<W64, f64, D>(d, 0.0, 1.0);
+}
+
+fn check_slide_n<
+    T: SimdElement + PartialEq + std::fmt::Debug,
+    D: SimdDescriptor,
+    const N: usize,
+>(
+    d: D,
+    prev: &[T],
+    curr: &[T],
+    next: &[T],
+) {
+    let len = SimdVec::<T, D>::LEN;
+    let vp = SimdVec::load(d, prev);
+    let vc = SimdVec::load(d, curr);
+    let vn = SimdVec::load(d, next);
+
+    let mut out_r = vec![T::default(); len];
+    vc.slide_right::<N>(vp).store(&mut out_r);
+    for i in 0..len {
+        let exp = if i < N {
+            prev[len - N + i]
+        } else {
+            curr[i - N]
+        };
+        assert_eq!(out_r[i], exp, "slide_right N={N} lane={i} len={len}");
+    }
+
+    let mut out_l = vec![T::default(); len];
+    vc.slide_left::<N>(vn).store(&mut out_l);
+    for i in 0..len {
+        let exp = if i + N < len {
+            curr[i + N]
+        } else {
+            next[i + N - len]
+        };
+        assert_eq!(out_l[i], exp, "slide_left N={N} lane={i} len={len}");
+    }
+}
+
+macro_rules! check_slides_list {
+    ($d:expr, $t:ty, $d_ty:ty, $prev:expr, $curr:expr, $next:expr, [$($n:literal),* $(,)?]) => {{
+        $(check_slide_n::<$t, $d_ty, $n>($d, $prev, $curr, $next);)*
+    }};
+}
+
+fn check_slides_up_to_128b<D: SimdDescriptor>(d: D) {
+    let p8: Vec<u8> = (0..64).map(|i| (i + 1) as u8).collect();
+    let c8: Vec<u8> = (0..64).map(|i| (i + 101) as u8).collect();
+    let n8: Vec<u8> = (0..64).map(|i| (i + 201) as u8).collect();
+    check_slides_list!(
+        d,
+        u8,
+        D,
+        &p8,
+        &c8,
+        &n8,
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    );
+
+    let p16: Vec<u16> = (0..32).map(|i| (0x100 + i) as u16).collect();
+    let c16: Vec<u16> = (0..32).map(|i| (0x200 + i) as u16).collect();
+    let n16: Vec<u16> = (0..32).map(|i| (0x300 + i) as u16).collect();
+    check_slides_list!(d, u16, D, &p16, &c16, &n16, [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+
+    let p32: Vec<u32> = (0..16).map(|i| 0x1000_0000 + i as u32).collect();
+    let c32: Vec<u32> = (0..16).map(|i| 0x2000_0000 + i as u32).collect();
+    let n32: Vec<u32> = (0..16).map(|i| 0x3000_0000 + i as u32).collect();
+    check_slides_list!(d, u32, D, &p32, &c32, &n32, [0, 1, 2, 3, 4]);
+
+    let pi32: Vec<i32> = (0..16).map(|i| -1000 + i).collect();
+    let ci32: Vec<i32> = (0..16).map(|i| 2000 + i).collect();
+    let ni32: Vec<i32> = (0..16).map(|i| -3000 + i).collect();
+    check_slides_list!(d, i32, D, &pi32, &ci32, &ni32, [0, 1, 2, 3, 4]);
+
+    let p64: Vec<u64> = (0..8).map(|i| 0x0102_0304_0506_0700 + i).collect();
+    let c64: Vec<u64> = (0..8).map(|i| 0x1112_1314_1516_1700 + i).collect();
+    let n64: Vec<u64> = (0..8).map(|i| 0x2122_2324_2526_2700 + i).collect();
+    check_slides_list!(d, u64, D, &p64, &c64, &n64, [0, 1, 2]);
+}
+
+#[simd_test]
+fn test_slide_right_and_left<D: SimdDescriptor>(d: D) {
+    check_slides_up_to_128b(d);
+
+    #[cfg(not(miri))]
+    arbtest::arbtest(|u| {
+        let len = U32Vec::<D>::LEN;
+        let mut prev = vec![0u32; len];
+        let mut curr = vec![0u32; len];
+        let mut next = vec![0u32; len];
+        for i in 0..len {
+            prev[i] = u.arbitrary()?;
+            curr[i] = u.arbitrary()?;
+            next[i] = u.arbitrary()?;
+        }
+        check_slides_list!(d, u32, D, &prev, &curr, &next, [0, 1, 2, 3, 4]);
+        Ok(())
+    });
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx"))]
+#[test]
+fn test_slide_wide_avx_all_offsets() {
+    let Some(d) = crate::AvxDescriptor::new() else {
+        return;
+    };
+    d.call(|d| {
+        let p8: Vec<u8> = (0..32).map(|i| (i + 1) as u8).collect();
+        let c8: Vec<u8> = (0..32).map(|i| (i + 65) as u8).collect();
+        let n8: Vec<u8> = (0..32).map(|i| (i + 129) as u8).collect();
+        check_slides_list!(
+            d,
+            u8,
+            crate::AvxDescriptor,
+            &p8,
+            &c8,
+            &n8,
+            [
+                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                23, 24, 25, 26, 27, 28, 29, 30, 31, 32
+            ]
+        );
+        let p16: Vec<u16> = (0..16).map(|i| (0x100 + i) as u16).collect();
+        let c16: Vec<u16> = (0..16).map(|i| (0x200 + i) as u16).collect();
+        let n16: Vec<u16> = (0..16).map(|i| (0x300 + i) as u16).collect();
+        check_slides_list!(
+            d,
+            u16,
+            crate::AvxDescriptor,
+            &p16,
+            &c16,
+            &n16,
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        );
+        let p32: Vec<u32> = (0..8).map(|i| 100 + i as u32).collect();
+        let c32: Vec<u32> = (0..8).map(|i| 200 + i as u32).collect();
+        let n32: Vec<u32> = (0..8).map(|i| 300 + i as u32).collect();
+        check_slides_list!(
+            d,
+            u32,
+            crate::AvxDescriptor,
+            &p32,
+            &c32,
+            &n32,
+            [0, 1, 2, 3, 4, 5, 6, 7, 8]
+        );
+        let p64: Vec<u64> = (0..4).map(|i| 1000 + i).collect();
+        let c64: Vec<u64> = (0..4).map(|i| 2000 + i).collect();
+        let n64: Vec<u64> = (0..4).map(|i| 3000 + i).collect();
+        check_slides_list!(
+            d,
+            u64,
+            crate::AvxDescriptor,
+            &p64,
+            &c64,
+            &n64,
+            [0, 1, 2, 3, 4]
+        );
+    });
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[test]
+fn test_slide_wide_avx512_all_offsets() {
+    let Some(d) = crate::Avx512Descriptor::new() else {
+        return;
+    };
+    d.call(|d| {
+        let p8: Vec<u8> = (0..64).map(|i| (i + 1) as u8).collect();
+        let c8: Vec<u8> = (0..64).map(|i| (i + 65) as u8).collect();
+        let n8: Vec<u8> = (0..64).map(|i| (i + 129) as u8).collect();
+        check_slides_list!(
+            d,
+            u8,
+            crate::Avx512Descriptor,
+            &p8,
+            &c8,
+            &n8,
+            [
+                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
+                44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64
+            ]
+        );
+        let p16: Vec<u16> = (0..32).map(|i| (0x100 + i) as u16).collect();
+        let c16: Vec<u16> = (0..32).map(|i| (0x200 + i) as u16).collect();
+        let n16: Vec<u16> = (0..32).map(|i| (0x300 + i) as u16).collect();
+        check_slides_list!(
+            d,
+            u16,
+            crate::Avx512Descriptor,
+            &p16,
+            &c16,
+            &n16,
+            [
+                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                23, 24, 25, 26, 27, 28, 29, 30, 31, 32
+            ]
+        );
+        let p32: Vec<u32> = (0..16).map(|i| 100 + i as u32).collect();
+        let c32: Vec<u32> = (0..16).map(|i| 200 + i as u32).collect();
+        let n32: Vec<u32> = (0..16).map(|i| 300 + i as u32).collect();
+        check_slides_list!(
+            d,
+            u32,
+            crate::Avx512Descriptor,
+            &p32,
+            &c32,
+            &n32,
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        );
+        let p64: Vec<u64> = (0..8).map(|i| 1000 + i).collect();
+        let c64: Vec<u64> = (0..8).map(|i| 2000 + i).collect();
+        let n64: Vec<u64> = (0..8).map(|i| 3000 + i).collect();
+        check_slides_list!(
+            d,
+            u64,
+            crate::Avx512Descriptor,
+            &p64,
+            &c64,
+            &n64,
+            [0, 1, 2, 3, 4, 5, 6, 7, 8]
+        );
+    });
+}
+
+#[simd_test]
+fn test_madd_to_i32<D: SimdDescriptor>(d: D) {
+    let n16 = I16Vec::<D>::LEN;
+    let n32 = I32Vec::<D>::LEN;
+
+    // Explicit check of `(-32768, -32768)` wrapping to `i32::MIN` and boundary pairs.
+    let mut corner_a = vec![0i16; n16];
+    let mut corner_b = vec![0i16; n16];
+    let pairs: [(i16, i16, i16, i16); 4] = [
+        (i16::MIN, i16::MIN, i16::MIN, i16::MIN),
+        (i16::MAX, i16::MAX, i16::MAX, i16::MAX),
+        (i16::MIN, i16::MAX, i16::MIN, 1),
+        (-1, 1, 12345, -23456),
+    ];
+    for k in 0..n32 {
+        let (a0, b0, a1, b1) = pairs[k % pairs.len()];
+        corner_a[2 * k] = a0;
+        corner_b[2 * k] = b0;
+        corner_a[2 * k + 1] = a1;
+        corner_b[2 * k + 1] = b1;
+    }
+    let mut out = vec![0i32; n32];
+    I16Vec::load(d, &corner_a)
+        .madd_to_i32(I16Vec::load(d, &corner_b))
+        .store(&mut out);
+    assert_eq!(out[0], i32::MIN);
+    for k in 0..n32 {
+        let exp = (corner_a[2 * k] as i32 * corner_b[2 * k] as i32)
+            .wrapping_add(corner_a[2 * k + 1] as i32 * corner_b[2 * k + 1] as i32);
+        assert_eq!(out[k], exp, "corner pair k={k}");
+    }
+
+    let bnd = i16::boundary();
+    let a = fill_inputs(701, 4 * n16, &bnd, i16::from_rng);
+    let b = fill_inputs(702, 4 * n16, &bnd, i16::from_rng);
+    for chunk in (0..a.len()).step_by(n16) {
+        I16Vec::load(d, &a[chunk..])
+            .madd_to_i32(I16Vec::load(d, &b[chunk..]))
+            .store(&mut out);
+        for k in 0..n32 {
+            let exp = (a[chunk + 2 * k] as i32 * b[chunk + 2 * k] as i32)
+                .wrapping_add(a[chunk + 2 * k + 1] as i32 * b[chunk + 2 * k + 1] as i32);
+            assert_eq!(out[k], exp);
+        }
+    }
+
+    #[cfg(not(miri))]
+    arbtest::arbtest(|u| {
+        let mut va = vec![0i16; n16];
+        let mut vb = vec![0i16; n16];
+        for i in 0..n16 {
+            va[i] = u.arbitrary()?;
+            vb[i] = u.arbitrary()?;
+        }
+        I16Vec::load(d, &va)
+            .madd_to_i32(I16Vec::load(d, &vb))
+            .store(&mut out);
+        for k in 0..n32 {
+            let exp = (va[2 * k] as i32 * vb[2 * k] as i32)
+                .wrapping_add(va[2 * k + 1] as i32 * vb[2 * k + 1] as i32);
+            assert_eq!(out[k], exp);
+        }
+        Ok(())
+    });
+}
+
+macro_rules! check_int_reductions {
+    ($d:expr, $t:ty, $d_ty:ty, $seed:expr) => {{
+        let len = SimdVec::<$t, $d_ty>::LEN;
+        assert_eq!(SimdVec::<$t, $d_ty>::zero($d).reduce_add(), 0);
+        assert_eq!(SimdVec::<$t, $d_ty>::zero($d).reduce_or(), 0);
+        assert_eq!(SimdVec::<$t, $d_ty>::zero($d).reduce_and(), 0);
+        assert_eq!(SimdVec::<$t, $d_ty>::splat($d, !0).reduce_or(), !0);
+        assert_eq!(SimdVec::<$t, $d_ty>::splat($d, !0).reduce_and(), !0);
+
+        for lane in 0..len {
+            for bit in 0..<$t>::BITS {
+                let val = (1 as $t).wrapping_shl(bit);
+                let mut only_one = vec![0 as $t; len];
+                only_one[lane] = val;
+                let v = SimdVec::<$t, $d_ty>::load($d, &only_one);
+                assert_eq!(v.reduce_add(), val, "add lane={lane} bit={bit}");
+                assert_eq!(v.reduce_or(), val, "or lane={lane} bit={bit}");
+                assert_eq!(
+                    v.reduce_and(),
+                    if len == 1 { val } else { 0 },
+                    "and lane={lane} bit={bit}"
+                );
+
+                let mut all_but_one = vec![!0 as $t; len];
+                all_but_one[lane] = !val;
+                let vn = SimdVec::<$t, $d_ty>::load($d, &all_but_one);
+                assert_eq!(vn.reduce_and(), !val, "and-clear lane={lane} bit={bit}");
+            }
+        }
+
+        let bnd = <$t>::boundary();
+        let inputs = fill_inputs($seed, 4 * len, &bnd, <$t>::from_rng);
+        for chunk in inputs.chunks_exact(len) {
+            let v = SimdVec::<$t, $d_ty>::load($d, chunk);
+            let exp_add = chunk.iter().copied().fold(0 as $t, <$t>::wrapping_add);
+            let exp_or = chunk.iter().copied().fold(0 as $t, |a, b| a | b);
+            let exp_and = chunk.iter().copied().fold(!0 as $t, |a, b| a & b);
+            assert_eq!(v.reduce_add(), exp_add);
+            assert_eq!(v.reduce_or(), exp_or);
+            assert_eq!(v.reduce_and(), exp_and);
+        }
+
+        #[cfg(not(miri))]
+        arbtest::arbtest(|u| {
+            let mut buf = vec![0 as $t; len];
+            for slot in &mut buf {
+                *slot = u.arbitrary()?;
+            }
+            let v = SimdVec::<$t, $d_ty>::load($d, &buf);
+            assert_eq!(
+                v.reduce_add(),
+                buf.iter().copied().fold(0 as $t, <$t>::wrapping_add)
+            );
+            assert_eq!(
+                v.reduce_or(),
+                buf.iter().copied().fold(0 as $t, |a, b| a | b)
+            );
+            assert_eq!(
+                v.reduce_and(),
+                buf.iter().copied().fold(!0 as $t, |a, b| a & b)
+            );
+            Ok(())
+        });
+    }};
+}
+
+fn generic_sum<T: ArithElement, D: SimdDescriptor>(v: SimdVec<T, D>) -> T {
+    v.reduce_add()
+}
+
+#[simd_test]
+fn test_reductions_and_prefetch<D: SimdDescriptor>(d: D) {
+    check_int_reductions!(d, i8, D, 801);
+    check_int_reductions!(d, u8, D, 802);
+    check_int_reductions!(d, i16, D, 803);
+    check_int_reductions!(d, u16, D, 804);
+    check_int_reductions!(d, i32, D, 805);
+    check_int_reductions!(d, u32, D, 806);
+    check_int_reductions!(d, i64, D, 807);
+    check_int_reductions!(d, u64, D, 808);
+
+    // Float `reduce_add` (including through generic `T: ArithElement`).
+    let f32s: Vec<f32> = (0..F32Vec::<D>::LEN)
+        .map(|i| (i as f32) * 1.5 - 3.0)
+        .collect();
+    let exp32: f32 = f32s.iter().sum();
+    let got32 = generic_sum(F32Vec::load(d, &f32s));
+    assert!((got32 - exp32).abs() <= 1e-5, "got32={got32} exp32={exp32}");
+
+    let f64s: Vec<f64> = (0..F64Vec::<D>::LEN)
+        .map(|i| (i as f64) * 2.25 - 1.5)
+        .collect();
+    let exp64: f64 = f64s.iter().sum();
+    let got64 = generic_sum(F64Vec::load(d, &f64s));
+    assert!(
+        (got64 - exp64).abs() <= 1e-12,
+        "got64={got64} exp64={exp64}"
+    );
+
+    // Prefetch helpers: ZST, single-cacheline, multi-cacheline, unsized slices, and inside `d.call`.
+    let zst = ();
+    let empty_arr = [0u8; 0];
+    let scalar = 42u64;
+    let line = [7u8; 64];
+    #[repr(C)]
+    struct Big([u8; 300]);
+    let big = Big([0xAB; 300]);
+
+    d.prefetch_t0(&zst);
+    d.prefetch_et0(&zst);
+    d.prefetch_t0(&empty_arr);
+    d.prefetch_et0(&empty_arr);
+    d.prefetch_t0(&scalar);
+    d.prefetch_et0(&scalar);
+    d.prefetch_t0(&line);
+    d.prefetch_et0(&line);
+    d.prefetch_t0(&big);
+    d.prefetch_et0(&big);
+    d.prefetch_t0(&big.0[..]);
+    d.prefetch_et0(&big.0[..0]);
+
+    let scalar_ops = d.call(|d| {
+        d.prefetch_t0(&big);
+        d.prefetch_et0(&line);
+        let x = std::hint::black_box(0x0010_0800u64);
+        (
+            x.trailing_zeros(),
+            x.leading_zeros(),
+            x >> std::hint::black_box(5),
+        )
+    });
+    assert_eq!(scalar_ops, (11, 43, 0x0010_0800u64 >> 5));
 }

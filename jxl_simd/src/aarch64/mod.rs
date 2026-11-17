@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-#![allow(unsafe_code)]
+#![allow(unsafe_code, unused_unsafe)]
 #![allow(clippy::identity_op)]
 
 pub(super) mod arch_ops;
@@ -78,6 +78,18 @@ impl SimdDescriptor for NeonDescriptor {
     }
 
     #[inline(always)]
+    fn prefetch_t0<T: ?Sized>(self, r: &T) {
+        // SAFETY: descriptor invariant guarantees `neon`.
+        unsafe { arch_ops::prefetch_t0(r) };
+    }
+
+    #[inline(always)]
+    fn prefetch_et0<T: ?Sized>(self, r: &T) {
+        // SAFETY: descriptor invariant guarantees `neon`.
+        unsafe { arch_ops::prefetch_et0(r) };
+    }
+
+    #[inline(always)]
     fn try_neon<F: TypeFamily<Self> + TypeFamily<NeonDescriptor>, P, IndRet>(
         self,
         p: P,
@@ -104,7 +116,7 @@ macro_rules! neon_call {
         fn inner() -> $ret $body
         let _d: $crate::aarch64::NeonDescriptor = $d;
         // SAFETY: descriptor invariant guarantees `neon`.
-        #[allow(unsafe_code)]
+        #[allow(unsafe_code, unused_unsafe)]
         unsafe { inner() }
     }};
     ($d:expr, |$($arg:ident : $aty:ty),+ $(,)?| $(-> $ret:ty)? $body:block) => {{
@@ -113,7 +125,7 @@ macro_rules! neon_call {
         fn inner($($arg: $aty),+) $(-> $ret)? $body
         let _d: $crate::aarch64::NeonDescriptor = $d;
         // SAFETY: descriptor invariant guarantees `neon`.
-        #[allow(unsafe_code)]
+        #[allow(unsafe_code, unused_unsafe)]
         unsafe { inner($($arg),+) }
     }};
 }
@@ -127,7 +139,7 @@ macro_rules! neon_shift {
         fn inner<const $amt: u32>($a: $aty) -> $ret $body
         let _d: $crate::aarch64::NeonDescriptor = $d;
         // SAFETY: descriptor invariant guarantees `neon`.
-        #[allow(unsafe_code)]
+        #[allow(unsafe_code, unused_unsafe)]
         unsafe { inner::<$amt>($a) }
     }};
 }

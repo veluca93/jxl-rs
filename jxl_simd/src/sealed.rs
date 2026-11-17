@@ -27,6 +27,7 @@ pub trait MaskWidth: Sized + Copy + Debug + Send + Sync + 'static {
     ) -> Self::Raw<D>;
     fn mask_all<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> bool;
     fn mask_any<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> bool;
+    fn mask_to_bitmask<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> u64;
 }
 
 pub trait Element: Copy + Default + Debug + Send + Sync + 'static {
@@ -135,6 +136,7 @@ pub trait ComparableElement: Element {
 pub trait ArithElement: Element {
     fn add<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>) -> Self::Raw<D>;
     fn sub<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>) -> Self::Raw<D>;
+    fn reduce_add<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> Self;
 }
 
 pub trait MulElement: ArithElement {
@@ -199,6 +201,8 @@ pub trait IntElement: ComparableElement + ArithElement + MulElement {
         a: Self::Raw<D>,
         counts: Self::Raw<D>,
     ) -> Self::Raw<D>;
+    fn reduce_or<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> Self;
+    fn reduce_and<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> Self;
 }
 
 pub trait SatElement: IntElement {
@@ -224,10 +228,17 @@ pub trait MaskBackend<W: MaskWidth>: Copy {
     fn mask_andnot(self, a: Self::MaskRaw, b: Self::MaskRaw) -> Self::MaskRaw;
     fn mask_all(self, a: Self::MaskRaw) -> bool;
     fn mask_any(self, a: Self::MaskRaw) -> bool;
+    fn mask_to_bitmask(self, a: Self::MaskRaw) -> u64;
 }
 
 pub trait BytesBackend: Copy {
     type RawBytes: Copy + Debug + Send + Sync + 'static;
+    fn combine_shift_right_bytes(
+        self,
+        lo: Self::RawBytes,
+        hi: Self::RawBytes,
+        offset: usize,
+    ) -> Self::RawBytes;
     #[inline(always)]
     fn interleave_128_halves(
         self,
@@ -367,6 +378,7 @@ pub trait CompareBackend<T: ComparableElement>: LaneBackend<T> + MaskBackend<T::
 pub trait ArithBackend<T: ArithElement>: LaneBackend<T> {
     fn add(self, a: Self::Raw, b: Self::Raw) -> Self::Raw;
     fn sub(self, a: Self::Raw, b: Self::Raw) -> Self::Raw;
+    fn reduce_add(self, a: Self::Raw) -> T;
 }
 
 pub trait MulBackend<T: MulElement>: ArithBackend<T> {
@@ -421,6 +433,8 @@ pub trait IntBitBackend<T: IntElement>: CompareBackend<T> + MulBackend<T> {
     {
         generic_ops::shr_vec_default::<T, Self>(self, a, counts)
     }
+    fn reduce_or(self, a: Self::Raw) -> T;
+    fn reduce_and(self, a: Self::Raw) -> T;
 }
 
 pub trait SatBackend<T: SatElement>: IntBitBackend<T> {
@@ -466,13 +480,18 @@ pub trait I64ExtraBackend: LaneBackend<i64> + LaneBackend<f64> {
     fn i64_as_f64(self, a: <Self as LaneBackend<i64>>::Raw) -> <Self as LaneBackend<f64>>::Raw;
 }
 
-pub trait I16ExtraBackend: LaneBackend<i16> {
+pub trait I16ExtraBackend: LaneBackend<i16> + LaneBackend<i32> {
     fn i16_store_u8(self, a: <Self as LaneBackend<i16>>::Raw, dest: &mut [u8]);
     fn i16_mul_wide_take_high(
         self,
         a: <Self as LaneBackend<i16>>::Raw,
         b: <Self as LaneBackend<i16>>::Raw,
     ) -> <Self as LaneBackend<i16>>::Raw;
+    fn i16_madd_to_i32(
+        self,
+        a: <Self as LaneBackend<i16>>::Raw,
+        b: <Self as LaneBackend<i16>>::Raw,
+    ) -> <Self as LaneBackend<i32>>::Raw;
 }
 
 pub trait U8ExtraBackend: LaneBackend<u8> {
@@ -583,6 +602,7 @@ macro_rules! impl_mask_width {
             #[inline(always)] fn mask_andnot<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>) -> Self::Raw<D> { <D as MaskBackend<$w>>::mask_andnot(d, a, b) }
             #[inline(always)] fn mask_all<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> bool { <D as MaskBackend<$w>>::mask_all(d, a) }
             #[inline(always)] fn mask_any<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> bool { <D as MaskBackend<$w>>::mask_any(d, a) }
+            #[inline(always)] fn mask_to_bitmask<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> u64 { <D as MaskBackend<$w>>::mask_to_bitmask(d, a) }
         })*
     };
 }
@@ -663,6 +683,7 @@ macro_rules! impl_arith {
         $(impl ArithElement for $t {
             #[inline(always)] fn add<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>) -> Self::Raw<D> { <D as ArithBackend<Self>>::add(d, a, b) }
             #[inline(always)] fn sub<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, b: Self::Raw<D>) -> Self::Raw<D> { <D as ArithBackend<Self>>::sub(d, a, b) }
+            #[inline(always)] fn reduce_add<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> Self { <D as ArithBackend<Self>>::reduce_add(d, a) }
         })*
     };
 }
@@ -721,6 +742,8 @@ macro_rules! impl_int {
             #[inline(always)] fn shr<D: crate::SimdDescriptor, const N: u32>(d: D, a: Self::Raw<D>) -> Self::Raw<D> { <D as IntBitBackend<Self>>::shr::<N>(d, a) }
             #[inline(always)] fn shl_vec<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, c: Self::Raw<D>) -> Self::Raw<D> { <D as IntBitBackend<Self>>::shl_vec(d, a, c) }
             #[inline(always)] fn shr_vec<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>, c: Self::Raw<D>) -> Self::Raw<D> { <D as IntBitBackend<Self>>::shr_vec(d, a, c) }
+            #[inline(always)] fn reduce_or<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> Self { <D as IntBitBackend<Self>>::reduce_or(d, a) }
+            #[inline(always)] fn reduce_and<D: crate::SimdDescriptor>(d: D, a: Self::Raw<D>) -> Self { <D as IntBitBackend<Self>>::reduce_and(d, a) }
         })*
     };
 }

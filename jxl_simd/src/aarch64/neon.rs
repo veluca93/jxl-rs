@@ -20,6 +20,62 @@ use crate::{W8, W16, W32, W64, generic_ops};
 
 impl BytesBackend for NeonDescriptor {
     type RawBytes = uint8x16_t;
+    #[inline(always)]
+    fn combine_shift_right_bytes(
+        self,
+        lo: uint8x16_t,
+        hi: uint8x16_t,
+        offset: usize,
+    ) -> uint8x16_t {
+        match offset {
+            1 => neon_call!(self, |lo: uint8x16_t, hi: uint8x16_t| -> uint8x16_t {
+                vextq_u8::<1>(lo, hi)
+            }),
+            2 => neon_call!(self, |lo: uint8x16_t, hi: uint8x16_t| -> uint8x16_t {
+                vextq_u8::<2>(lo, hi)
+            }),
+            3 => neon_call!(self, |lo: uint8x16_t, hi: uint8x16_t| -> uint8x16_t {
+                vextq_u8::<3>(lo, hi)
+            }),
+            4 => neon_call!(self, |lo: uint8x16_t, hi: uint8x16_t| -> uint8x16_t {
+                vextq_u8::<4>(lo, hi)
+            }),
+            5 => neon_call!(self, |lo: uint8x16_t, hi: uint8x16_t| -> uint8x16_t {
+                vextq_u8::<5>(lo, hi)
+            }),
+            6 => neon_call!(self, |lo: uint8x16_t, hi: uint8x16_t| -> uint8x16_t {
+                vextq_u8::<6>(lo, hi)
+            }),
+            7 => neon_call!(self, |lo: uint8x16_t, hi: uint8x16_t| -> uint8x16_t {
+                vextq_u8::<7>(lo, hi)
+            }),
+            8 => neon_call!(self, |lo: uint8x16_t, hi: uint8x16_t| -> uint8x16_t {
+                vextq_u8::<8>(lo, hi)
+            }),
+            9 => neon_call!(self, |lo: uint8x16_t, hi: uint8x16_t| -> uint8x16_t {
+                vextq_u8::<9>(lo, hi)
+            }),
+            10 => neon_call!(self, |lo: uint8x16_t, hi: uint8x16_t| -> uint8x16_t {
+                vextq_u8::<10>(lo, hi)
+            }),
+            11 => neon_call!(self, |lo: uint8x16_t, hi: uint8x16_t| -> uint8x16_t {
+                vextq_u8::<11>(lo, hi)
+            }),
+            12 => neon_call!(self, |lo: uint8x16_t, hi: uint8x16_t| -> uint8x16_t {
+                vextq_u8::<12>(lo, hi)
+            }),
+            13 => neon_call!(self, |lo: uint8x16_t, hi: uint8x16_t| -> uint8x16_t {
+                vextq_u8::<13>(lo, hi)
+            }),
+            14 => neon_call!(self, |lo: uint8x16_t, hi: uint8x16_t| -> uint8x16_t {
+                vextq_u8::<14>(lo, hi)
+            }),
+            15 => neon_call!(self, |lo: uint8x16_t, hi: uint8x16_t| -> uint8x16_t {
+                vextq_u8::<15>(lo, hi)
+            }),
+            _ => unreachable!(),
+        }
+    }
 }
 
 impl DescriptorSealed for NeonDescriptor {
@@ -80,6 +136,16 @@ impl MaskBackend<W8> for NeonDescriptor {
     fn mask_any(self, a: uint8x16_t) -> bool {
         neon_call!(self, |a: uint8x16_t| -> bool { vmaxvq_u8(a) != 0 })
     }
+    #[inline(always)]
+    fn mask_to_bitmask(self, a: uint8x16_t) -> u64 {
+        neon_call!(self, |a: uint8x16_t| -> u64 {
+            let b = vandq_u8(
+                a,
+                arch_ops::vld1q_u8(&[1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128]),
+            );
+            (vaddv_u8(vget_low_u8(b)) as u64) | ((vaddv_u8(vget_high_u8(b)) as u64) << 8)
+        })
+    }
 }
 
 impl MaskBackend<W16> for NeonDescriptor {
@@ -121,6 +187,15 @@ impl MaskBackend<W16> for NeonDescriptor {
     fn mask_any(self, a: uint16x8_t) -> bool {
         neon_call!(self, |a: uint16x8_t| -> bool { vmaxvq_u16(a) != 0 })
     }
+    #[inline(always)]
+    fn mask_to_bitmask(self, a: uint16x8_t) -> u64 {
+        neon_call!(self, |a: uint16x8_t| -> u64 {
+            vaddvq_u16(vandq_u16(
+                a,
+                arch_ops::vld1q_u16(&[1, 2, 4, 8, 16, 32, 64, 128]),
+            )) as u64
+        })
+    }
 }
 
 impl MaskBackend<W32> for NeonDescriptor {
@@ -161,6 +236,12 @@ impl MaskBackend<W32> for NeonDescriptor {
     #[inline(always)]
     fn mask_any(self, a: uint32x4_t) -> bool {
         neon_call!(self, |a: uint32x4_t| -> bool { vmaxvq_u32(a) != 0 })
+    }
+    #[inline(always)]
+    fn mask_to_bitmask(self, a: uint32x4_t) -> u64 {
+        neon_call!(self, |a: uint32x4_t| -> u64 {
+            vaddvq_u32(vandq_u32(a, arch_ops::vld1q_u32(&[1, 2, 4, 8]))) as u64
+        })
     }
 }
 
@@ -207,6 +288,12 @@ impl MaskBackend<W64> for NeonDescriptor {
     fn mask_any(self, a: uint64x2_t) -> bool {
         neon_call!(self, |a: uint64x2_t| -> bool {
             vmaxvq_u32(vreinterpretq_u32_u64(a)) != 0
+        })
+    }
+    #[inline(always)]
+    fn mask_to_bitmask(self, a: uint64x2_t) -> u64 {
+        neon_call!(self, |a: uint64x2_t| -> u64 {
+            vaddvq_u64(vandq_u64(a, arch_ops::vld1q_u64(&[1, 2])))
         })
     }
 }
@@ -442,6 +529,10 @@ impl ArithBackend<f32> for NeonDescriptor {
         neon_call!(self, |a: float32x4_t, b: float32x4_t| -> float32x4_t {
             vsubq_f32(a, b)
         })
+    }
+    #[inline(always)]
+    fn reduce_add(self, a: float32x4_t) -> f32 {
+        neon_call!(self, |a: float32x4_t| -> f32 { vaddvq_f32(a) })
     }
 }
 
@@ -750,6 +841,10 @@ impl ArithBackend<f64> for NeonDescriptor {
             vsubq_f64(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: float64x2_t) -> f64 {
+        neon_call!(self, |a: float64x2_t| -> f64 { vaddvq_f64(a) })
+    }
 }
 
 impl MulBackend<f64> for NeonDescriptor {
@@ -1040,6 +1135,10 @@ impl ArithBackend<i8> for NeonDescriptor {
             vsubq_s8(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: int8x16_t) -> i8 {
+        neon_call!(self, |a: int8x16_t| -> i8 { vaddvq_s8(a) })
+    }
 }
 
 impl MulBackend<i8> for NeonDescriptor {
@@ -1098,7 +1197,7 @@ impl IntBitBackend<i8> for NeonDescriptor {
     #[inline(always)]
     fn shl<const AMOUNT: u32>(self, a: int8x16_t) -> int8x16_t {
         neon_shift!(self, AMOUNT, |a: int8x16_t| -> int8x16_t {
-            vshlq_s8(a, vdupq_n_s8((AMOUNT as i32) as i8))
+            vshlq_s8(a, vdupq_n_s8(AMOUNT as i8))
         })
     }
     #[inline(always)]
@@ -1117,6 +1216,28 @@ impl IntBitBackend<i8> for NeonDescriptor {
     fn shr_vec(self, a: int8x16_t, counts: int8x16_t) -> int8x16_t {
         neon_call!(self, |a: int8x16_t, counts: int8x16_t| -> int8x16_t {
             vshlq_s8(a, vnegq_s8(counts))
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: int8x16_t) -> i8 {
+        neon_call!(self, |a: int8x16_t| -> i8 {
+            let u = vreinterpretq_u64_s8(a);
+            let q = vget_lane_u64::<0>(vorr_u64(vget_low_u64(u), vget_high_u64(u)));
+            let q = q | (q >> 32);
+            let q = q | (q >> 16);
+            let q = q | (q >> 8);
+            q as i8
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: int8x16_t) -> i8 {
+        neon_call!(self, |a: int8x16_t| -> i8 {
+            let u = vreinterpretq_u64_s8(a);
+            let q = vget_lane_u64::<0>(vand_u64(vget_low_u64(u), vget_high_u64(u)));
+            let q = q & (q >> 32);
+            let q = q & (q >> 16);
+            let q = q & (q >> 8);
+            q as i8
         })
     }
 }
@@ -1354,6 +1475,10 @@ impl ArithBackend<u8> for NeonDescriptor {
             vsubq_u8(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: uint8x16_t) -> u8 {
+        neon_call!(self, |a: uint8x16_t| -> u8 { vaddvq_u8(a) })
+    }
 }
 
 impl MulBackend<u8> for NeonDescriptor {
@@ -1397,7 +1522,7 @@ impl IntBitBackend<u8> for NeonDescriptor {
     #[inline(always)]
     fn shl<const AMOUNT: u32>(self, a: uint8x16_t) -> uint8x16_t {
         neon_shift!(self, AMOUNT, |a: uint8x16_t| -> uint8x16_t {
-            vshlq_u8(a, vdupq_n_s8((AMOUNT as i32) as i8))
+            vshlq_u8(a, vdupq_n_s8(AMOUNT as i8))
         })
     }
     #[inline(always)]
@@ -1416,6 +1541,28 @@ impl IntBitBackend<u8> for NeonDescriptor {
     fn shr_vec(self, a: uint8x16_t, counts: uint8x16_t) -> uint8x16_t {
         neon_call!(self, |a: uint8x16_t, counts: uint8x16_t| -> uint8x16_t {
             vshlq_u8(a, vnegq_s8(vreinterpretq_s8_u8(counts)))
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: uint8x16_t) -> u8 {
+        neon_call!(self, |a: uint8x16_t| -> u8 {
+            let u = vreinterpretq_u64_u8(a);
+            let q = vget_lane_u64::<0>(vorr_u64(vget_low_u64(u), vget_high_u64(u)));
+            let q = q | (q >> 32);
+            let q = q | (q >> 16);
+            let q = q | (q >> 8);
+            q as u8
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: uint8x16_t) -> u8 {
+        neon_call!(self, |a: uint8x16_t| -> u8 {
+            let u = vreinterpretq_u64_u8(a);
+            let q = vget_lane_u64::<0>(vand_u64(vget_low_u64(u), vget_high_u64(u)));
+            let q = q & (q >> 32);
+            let q = q & (q >> 16);
+            let q = q & (q >> 8);
+            q as u8
         })
     }
 }
@@ -1650,6 +1797,10 @@ impl ArithBackend<i16> for NeonDescriptor {
             vsubq_s16(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: int16x8_t) -> i16 {
+        neon_call!(self, |a: int16x8_t| -> i16 { vaddvq_s16(a) })
+    }
 }
 
 impl MulBackend<i16> for NeonDescriptor {
@@ -1708,7 +1859,7 @@ impl IntBitBackend<i16> for NeonDescriptor {
     #[inline(always)]
     fn shl<const AMOUNT: u32>(self, a: int16x8_t) -> int16x8_t {
         neon_shift!(self, AMOUNT, |a: int16x8_t| -> int16x8_t {
-            vshlq_s16(a, vdupq_n_s16((AMOUNT as i32) as i16))
+            vshlq_s16(a, vdupq_n_s16(AMOUNT as i16))
         })
     }
     #[inline(always)]
@@ -1727,6 +1878,26 @@ impl IntBitBackend<i16> for NeonDescriptor {
     fn shr_vec(self, a: int16x8_t, counts: int16x8_t) -> int16x8_t {
         neon_call!(self, |a: int16x8_t, counts: int16x8_t| -> int16x8_t {
             vshlq_s16(a, vnegq_s16(counts))
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: int16x8_t) -> i16 {
+        neon_call!(self, |a: int16x8_t| -> i16 {
+            let u = vreinterpretq_u64_s16(a);
+            let q = vget_lane_u64::<0>(vorr_u64(vget_low_u64(u), vget_high_u64(u)));
+            let q = q | (q >> 32);
+            let q = q | (q >> 16);
+            q as i16
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: int16x8_t) -> i16 {
+        neon_call!(self, |a: int16x8_t| -> i16 {
+            let u = vreinterpretq_u64_s16(a);
+            let q = vget_lane_u64::<0>(vand_u64(vget_low_u64(u), vget_high_u64(u)));
+            let q = q & (q >> 32);
+            let q = q & (q >> 16);
+            q as i16
         })
     }
 }
@@ -1971,6 +2142,10 @@ impl ArithBackend<u16> for NeonDescriptor {
             vsubq_u16(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: uint16x8_t) -> u16 {
+        neon_call!(self, |a: uint16x8_t| -> u16 { vaddvq_u16(a) })
+    }
 }
 
 impl MulBackend<u16> for NeonDescriptor {
@@ -2014,7 +2189,7 @@ impl IntBitBackend<u16> for NeonDescriptor {
     #[inline(always)]
     fn shl<const AMOUNT: u32>(self, a: uint16x8_t) -> uint16x8_t {
         neon_shift!(self, AMOUNT, |a: uint16x8_t| -> uint16x8_t {
-            vshlq_u16(a, vdupq_n_s16((AMOUNT as i32) as i16))
+            vshlq_u16(a, vdupq_n_s16(AMOUNT as i16))
         })
     }
     #[inline(always)]
@@ -2033,6 +2208,26 @@ impl IntBitBackend<u16> for NeonDescriptor {
     fn shr_vec(self, a: uint16x8_t, counts: uint16x8_t) -> uint16x8_t {
         neon_call!(self, |a: uint16x8_t, counts: uint16x8_t| -> uint16x8_t {
             vshlq_u16(a, vnegq_s16(vreinterpretq_s16_u16(counts)))
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: uint16x8_t) -> u16 {
+        neon_call!(self, |a: uint16x8_t| -> u16 {
+            let u = vreinterpretq_u64_u16(a);
+            let q = vget_lane_u64::<0>(vorr_u64(vget_low_u64(u), vget_high_u64(u)));
+            let q = q | (q >> 32);
+            let q = q | (q >> 16);
+            q as u16
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: uint16x8_t) -> u16 {
+        neon_call!(self, |a: uint16x8_t| -> u16 {
+            let u = vreinterpretq_u64_u16(a);
+            let q = vget_lane_u64::<0>(vand_u64(vget_low_u64(u), vget_high_u64(u)));
+            let q = q & (q >> 32);
+            let q = q & (q >> 16);
+            q as u16
         })
     }
 }
@@ -2267,6 +2462,10 @@ impl ArithBackend<i32> for NeonDescriptor {
             vsubq_s32(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: int32x4_t) -> i32 {
+        neon_call!(self, |a: int32x4_t| -> i32 { vaddvq_s32(a) })
+    }
 }
 
 impl MulBackend<i32> for NeonDescriptor {
@@ -2325,13 +2524,13 @@ impl IntBitBackend<i32> for NeonDescriptor {
     #[inline(always)]
     fn shl<const AMOUNT: u32>(self, a: int32x4_t) -> int32x4_t {
         neon_shift!(self, AMOUNT, |a: int32x4_t| -> int32x4_t {
-            vshlq_s32(a, vdupq_n_s32((AMOUNT as i32) as i32))
+            vshlq_s32(a, vdupq_n_s32(AMOUNT as i32))
         })
     }
     #[inline(always)]
     fn shr<const AMOUNT: u32>(self, a: int32x4_t) -> int32x4_t {
         neon_shift!(self, AMOUNT, |a: int32x4_t| -> int32x4_t {
-            vshlq_s32(a, vdupq_n_s32((-(AMOUNT as i32)) as i32))
+            vshlq_s32(a, vdupq_n_s32(-(AMOUNT as i32)))
         })
     }
     #[inline(always)]
@@ -2344,6 +2543,24 @@ impl IntBitBackend<i32> for NeonDescriptor {
     fn shr_vec(self, a: int32x4_t, counts: int32x4_t) -> int32x4_t {
         neon_call!(self, |a: int32x4_t, counts: int32x4_t| -> int32x4_t {
             vshlq_s32(a, vnegq_s32(counts))
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: int32x4_t) -> i32 {
+        neon_call!(self, |a: int32x4_t| -> i32 {
+            let u = vreinterpretq_u64_s32(a);
+            let q = vget_lane_u64::<0>(vorr_u64(vget_low_u64(u), vget_high_u64(u)));
+            let q = q | (q >> 32);
+            q as i32
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: int32x4_t) -> i32 {
+        neon_call!(self, |a: int32x4_t| -> i32 {
+            let u = vreinterpretq_u64_s32(a);
+            let q = vget_lane_u64::<0>(vand_u64(vget_low_u64(u), vget_high_u64(u)));
+            let q = q & (q >> 32);
+            q as i32
         })
     }
 }
@@ -2573,6 +2790,10 @@ impl ArithBackend<u32> for NeonDescriptor {
             vsubq_u32(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: uint32x4_t) -> u32 {
+        neon_call!(self, |a: uint32x4_t| -> u32 { vaddvq_u32(a) })
+    }
 }
 
 impl MulBackend<u32> for NeonDescriptor {
@@ -2616,13 +2837,13 @@ impl IntBitBackend<u32> for NeonDescriptor {
     #[inline(always)]
     fn shl<const AMOUNT: u32>(self, a: uint32x4_t) -> uint32x4_t {
         neon_shift!(self, AMOUNT, |a: uint32x4_t| -> uint32x4_t {
-            vshlq_u32(a, vdupq_n_s32((AMOUNT as i32) as i32))
+            vshlq_u32(a, vdupq_n_s32(AMOUNT as i32))
         })
     }
     #[inline(always)]
     fn shr<const AMOUNT: u32>(self, a: uint32x4_t) -> uint32x4_t {
         neon_shift!(self, AMOUNT, |a: uint32x4_t| -> uint32x4_t {
-            vshlq_u32(a, vdupq_n_s32((-(AMOUNT as i32)) as i32))
+            vshlq_u32(a, vdupq_n_s32(-(AMOUNT as i32)))
         })
     }
     #[inline(always)]
@@ -2635,6 +2856,24 @@ impl IntBitBackend<u32> for NeonDescriptor {
     fn shr_vec(self, a: uint32x4_t, counts: uint32x4_t) -> uint32x4_t {
         neon_call!(self, |a: uint32x4_t, counts: uint32x4_t| -> uint32x4_t {
             vshlq_u32(a, vnegq_s32(vreinterpretq_s32_u32(counts)))
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: uint32x4_t) -> u32 {
+        neon_call!(self, |a: uint32x4_t| -> u32 {
+            let u = vreinterpretq_u64_u32(a);
+            let q = vget_lane_u64::<0>(vorr_u64(vget_low_u64(u), vget_high_u64(u)));
+            let q = q | (q >> 32);
+            q as u32
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: uint32x4_t) -> u32 {
+        neon_call!(self, |a: uint32x4_t| -> u32 {
+            let u = vreinterpretq_u64_u32(a);
+            let q = vget_lane_u64::<0>(vand_u64(vget_low_u64(u), vget_high_u64(u)));
+            let q = q & (q >> 32);
+            q as u32
         })
     }
 }
@@ -2854,6 +3093,10 @@ impl ArithBackend<i64> for NeonDescriptor {
             vsubq_s64(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: int64x2_t) -> i64 {
+        neon_call!(self, |a: int64x2_t| -> i64 { vaddvq_s64(a) })
+    }
 }
 
 impl MulBackend<i64> for NeonDescriptor {
@@ -2925,7 +3168,7 @@ impl IntBitBackend<i64> for NeonDescriptor {
     #[inline(always)]
     fn shl<const AMOUNT: u32>(self, a: int64x2_t) -> int64x2_t {
         neon_shift!(self, AMOUNT, |a: int64x2_t| -> int64x2_t {
-            vshlq_s64(a, vdupq_n_s64((AMOUNT as i32) as i64))
+            vshlq_s64(a, vdupq_n_s64(AMOUNT as i64))
         })
     }
     #[inline(always)]
@@ -2944,6 +3187,20 @@ impl IntBitBackend<i64> for NeonDescriptor {
     fn shr_vec(self, a: int64x2_t, counts: int64x2_t) -> int64x2_t {
         neon_call!(self, |a: int64x2_t, counts: int64x2_t| -> int64x2_t {
             vshlq_s64(a, vnegq_s64(counts))
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: int64x2_t) -> i64 {
+        neon_call!(self, |a: int64x2_t| -> i64 {
+            let u = vreinterpretq_u64_s64(a);
+            (vget_lane_u64::<0>(vorr_u64(vget_low_u64(u), vget_high_u64(u)))) as i64
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: int64x2_t) -> i64 {
+        neon_call!(self, |a: int64x2_t| -> i64 {
+            let u = vreinterpretq_u64_s64(a);
+            (vget_lane_u64::<0>(vand_u64(vget_low_u64(u), vget_high_u64(u)))) as i64
         })
     }
 }
@@ -3173,6 +3430,10 @@ impl ArithBackend<u64> for NeonDescriptor {
             vsubq_u64(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: uint64x2_t) -> u64 {
+        neon_call!(self, |a: uint64x2_t| -> u64 { vaddvq_u64(a) })
+    }
 }
 
 impl MulBackend<u64> for NeonDescriptor {
@@ -3226,7 +3487,7 @@ impl IntBitBackend<u64> for NeonDescriptor {
     #[inline(always)]
     fn shl<const AMOUNT: u32>(self, a: uint64x2_t) -> uint64x2_t {
         neon_shift!(self, AMOUNT, |a: uint64x2_t| -> uint64x2_t {
-            vshlq_u64(a, vdupq_n_s64((AMOUNT as i32) as i64))
+            vshlq_u64(a, vdupq_n_s64(AMOUNT as i64))
         })
     }
     #[inline(always)]
@@ -3245,6 +3506,18 @@ impl IntBitBackend<u64> for NeonDescriptor {
     fn shr_vec(self, a: uint64x2_t, counts: uint64x2_t) -> uint64x2_t {
         neon_call!(self, |a: uint64x2_t, counts: uint64x2_t| -> uint64x2_t {
             vshlq_u64(a, vnegq_s64(vreinterpretq_s64_u64(counts)))
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: uint64x2_t) -> u64 {
+        neon_call!(self, |a: uint64x2_t| -> u64 {
+            vget_lane_u64::<0>(vorr_u64(vget_low_u64(a), vget_high_u64(a)))
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: uint64x2_t) -> u64 {
+        neon_call!(self, |a: uint64x2_t| -> u64 {
+            vget_lane_u64::<0>(vand_u64(vget_low_u64(a), vget_high_u64(a)))
         })
     }
 }
@@ -3379,6 +3652,15 @@ impl I16ExtraBackend for NeonDescriptor {
             let l = vreinterpretq_s16_s32(vmull_s16(vget_low_s16(a), vget_low_s16(b)));
             let h = vreinterpretq_s16_s32(vmull_high_s16(a, b));
             vuzp2q_s16(l, h)
+        })
+    }
+    #[inline(always)]
+    fn i16_madd_to_i32(self, a: int16x8_t, b: int16x8_t) -> int32x4_t {
+        neon_call!(self, |a: int16x8_t, b: int16x8_t| -> int32x4_t {
+            vpaddq_s32(
+                vmull_s16(vget_low_s16(a), vget_low_s16(b)),
+                vmull_high_s16(a, b),
+            )
         })
     }
 }

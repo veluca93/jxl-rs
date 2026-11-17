@@ -20,6 +20,73 @@ use crate::{W8, W16, W32, W64, generic_ops};
 
 impl BytesBackend for Simd128Descriptor {
     type RawBytes = v128;
+    #[inline(always)]
+    fn combine_shift_right_bytes(self, lo: v128, hi: v128, offset: usize) -> v128 {
+        match offset {
+            1 => simd128_call!(self, |lo: v128, hi: v128| -> v128 {
+                i8x16_shuffle::<1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16>(lo, hi)
+            }),
+            2 => simd128_call!(self, |lo: v128, hi: v128| -> v128 {
+                i8x16_shuffle::<2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17>(lo, hi)
+            }),
+            3 => simd128_call!(self, |lo: v128, hi: v128| -> v128 {
+                i8x16_shuffle::<3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18>(lo, hi)
+            }),
+            4 => simd128_call!(self, |lo: v128, hi: v128| -> v128 {
+                i8x16_shuffle::<4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19>(lo, hi)
+            }),
+            5 => simd128_call!(self, |lo: v128, hi: v128| -> v128 {
+                i8x16_shuffle::<5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20>(lo, hi)
+            }),
+            6 => simd128_call!(self, |lo: v128, hi: v128| -> v128 {
+                i8x16_shuffle::<6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21>(lo, hi)
+            }),
+            7 => simd128_call!(self, |lo: v128, hi: v128| -> v128 {
+                i8x16_shuffle::<7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22>(lo, hi)
+            }),
+            8 => simd128_call!(self, |lo: v128, hi: v128| -> v128 {
+                i8x16_shuffle::<8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23>(
+                    lo, hi,
+                )
+            }),
+            9 => simd128_call!(self, |lo: v128, hi: v128| -> v128 {
+                i8x16_shuffle::<9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24>(
+                    lo, hi,
+                )
+            }),
+            10 => simd128_call!(self, |lo: v128, hi: v128| -> v128 {
+                i8x16_shuffle::<10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25>(
+                    lo, hi,
+                )
+            }),
+            11 => simd128_call!(self, |lo: v128, hi: v128| -> v128 {
+                i8x16_shuffle::<11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26>(
+                    lo, hi,
+                )
+            }),
+            12 => simd128_call!(self, |lo: v128, hi: v128| -> v128 {
+                i8x16_shuffle::<12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27>(
+                    lo, hi,
+                )
+            }),
+            13 => simd128_call!(self, |lo: v128, hi: v128| -> v128 {
+                i8x16_shuffle::<13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28>(
+                    lo, hi,
+                )
+            }),
+            14 => simd128_call!(self, |lo: v128, hi: v128| -> v128 {
+                i8x16_shuffle::<14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29>(
+                    lo, hi,
+                )
+            }),
+            15 => simd128_call!(self, |lo: v128, hi: v128| -> v128 {
+                i8x16_shuffle::<15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30>(
+                    lo, hi,
+                )
+            }),
+            _ => unreachable!(),
+        }
+    }
 }
 
 impl DescriptorSealed for Simd128Descriptor {
@@ -72,6 +139,10 @@ impl MaskBackend<W8> for Simd128Descriptor {
     fn mask_any(self, a: v128) -> bool {
         simd128_call!(self, |a: v128| -> bool { v128_any_true(a) })
     }
+    #[inline(always)]
+    fn mask_to_bitmask(self, a: v128) -> u64 {
+        simd128_call!(self, |a: v128| -> u64 { u8x16_bitmask(a) as u64 })
+    }
 }
 
 impl MaskBackend<W16> for Simd128Descriptor {
@@ -104,6 +175,10 @@ impl MaskBackend<W16> for Simd128Descriptor {
     #[inline(always)]
     fn mask_any(self, a: v128) -> bool {
         simd128_call!(self, |a: v128| -> bool { v128_any_true(a) })
+    }
+    #[inline(always)]
+    fn mask_to_bitmask(self, a: v128) -> u64 {
+        simd128_call!(self, |a: v128| -> u64 { u16x8_bitmask(a) as u64 })
     }
 }
 
@@ -138,6 +213,10 @@ impl MaskBackend<W32> for Simd128Descriptor {
     fn mask_any(self, a: v128) -> bool {
         simd128_call!(self, |a: v128| -> bool { v128_any_true(a) })
     }
+    #[inline(always)]
+    fn mask_to_bitmask(self, a: v128) -> u64 {
+        simd128_call!(self, |a: v128| -> u64 { u32x4_bitmask(a) as u64 })
+    }
 }
 
 impl MaskBackend<W64> for Simd128Descriptor {
@@ -170,6 +249,10 @@ impl MaskBackend<W64> for Simd128Descriptor {
     #[inline(always)]
     fn mask_any(self, a: v128) -> bool {
         simd128_call!(self, |a: v128| -> bool { v128_any_true(a) })
+    }
+    #[inline(always)]
+    fn mask_to_bitmask(self, a: v128) -> u64 {
+        simd128_call!(self, |a: v128| -> u64 { u64x2_bitmask(a) as u64 })
     }
 }
 
@@ -312,6 +395,13 @@ impl ArithBackend<f32> for Simd128Descriptor {
     #[inline(always)]
     fn sub(self, a: v128, b: v128) -> v128 {
         simd128_call!(self, |a: v128, b: v128| -> v128 { f32x4_sub(a, b) })
+    }
+    #[inline(always)]
+    fn reduce_add(self, a: v128) -> f32 {
+        simd128_call!(self, |a: v128| -> f32 {
+            let s = f32x4_add(a, i64x2_shuffle::<1, 0>(a, a));
+            f32x4_extract_lane::<0>(f32x4_add(s, i32x4_shuffle::<1, 0, 3, 2>(s, s)))
+        })
     }
 }
 
@@ -522,6 +612,12 @@ impl ArithBackend<f64> for Simd128Descriptor {
     fn sub(self, a: v128, b: v128) -> v128 {
         simd128_call!(self, |a: v128, b: v128| -> v128 { f64x2_sub(a, b) })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: v128) -> f64 {
+        simd128_call!(self, |a: v128| -> f64 {
+            f64x2_extract_lane::<0>(f64x2_add(a, i64x2_shuffle::<1, 0>(a, a)))
+        })
+    }
 }
 
 impl MulBackend<f64> for Simd128Descriptor {
@@ -731,6 +827,14 @@ impl ArithBackend<i8> for Simd128Descriptor {
     fn sub(self, a: v128, b: v128) -> v128 {
         simd128_call!(self, |a: v128, b: v128| -> v128 { i8x16_sub(a, b) })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: v128) -> i8 {
+        simd128_call!(self, |a: v128| -> i8 {
+            let p = u32x4_extadd_pairwise_u16x8(u16x8_extadd_pairwise_u8x16(a));
+            let s = i32x4_add(p, i64x2_shuffle::<1, 0>(p, p));
+            u32x4_extract_lane::<0>(i32x4_add(s, i32x4_shuffle::<1, 0, 3, 2>(s, s))) as i8
+        })
+    }
 }
 
 impl MulBackend<i8> for Simd128Descriptor {
@@ -791,6 +895,26 @@ impl IntBitBackend<i8> for Simd128Descriptor {
     #[inline(always)]
     fn shr<const AMOUNT: u32>(self, a: v128) -> v128 {
         simd128_shift!(self, AMOUNT, |a: v128| -> v128 { i8x16_shr(a, AMOUNT) })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: v128) -> i8 {
+        simd128_call!(self, |a: v128| -> i8 {
+            let q = u64x2_extract_lane::<0>(a) | u64x2_extract_lane::<1>(a);
+            let q = q | (q >> 32);
+            let q = q | (q >> 16);
+            let q = q | (q >> 8);
+            q as i8
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: v128) -> i8 {
+        simd128_call!(self, |a: v128| -> i8 {
+            let q = u64x2_extract_lane::<0>(a) & u64x2_extract_lane::<1>(a);
+            let q = q & (q >> 32);
+            let q = q & (q >> 16);
+            let q = q & (q >> 8);
+            q as i8
+        })
     }
 }
 
@@ -945,6 +1069,14 @@ impl ArithBackend<u8> for Simd128Descriptor {
     fn sub(self, a: v128, b: v128) -> v128 {
         simd128_call!(self, |a: v128, b: v128| -> v128 { i8x16_sub(a, b) })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: v128) -> u8 {
+        simd128_call!(self, |a: v128| -> u8 {
+            let p = u32x4_extadd_pairwise_u16x8(u16x8_extadd_pairwise_u8x16(a));
+            let s = i32x4_add(p, i64x2_shuffle::<1, 0>(p, p));
+            u32x4_extract_lane::<0>(i32x4_add(s, i32x4_shuffle::<1, 0, 3, 2>(s, s))) as u8
+        })
+    }
 }
 
 impl MulBackend<u8> for Simd128Descriptor {
@@ -990,6 +1122,26 @@ impl IntBitBackend<u8> for Simd128Descriptor {
     #[inline(always)]
     fn shr<const AMOUNT: u32>(self, a: v128) -> v128 {
         simd128_shift!(self, AMOUNT, |a: v128| -> v128 { u8x16_shr(a, AMOUNT) })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: v128) -> u8 {
+        simd128_call!(self, |a: v128| -> u8 {
+            let q = u64x2_extract_lane::<0>(a) | u64x2_extract_lane::<1>(a);
+            let q = q | (q >> 32);
+            let q = q | (q >> 16);
+            let q = q | (q >> 8);
+            q as u8
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: v128) -> u8 {
+        simd128_call!(self, |a: v128| -> u8 {
+            let q = u64x2_extract_lane::<0>(a) & u64x2_extract_lane::<1>(a);
+            let q = q & (q >> 32);
+            let q = q & (q >> 16);
+            let q = q & (q >> 8);
+            q as u8
+        })
     }
 }
 
@@ -1144,6 +1296,14 @@ impl ArithBackend<i16> for Simd128Descriptor {
     fn sub(self, a: v128, b: v128) -> v128 {
         simd128_call!(self, |a: v128, b: v128| -> v128 { i16x8_sub(a, b) })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: v128) -> i16 {
+        simd128_call!(self, |a: v128| -> i16 {
+            let p = u32x4_extadd_pairwise_u16x8(a);
+            let s = i32x4_add(p, i64x2_shuffle::<1, 0>(p, p));
+            u32x4_extract_lane::<0>(i32x4_add(s, i32x4_shuffle::<1, 0, 3, 2>(s, s))) as i16
+        })
+    }
 }
 
 impl MulBackend<i16> for Simd128Descriptor {
@@ -1198,6 +1358,24 @@ impl IntBitBackend<i16> for Simd128Descriptor {
     #[inline(always)]
     fn shr<const AMOUNT: u32>(self, a: v128) -> v128 {
         simd128_shift!(self, AMOUNT, |a: v128| -> v128 { i16x8_shr(a, AMOUNT) })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: v128) -> i16 {
+        simd128_call!(self, |a: v128| -> i16 {
+            let q = u64x2_extract_lane::<0>(a) | u64x2_extract_lane::<1>(a);
+            let q = q | (q >> 32);
+            let q = q | (q >> 16);
+            q as i16
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: v128) -> i16 {
+        simd128_call!(self, |a: v128| -> i16 {
+            let q = u64x2_extract_lane::<0>(a) & u64x2_extract_lane::<1>(a);
+            let q = q & (q >> 32);
+            let q = q & (q >> 16);
+            q as i16
+        })
     }
 }
 
@@ -1352,6 +1530,14 @@ impl ArithBackend<u16> for Simd128Descriptor {
     fn sub(self, a: v128, b: v128) -> v128 {
         simd128_call!(self, |a: v128, b: v128| -> v128 { i16x8_sub(a, b) })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: v128) -> u16 {
+        simd128_call!(self, |a: v128| -> u16 {
+            let p = u32x4_extadd_pairwise_u16x8(a);
+            let s = i32x4_add(p, i64x2_shuffle::<1, 0>(p, p));
+            u32x4_extract_lane::<0>(i32x4_add(s, i32x4_shuffle::<1, 0, 3, 2>(s, s))) as u16
+        })
+    }
 }
 
 impl MulBackend<u16> for Simd128Descriptor {
@@ -1391,6 +1577,24 @@ impl IntBitBackend<u16> for Simd128Descriptor {
     #[inline(always)]
     fn shr<const AMOUNT: u32>(self, a: v128) -> v128 {
         simd128_shift!(self, AMOUNT, |a: v128| -> v128 { u16x8_shr(a, AMOUNT) })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: v128) -> u16 {
+        simd128_call!(self, |a: v128| -> u16 {
+            let q = u64x2_extract_lane::<0>(a) | u64x2_extract_lane::<1>(a);
+            let q = q | (q >> 32);
+            let q = q | (q >> 16);
+            q as u16
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: v128) -> u16 {
+        simd128_call!(self, |a: v128| -> u16 {
+            let q = u64x2_extract_lane::<0>(a) & u64x2_extract_lane::<1>(a);
+            let q = q & (q >> 32);
+            let q = q & (q >> 16);
+            q as u16
+        })
     }
 }
 
@@ -1545,6 +1749,13 @@ impl ArithBackend<i32> for Simd128Descriptor {
     fn sub(self, a: v128, b: v128) -> v128 {
         simd128_call!(self, |a: v128, b: v128| -> v128 { i32x4_sub(a, b) })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: v128) -> i32 {
+        simd128_call!(self, |a: v128| -> i32 {
+            let s = i32x4_add(a, i64x2_shuffle::<1, 0>(a, a));
+            i32x4_extract_lane::<0>(i32x4_add(s, i32x4_shuffle::<1, 0, 3, 2>(s, s)))
+        })
+    }
 }
 
 impl MulBackend<i32> for Simd128Descriptor {
@@ -1599,6 +1810,22 @@ impl IntBitBackend<i32> for Simd128Descriptor {
     #[inline(always)]
     fn shr<const AMOUNT: u32>(self, a: v128) -> v128 {
         simd128_shift!(self, AMOUNT, |a: v128| -> v128 { i32x4_shr(a, AMOUNT) })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: v128) -> i32 {
+        simd128_call!(self, |a: v128| -> i32 {
+            let q = u64x2_extract_lane::<0>(a) | u64x2_extract_lane::<1>(a);
+            let q = q | (q >> 32);
+            q as i32
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: v128) -> i32 {
+        simd128_call!(self, |a: v128| -> i32 {
+            let q = u64x2_extract_lane::<0>(a) & u64x2_extract_lane::<1>(a);
+            let q = q & (q >> 32);
+            q as i32
+        })
     }
 }
 
@@ -1742,6 +1969,13 @@ impl ArithBackend<u32> for Simd128Descriptor {
     fn sub(self, a: v128, b: v128) -> v128 {
         simd128_call!(self, |a: v128, b: v128| -> v128 { i32x4_sub(a, b) })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: v128) -> u32 {
+        simd128_call!(self, |a: v128| -> u32 {
+            let s = i32x4_add(a, i64x2_shuffle::<1, 0>(a, a));
+            u32x4_extract_lane::<0>(i32x4_add(s, i32x4_shuffle::<1, 0, 3, 2>(s, s)))
+        })
+    }
 }
 
 impl MulBackend<u32> for Simd128Descriptor {
@@ -1781,6 +2015,22 @@ impl IntBitBackend<u32> for Simd128Descriptor {
     #[inline(always)]
     fn shr<const AMOUNT: u32>(self, a: v128) -> v128 {
         simd128_shift!(self, AMOUNT, |a: v128| -> v128 { u32x4_shr(a, AMOUNT) })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: v128) -> u32 {
+        simd128_call!(self, |a: v128| -> u32 {
+            let q = u64x2_extract_lane::<0>(a) | u64x2_extract_lane::<1>(a);
+            let q = q | (q >> 32);
+            q as u32
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: v128) -> u32 {
+        simd128_call!(self, |a: v128| -> u32 {
+            let q = u64x2_extract_lane::<0>(a) & u64x2_extract_lane::<1>(a);
+            let q = q & (q >> 32);
+            q as u32
+        })
     }
 }
 
@@ -1928,6 +2178,12 @@ impl ArithBackend<i64> for Simd128Descriptor {
     fn sub(self, a: v128, b: v128) -> v128 {
         simd128_call!(self, |a: v128, b: v128| -> v128 { i64x2_sub(a, b) })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: v128) -> i64 {
+        simd128_call!(self, |a: v128| -> i64 {
+            i64x2_extract_lane::<0>(i64x2_add(a, i64x2_shuffle::<1, 0>(a, a)))
+        })
+    }
 }
 
 impl MulBackend<i64> for Simd128Descriptor {
@@ -1982,6 +2238,18 @@ impl IntBitBackend<i64> for Simd128Descriptor {
     #[inline(always)]
     fn shr<const AMOUNT: u32>(self, a: v128) -> v128 {
         simd128_shift!(self, AMOUNT, |a: v128| -> v128 { i64x2_shr(a, AMOUNT) })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: v128) -> i64 {
+        simd128_call!(self, |a: v128| -> i64 {
+            (u64x2_extract_lane::<0>(a) | u64x2_extract_lane::<1>(a)) as i64
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: v128) -> i64 {
+        simd128_call!(self, |a: v128| -> i64 {
+            (u64x2_extract_lane::<0>(a) & u64x2_extract_lane::<1>(a)) as i64
+        })
     }
 }
 
@@ -2134,6 +2402,12 @@ impl ArithBackend<u64> for Simd128Descriptor {
     fn sub(self, a: v128, b: v128) -> v128 {
         simd128_call!(self, |a: v128, b: v128| -> v128 { i64x2_sub(a, b) })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: v128) -> u64 {
+        simd128_call!(self, |a: v128| -> u64 {
+            u64x2_extract_lane::<0>(i64x2_add(a, i64x2_shuffle::<1, 0>(a, a)))
+        })
+    }
 }
 
 impl MulBackend<u64> for Simd128Descriptor {
@@ -2173,6 +2447,18 @@ impl IntBitBackend<u64> for Simd128Descriptor {
     #[inline(always)]
     fn shr<const AMOUNT: u32>(self, a: v128) -> v128 {
         simd128_shift!(self, AMOUNT, |a: v128| -> v128 { u64x2_shr(a, AMOUNT) })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: v128) -> u64 {
+        simd128_call!(self, |a: v128| -> u64 {
+            u64x2_extract_lane::<0>(a) | u64x2_extract_lane::<1>(a)
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: v128) -> u64 {
+        simd128_call!(self, |a: v128| -> u64 {
+            u64x2_extract_lane::<0>(a) & u64x2_extract_lane::<1>(a)
+        })
     }
 }
 
@@ -2302,6 +2588,10 @@ impl I16ExtraBackend for Simd128Descriptor {
             let h = i32x4_extmul_high_i16x8(a, b);
             i8x16_shuffle::<2, 3, 6, 7, 10, 11, 14, 15, 18, 19, 22, 23, 26, 27, 30, 31>(l, h)
         })
+    }
+    #[inline(always)]
+    fn i16_madd_to_i32(self, a: v128, b: v128) -> v128 {
+        simd128_call!(self, |a: v128, b: v128| -> v128 { i32x4_dot_i16x8(a, b) })
     }
 }
 

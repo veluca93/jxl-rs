@@ -42,6 +42,20 @@ def fn_op(path):
   return lambda *args: call_fn(path, args)
 
 
+def fold_u64_expr(init_expr, op_sym, t, w):
+  if w == 64:
+    return init_expr if t == "u64" else f"({init_expr}) as {t}"
+  steps = [f"let q = {init_expr};"]
+  if w <= 32:
+    steps.append(f"let q = q {op_sym} (q >> 32);")
+  if w <= 16:
+    steps.append(f"let q = q {op_sym} (q >> 16);")
+  if w == 8:
+    steps.append(f"let q = q {op_sym} (q >> 8);")
+  steps.append(f"q as {t}")
+  return " ".join(steps)
+
+
 def x86_common(bits):
   """Returns the backend spec dictionary for 128/256/512-bit x86_64 ISAs."""
   prefix = {128: "_mm", 256: "_mm256", 512: "_mm512"}[bits]
@@ -109,8 +123,18 @@ def x86_common(bits):
         "andnot": lambda a, b: f"{prefix}_andnot_{si}({a}, {b})",
         "all": lambda a: f"{prefix}_movemask_epi8({a}) {mov8_all}",
         "any": lambda a: f"{prefix}_movemask_epi8({a}) != 0",
+        "bitmask": lambda a: f"{prefix}_movemask_epi8({a}) as u32 as u64",
     }
     masks["W16"] = dict(masks["W8"])
+    if bits == 128:
+      masks["W16"]["bitmask"] = (
+          lambda a: f"_mm_movemask_epi8(_mm_packs_epi16({a}, _mm_setzero_si128())) as u32 as u64"
+      )
+    else:
+      masks["W16"]["bitmask"] = lambda a: (
+          "_mm256_movemask_epi8(_mm256_permute4x64_epi64::<0xD8>("
+          f"_mm256_packs_epi16({a}, _mm256_setzero_si256()))) as u32 as u64"
+      )
     masks["W32"] = {
         "raw": f32r,
         "and": lambda a, b: f"{prefix}_and_ps({a}, {b})",
@@ -122,6 +146,7 @@ def x86_common(bits):
         "andnot": lambda a, b: f"{prefix}_andnot_ps({a}, {b})",
         "all": lambda a: f"{prefix}_movemask_ps({a}) {ps_all}",
         "any": lambda a: f"{prefix}_movemask_ps({a}) != 0",
+        "bitmask": lambda a: f"{prefix}_movemask_ps({a}) as u32 as u64",
     }
     masks["W64"] = {
         "raw": f64r,
@@ -134,6 +159,7 @@ def x86_common(bits):
         "andnot": lambda a, b: f"{prefix}_andnot_pd({a}, {b})",
         "all": lambda a: f"{prefix}_movemask_pd({a}) {pd_all}",
         "any": lambda a: f"{prefix}_movemask_pd({a}) != 0",
+        "bitmask": lambda a: f"{prefix}_movemask_pd({a}) as u32 as u64",
     }
   else:
     for wn, mt in [("W8", "u64"), ("W16", "u32"), ("W32", "u16"), ("W64", "u8")]:
@@ -146,6 +172,7 @@ def x86_common(bits):
           "andnot": lambda a, b: f"(!{a}) & {b}",
           "all": lambda a, mt=mt: f"{a} == {mt}::MAX",
           "any": lambda a: f"{a} != 0",
+          "bitmask": (lambda a: a) if wn == "W8" else (lambda a: f"{a} as u64"),
       }
 
   types = {}
@@ -232,6 +259,35 @@ def x86_common(bits):
       fma = fn_op(f"{prefix}_fmadd_{sfx}")
       fnma = fn_op(f"{prefix}_fnmadd_{sfx}")
 
+    if wbits == 32:
+      radd_tail = "let s = _mm_add_ps(v, _mm_movehl_ps(v, v)); _mm_cvtss_f32(_mm_add_ss(s, _mm_shuffle_ps::<0x55>(s, s)))"
+      if bits == 128:
+        radd = lambda a, rt=radd_tail: f"let v = {a}; {rt}"
+      elif bits == 256:
+        radd = lambda a, rt=radd_tail: (
+            f"let v = _mm_add_ps(_mm256_castps256_ps128({a}), _mm256_extractf128_ps::<1>({a})); {rt}"
+        )
+      else:
+        radd = lambda a, rt=radd_tail: (
+            f"let v256 = _mm256_add_ps(_mm512_castps512_ps256({a}), "
+            f"_mm256_castsi256_ps(_mm512_extracti64x4_epi64::<1>(_mm512_castps_si512({a})))); "
+            f"let v = _mm_add_ps(_mm256_castps256_ps128(v256), _mm256_extractf128_ps::<1>(v256)); {rt}"
+        )
+    else:
+      if bits == 128:
+        radd = lambda a: f"_mm_cvtsd_f64(_mm_add_sd({a}, _mm_unpackhi_pd({a}, {a})))"
+      elif bits == 256:
+        radd = lambda a: (
+            f"let v = _mm_add_pd(_mm256_castpd256_pd128({a}), _mm256_extractf128_pd::<1>({a})); "
+            "_mm_cvtsd_f64(_mm_add_sd(v, _mm_unpackhi_pd(v, v)))"
+        )
+      else:
+        radd = lambda a: (
+            f"let v256 = _mm256_add_pd(_mm512_castpd512_pd256({a}), _mm512_extractf64x4_pd::<1>({a})); "
+            "let v = _mm_add_pd(_mm256_castpd256_pd128(v256), _mm256_extractf128_pd::<1>(v256)); "
+            "_mm_cvtsd_f64(_mm_add_sd(v, _mm_unpackhi_pd(v, v)))"
+        )
+
     return {
         "raw": vr,
         "lanes": w_bytes // (wbits // 8),
@@ -256,6 +312,7 @@ def x86_common(bits):
         "zsel": zsel,
         "add": fn_op(f"{prefix}_add_{sfx}"),
         "sub": fn_op(f"{prefix}_sub_{sfx}"),
+        "radd": radd,
         "mul": fn_op(f"{prefix}_mul_{sfx}"),
         "neg": neg,
         "abs": abs_op,
@@ -451,6 +508,59 @@ def x86_common(bits):
             f"{set64}((0x8000_0000_0000_0000u64.checked_shr(AMOUNT).unwrap_or(0)) as i64))"
         )
 
+    def fold_si_128(a, op128, op256):
+      if bits == 128:
+        return "", a
+      if bits == 256:
+        return (
+            f"let v = {op128}(_mm256_castsi256_si128({a}), _mm256_extracti128_si256::<1>({a})); ",
+            "v",
+        )
+      return (
+          f"let v256 = {op256}(_mm512_castsi512_si256({a}), _mm512_extracti64x4_epi64::<1>({a})); "
+          f"let v = {op128}(_mm256_castsi256_si128(v256), _mm256_extracti128_si256::<1>(v256)); ",
+          "v",
+      )
+
+    def make_int_radd(t, w):
+      def op(a):
+        pre, v = fold_si_128(a, f"_mm_add_epi{w}", f"_mm256_add_epi{w}")
+        if w == 8:
+          return (
+              f"{pre}let s = _mm_sad_epu8({v}, _mm_setzero_si128()); "
+              f"(_mm_cvtsi128_si64(s).wrapping_add(_mm_extract_epi64::<1>(s))) as {t}"
+          )
+        if w == 16:
+          cast_tail = "" if t == "u16" else " as i16"
+          return (
+              f"{pre}let s = _mm_add_epi16({v}, _mm_shuffle_epi32::<0x4E>({v})); "
+              "let s = _mm_add_epi16(s, _mm_shuffle_epi32::<0xB1>(s)); "
+              "let x = _mm_cvtsi128_si32(s) as u32; "
+              f"(x as u16).wrapping_add((x >> 16) as u16){cast_tail}"
+          )
+        if w == 32:
+          cast_tail = "" if t == "i32" else " as u32"
+          return (
+              f"{pre}let s = _mm_add_epi32({v}, _mm_shuffle_epi32::<0x4E>({v})); "
+              "let s = _mm_add_epi32(s, _mm_shuffle_epi32::<0xB1>(s)); "
+              f"_mm_cvtsi128_si32(s){cast_tail}"
+          )
+        cast_tail = "" if t == "i64" else " as u64"
+        return (
+            f"{pre}let s = _mm_add_epi64({v}, _mm_unpackhi_epi64({v}, {v})); "
+            f"_mm_cvtsi128_si64(s){cast_tail}"
+        )
+
+      return op
+
+    def make_int_rbit(t, w, op_name, op_sym):
+      def op(a):
+        pre, v = fold_si_128(a, f"_mm_{op_name}_si128", f"_mm256_{op_name}_si256")
+        init = f"(_mm_cvtsi128_si64({v}) {op_sym} _mm_extract_epi64::<1>({v})) as u64"
+        return f"{pre}{fold_u64_expr(init, op_sym, t, w)}"
+
+      return op
+
     d = {
         "raw": ir,
         "lanes": w_bytes // (w // 8),
@@ -475,6 +585,7 @@ def x86_common(bits):
         "zsel": zsel_op,
         "add": fn_op(f"{prefix}_add_epi{w}"),
         "sub": fn_op(f"{prefix}_sub_epi{w}"),
+        "radd": make_int_radd(t, w),
         "mul": mul_op,
         "band": fn_op(f"{prefix}_and_{si}"),
         "bor": fn_op(f"{prefix}_or_{si}"),
@@ -483,6 +594,8 @@ def x86_common(bits):
         "anot": fn_op(f"{prefix}_andnot_{si}"),
         "shl": shl_op,
         "shr": shr_op,
+        "ror": make_int_rbit(t, w, "or", "|"),
+        "rand": make_int_rbit(t, w, "and", "&"),
     }
     if bits == 256 and w == 32:
       d["shlv"] = fn_op("_mm256_sllv_epi32")
@@ -621,6 +734,7 @@ def x86_common(bits):
               ),
           ),
           "i16_mul_wide_take_high": ("call", fn_op("_mm_mulhi_epi16")),
+          "i16_madd_to_i32": ("call", fn_op("_mm_madd_epi16")),
           "u8_swizzle_128_or_zero": (
               "call",
               lambda a, idx: (
@@ -735,6 +849,7 @@ def x86_common(bits):
               ),
           ),
           "i16_mul_wide_take_high": ("call", fn_op("_mm256_mulhi_epi16")),
+          "i16_madd_to_i32": ("call", fn_op("_mm256_madd_epi16")),
           "u8_swizzle_128_or_zero": (
               "call",
               lambda a, idx: (
@@ -838,6 +953,7 @@ def x86_common(bits):
               ),
           ),
           "i16_mul_wide_take_high": ("call", fn_op("_mm512_mulhi_epi16")),
+          "i16_madd_to_i32": ("call", fn_op("_mm512_madd_epi16")),
           "u8_swizzle_128_or_zero": (
               "call",
               lambda a, idx: (
@@ -847,15 +963,71 @@ def x86_common(bits):
       },
   }
 
+  cm_name = {128: "sse42_call", 256: "avx_call", 512: "avx512_call"}[bits]
+  if bits == 128:
+    arms = "\n".join(
+        f"            {k} => {emit_call(cm_name, 'self', [('lo', '__m128i'), ('hi', '__m128i')], '__m128i', f'_mm_alignr_epi8::<{k}>(hi, lo)')},"
+        for k in range(1, 16)
+    )
+    combine_shr = f"match offset {{\n{arms}\n            _ => unreachable!(),\n        }}"
+  elif bits == 256:
+    arms = "\n".join(
+        f"            {k} => {emit_call(cm_name, 'self', [('x', '__m256i'), ('y', '__m256i')], '__m256i', f'_mm256_alignr_epi8::<{k}>(x, y)')},"
+        for k in range(1, 16)
+    )
+    combine_shr = (
+        f"let mid = {emit_call(cm_name, 'self', [('lo', '__m256i'), ('hi', '__m256i')], '__m256i', '_mm256_permute2x128_si256::<0x21>(lo, hi)')};\n"
+        "        if offset == 16 {\n"
+        "            return mid;\n"
+        "        }\n"
+        "        let (x, y, rem) = if offset < 16 { (mid, lo, offset) } else { (hi, mid, offset - 16) };\n"
+        f"        match rem {{\n{arms}\n            _ => unreachable!(),\n        }}"
+    )
+  else:
+    arms_dw = "\n".join(
+        f"                {k} => {emit_call(cm_name, 'self', [('lo', '__m512i'), ('hi', '__m512i')], '__m512i', f'_mm512_alignr_epi32::<{k}>(hi, lo)')},"
+        for k in range(1, 16)
+    )
+    arms_y = "\n".join([
+        "            0 => lo,",
+        *[
+            f"            {b} => {emit_call(cm_name, 'self', [('lo', '__m512i'), ('hi', '__m512i')], '__m512i', f'_mm512_alignr_epi64::<{2 * b}>(hi, lo)')},"
+            for b in range(1, 4)
+        ],
+    ])
+    arms_x = "\n".join([
+        *[
+            f"            {b} => {emit_call(cm_name, 'self', [('lo', '__m512i'), ('hi', '__m512i')], '__m512i', f'_mm512_alignr_epi64::<{2 * (b + 1)}>(hi, lo)')},"
+            for b in range(0, 3)
+        ],
+        "            3 => hi,",
+    ])
+    arms_b = "\n".join(
+        f"            {k} => {emit_call(cm_name, 'self', [('x', '__m512i'), ('y', '__m512i')], '__m512i', f'_mm512_alignr_epi8::<{k}>(x, y)')},"
+        for k in range(1, 16)
+        if k % 4 != 0
+    )
+    combine_shr = (
+        "if offset.is_multiple_of(4) {\n"
+        f"            return match offset / 4 {{\n{arms_dw}\n                _ => unreachable!(),\n            }};\n"
+        "        }\n"
+        "        let block = offset / 16;\n"
+        "        let rem = offset % 16;\n"
+        f"        let y = match block {{\n{arms_y}\n            _ => unreachable!(),\n        }};\n"
+        f"        let x = match block {{\n{arms_x}\n            _ => unreachable!(),\n        }};\n"
+        f"        match rem {{\n{arms_b}\n            _ => unreachable!(),\n        }}"
+    )
+
   return {
       "name": {128: "Sse42Descriptor", 256: "AvxDescriptor", 512: "Avx512Descriptor"}[bits],
-      "call_macro": {128: "sse42_call", 256: "avx_call", 512: "avx512_call"}[bits],
+      "call_macro": cm_name,
       "shift_macro": {128: "sse42_shift", 256: "avx_shift", 512: "avx512_shift"}[bits],
       "arch": "x86_64",
       "raw_bytes": ir,
       "tbl_type": ir if bits == 128 else f32r,
       "masks": masks,
       "types": types,
+      "combine_shr": combine_shr,
       "il128": {
           128: None,
           256: "(_mm256_permute2x128_si256::<0x20>(a, b), _mm256_permute2x128_si256::<0x31>(a, b))",
@@ -898,6 +1070,11 @@ def neon_spec():
           "andnot": lambda a, b: f"vbicq_u8({b}, {a})",
           "all": lambda a: f"vminvq_u8({a}) == u8::MAX",
           "any": lambda a: f"vmaxvq_u8({a}) != 0",
+          "bitmask": lambda a: (
+              f"let b = vandq_u8({a}, arch_ops::vld1q_u8("
+              "&[1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128])); "
+              "(vaddv_u8(vget_low_u8(b)) as u64) | ((vaddv_u8(vget_high_u8(b)) as u64) << 8)"
+          ),
       },
       "W16": {
           "raw": "uint16x8_t",
@@ -908,6 +1085,9 @@ def neon_spec():
           "andnot": lambda a, b: f"vbicq_u16({b}, {a})",
           "all": lambda a: f"vminvq_u16({a}) == u16::MAX",
           "any": lambda a: f"vmaxvq_u16({a}) != 0",
+          "bitmask": lambda a: (
+              f"vaddvq_u16(vandq_u16({a}, arch_ops::vld1q_u16(&[1, 2, 4, 8, 16, 32, 64, 128]))) as u64"
+          ),
       },
       "W32": {
           "raw": "uint32x4_t",
@@ -918,6 +1098,9 @@ def neon_spec():
           "andnot": lambda a, b: f"vbicq_u32({b}, {a})",
           "all": lambda a: f"vminvq_u32({a}) == u32::MAX",
           "any": lambda a: f"vmaxvq_u32({a}) != 0",
+          "bitmask": lambda a: (
+              f"vaddvq_u32(vandq_u32({a}, arch_ops::vld1q_u32(&[1, 2, 4, 8]))) as u64"
+          ),
       },
       "W64": {
           "raw": "uint64x2_t",
@@ -930,6 +1113,7 @@ def neon_spec():
           "andnot": lambda a, b: f"vbicq_u64({b}, {a})",
           "all": lambda a: f"vminvq_u32(vreinterpretq_u32_u64({a})) == u32::MAX",
           "any": lambda a: f"vmaxvq_u32(vreinterpretq_u32_u64({a})) != 0",
+          "bitmask": lambda a: f"vaddvq_u64(vandq_u64({a}, arch_ops::vld1q_u64(&[1, 2])))",
       },
   }
 
@@ -990,6 +1174,7 @@ def neon_spec():
         ),
         "add": fn_op(f"vaddq_{ns}"),
         "sub": fn_op(f"vsubq_{ns}"),
+        "radd": fn_op(f"vaddvq_{ns}"),
         "mul": fn_op(f"vmulq_{ns}"),
         "neg": fn_op(f"vnegq_{ns}"),
         "abs": fn_op(f"vabsq_{ns}"),
@@ -1068,6 +1253,19 @@ def neon_spec():
     def sreg(c_expr, signed=signed, w=w):
       return c_expr if signed else f"vreinterpretq_s{w}_u{w}({c_expr})"
 
+    def make_neon_rbit(t, w, ns, vop, op_sym):
+      if t == "u64":
+        return lambda a, vop=vop: f"vget_lane_u64::<0>({vop}_u64(vget_low_u64({a}), vget_high_u64({a})))"
+      return lambda a, t=t, w=w, ns=ns, vop=vop, op_sym=op_sym: (
+          f"let u = vreinterpretq_u64_{ns}({a}); "
+          + fold_u64_expr(
+              f"vget_lane_u64::<0>({vop}_u64(vget_low_u64(u), vget_high_u64(u)))",
+              op_sym,
+              t,
+              w,
+          )
+      )
+
     d = {
         "raw": vty,
         "lanes": lanes,
@@ -1094,18 +1292,25 @@ def neon_spec():
         "zsel": zsel,
         "add": fn_op(f"vaddq_{ns}"),
         "sub": fn_op(f"vsubq_{ns}"),
+        "radd": fn_op(f"vaddvq_{ns}"),
         "mul": mul_op,
         "band": fn_op(f"vandq_{ns}"),
         "bor": fn_op(f"vorrq_{ns}"),
         "bxor": fn_op(f"veorq_{ns}"),
         "bnot": bnot,
         "anot": lambda not_a, b, ns=ns: f"vbicq_{ns}({b}, {not_a})",
-        "shl": f"vshlq_{ns}(a, vdupq_n_s{w}((AMOUNT as i32) as i{w}))",
-        "shr": f"vshlq_{ns}(a, vdupq_n_s{w}((-(AMOUNT as i32)) as i{w}))",
+        "shl": f"vshlq_{ns}(a, vdupq_n_s{w}(AMOUNT as i{w}))",
+        "shr": (
+            f"vshlq_{ns}(a, vdupq_n_s32(-(AMOUNT as i32)))"
+            if w == 32
+            else f"vshlq_{ns}(a, vdupq_n_s{w}((-(AMOUNT as i32)) as i{w}))"
+        ),
         "shlv": lambda a, c, ns=ns, sr=sreg: f"vshlq_{ns}({a}, {sr(c)})",
         "shrv": lambda a, c, ns=ns, w=w, sr=sreg: (
             f"vshlq_{ns}({a}, vnegq_s{w}({sr(c)}))"
         ),
+        "ror": make_neon_rbit(t, w, ns, "vorr", "|"),
+        "rand": make_neon_rbit(t, w, ns, "vand", "&"),
     }
     if signed:
       d["neg"] = fn_op(f"vnegq_{ns}")
@@ -1116,6 +1321,10 @@ def neon_spec():
       d["ssub"] = fn_op(f"vqsubq_{ns}")
     types[t] = d
 
+  neon_arms = "\n".join(
+      f"            {k} => {emit_call('neon_call', 'self', [('lo', 'uint8x16_t'), ('hi', 'uint8x16_t')], 'uint8x16_t', f'vextq_u8::<{k}>(lo, hi)')},"
+      for k in range(1, 16)
+  )
   return {
       "name": "NeonDescriptor",
       "call_macro": "neon_call",
@@ -1125,6 +1334,7 @@ def neon_spec():
       "tbl_type": "uint8x16_t",
       "masks": masks,
       "types": types,
+      "combine_shr": f"match offset {{\n{neon_arms}\n            _ => unreachable!(),\n        }}",
       "il128": None,
       "il256": None,
       "prep_tbl8": ("direct", "generic_ops::prepare_table_bf16_8_128(self, table).0"),
@@ -1219,6 +1429,13 @@ def neon_spec():
                   "vuzp2q_s16(l, h)"
               ),
           ),
+          "i16_madd_to_i32": (
+              "call",
+              lambda a, b: (
+                  f"vpaddq_s32(vmull_s16(vget_low_s16({a}), vget_low_s16({b})), "
+                  f"vmull_high_s16({a}, {b}))"
+              ),
+          ),
           "u8_swizzle_128_or_zero": ("call", fn_op("vqtbl1q_u8")),
       },
   }
@@ -1255,16 +1472,24 @@ def wasm_spec():
           "andnot": lambda a, b: f"v128_andnot({b}, {a})",
           "all": fn_op(all_fn),
           "any": fn_op("v128_any_true"),
+          "bitmask": lambda a, bm=bm_fn: f"{bm}({a}) as u64",
       }
-      for wn, all_fn in [
-          ("W8", "i8x16_all_true"),
-          ("W16", "i16x8_all_true"),
-          ("W32", "i32x4_all_true"),
-          ("W64", "i64x2_all_true"),
+      for wn, all_fn, bm_fn in [
+          ("W8", "i8x16_all_true", "u8x16_bitmask"),
+          ("W16", "i16x8_all_true", "u16x8_bitmask"),
+          ("W32", "i32x4_all_true", "u32x4_bitmask"),
+          ("W64", "i64x2_all_true", "u64x2_bitmask"),
       ]
   }
 
   def wasm_float(w, wp, mw, cmask):
+    if w == 32:
+      radd = lambda a: (
+          f"let s = f32x4_add({a}, i64x2_shuffle::<1, 0>({a}, {a})); "
+          "f32x4_extract_lane::<0>(f32x4_add(s, i32x4_shuffle::<1, 0, 3, 2>(s, s)))"
+      )
+    else:
+      radd = lambda a: f"f64x2_extract_lane::<0>(f64x2_add({a}, i64x2_shuffle::<1, 0>({a}, {a})))"
     return {
         "raw": "v128",
         "lanes": 128 // w,
@@ -1289,6 +1514,7 @@ def wasm_spec():
         "zsel": lambda m, f: f"v128_andnot({f}, {m})",
         "add": fn_op(f"{wp}_add"),
         "sub": fn_op(f"{wp}_sub"),
+        "radd": radd,
         "mul": fn_op(f"{wp}_mul"),
         "neg": fn_op(f"{wp}_neg"),
         "abs": fn_op(f"{wp}_abs"),
@@ -1342,6 +1568,34 @@ def wasm_spec():
     else:
       mul_op = fn_op(f"{ap}_mul")
 
+    if w == 8:
+      radd = lambda a, t=t: (
+          f"let p = u32x4_extadd_pairwise_u16x8(u16x8_extadd_pairwise_u8x16({a})); "
+          "let s = i32x4_add(p, i64x2_shuffle::<1, 0>(p, p)); "
+          f"u32x4_extract_lane::<0>(i32x4_add(s, i32x4_shuffle::<1, 0, 3, 2>(s, s))) as {t}"
+      )
+    elif w == 16:
+      radd = lambda a, t=t: (
+          f"let p = u32x4_extadd_pairwise_u16x8({a}); "
+          "let s = i32x4_add(p, i64x2_shuffle::<1, 0>(p, p)); "
+          f"u32x4_extract_lane::<0>(i32x4_add(s, i32x4_shuffle::<1, 0, 3, 2>(s, s))) as {t}"
+      )
+    elif w == 32:
+      radd = lambda a, wp=wp: (
+          f"let s = i32x4_add({a}, i64x2_shuffle::<1, 0>({a}, {a})); "
+          f"{wp}_extract_lane::<0>(i32x4_add(s, i32x4_shuffle::<1, 0, 3, 2>(s, s)))"
+      )
+    else:
+      radd = lambda a, wp=wp: f"{wp}_extract_lane::<0>(i64x2_add({a}, i64x2_shuffle::<1, 0>({a}, {a})))"
+
+    def make_wasm_rbit(t, w, op_sym):
+      return lambda a, t=t, w=w, op_sym=op_sym: fold_u64_expr(
+          f"u64x2_extract_lane::<0>({a}) {op_sym} u64x2_extract_lane::<1>({a})",
+          op_sym,
+          t,
+          w,
+      )
+
     d = {
         "raw": "v128",
         "lanes": lanes,
@@ -1366,6 +1620,7 @@ def wasm_spec():
         "zsel": lambda m, f_v: f"v128_andnot({f_v}, {m})",
         "add": fn_op(f"{ap}_add"),
         "sub": fn_op(f"{ap}_sub"),
+        "radd": radd,
         "mul": mul_op,
         "band": fn_op("v128_and"),
         "bor": fn_op("v128_or"),
@@ -1374,6 +1629,8 @@ def wasm_spec():
         "anot": lambda not_a, b: f"v128_andnot({b}, {not_a})",
         "shl": f"{ap}_shl(a, AMOUNT)",
         "shr": f"{wp}_shr(a, AMOUNT)",
+        "ror": make_wasm_rbit(t, w, "|"),
+        "rand": make_wasm_rbit(t, w, "&"),
     }
     if signed:
       d["neg"] = fn_op(f"{ap}_neg")
@@ -1384,6 +1641,10 @@ def wasm_spec():
       d["ssub"] = fn_op(f"{wp}_sub_sat")
     types[t] = d
 
+  wasm_arms = "\n".join(
+      f"            {k} => {emit_call('simd128_call', 'self', [('lo', 'v128'), ('hi', 'v128')], 'v128', 'i8x16_shuffle::<' + ', '.join(str(k + j) for j in range(16)) + '>(lo, hi)')},"
+      for k in range(1, 16)
+  )
   return {
       "name": "Simd128Descriptor",
       "call_macro": "simd128_call",
@@ -1393,6 +1654,7 @@ def wasm_spec():
       "tbl_type": "v128",
       "masks": masks,
       "types": types,
+      "combine_shr": f"match offset {{\n{wasm_arms}\n            _ => unreachable!(),\n        }}",
       "il128": None,
       "il256": None,
       "prep_tbl8": ("direct", "generic_ops::prepare_table_bf16_8_128(self, table).0"),
@@ -1489,6 +1751,7 @@ def wasm_spec():
                   "i8x16_shuffle::<2, 3, 6, 7, 10, 11, 14, 15, 18, 19, 22, 23, 26, 27, 30, 31>(l, h)"
               ),
           ),
+          "i16_madd_to_i32": ("call", fn_op("i32x4_dot_i16x8")),
           "u8_swizzle_128_or_zero": ("call", fn_op("i8x16_swizzle")),
       },
   }
@@ -1537,7 +1800,12 @@ def render_isa(spec):
   ]
 
   # BytesBackend & DescriptorSealed
-  bytes_methods = []
+  bytes_methods = [
+      "    #[inline(always)]\n"
+      f"    fn combine_shift_right_bytes(self, lo: {rb}, hi: {rb}, offset: usize) -> {rb} {{\n"
+      f"        {spec['combine_shr']}\n"
+      "    }"
+  ]
   if spec["il128"]:
     bytes_methods.append(
         "    #[inline(always)]\n"
@@ -1621,6 +1889,10 @@ def render_isa(spec):
     #[inline(always)]
     fn mask_any(self, a: {mr}) -> bool {{
         {emit_call(cm, 'self', [('a', mr)], 'bool', m['any']('a'))}
+    }}
+    #[inline(always)]
+    fn mask_to_bitmask(self, a: {mr}) -> u64 {{
+        {emit_call(cm, 'self', [('a', mr)], 'u64', m['bitmask']('a'))}
     }}
 }}
 """
@@ -1785,6 +2057,10 @@ impl ArithBackend<{t}> for {d} {{
     fn sub(self, a: {r}, b: {r}) -> {r} {{
         {emit_call(cm, 'self', [('a', r), ('b', r)], r, v['sub']('a', 'b'))}
     }}
+    #[inline(always)]
+    fn reduce_add(self, a: {r}) -> {t} {{
+        {emit_call(cm, 'self', [('a', r)], t, v['radd']('a'))}
+    }}
 }}
 
 impl MulBackend<{t}> for {d} {{
@@ -1900,6 +2176,14 @@ impl MulBackend<{t}> for {d} {{
     fn shr<const AMOUNT: u32>(self, a: {r}) -> {r} {{
         {sm}!(self, AMOUNT, |a: {r}| -> {r} {{ {v['shr']} }})
     }}{shv}
+    #[inline(always)]
+    fn reduce_or(self, a: {r}) -> {t} {{
+        {emit_call(cm, 'self', [('a', r)], t, v['ror']('a'))}
+    }}
+    #[inline(always)]
+    fn reduce_and(self, a: {r}) -> {t} {{
+        {emit_call(cm, 'self', [('a', r)], t, v['rand']('a'))}
+    }}
 }}
 """
       )
@@ -2005,6 +2289,10 @@ impl I16ExtraBackend for {d} {{
     #[inline(always)]
     fn i16_mul_wide_take_high(self, a: {i16r}, b: {i16r}) -> {i16r} {{
         {emit_extra_body(cm, [('a', i16r), ('b', i16r)], i16r, ex['i16_mul_wide_take_high'])}
+    }}
+    #[inline(always)]
+    fn i16_madd_to_i32(self, a: {i16r}, b: {i16r}) -> {i32r} {{
+        {emit_extra_body(cm, [('a', i16r), ('b', i16r)], i32r, ex['i16_madd_to_i32'])}
     }}
 }}
 

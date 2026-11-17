@@ -79,6 +79,18 @@ impl SimdDescriptor for Emu128Descriptor {
 
 impl BytesBackend for Emu128Descriptor {
     type RawBytes = [u8; 16];
+
+    #[inline(always)]
+    fn combine_shift_right_bytes(self, lo: [u8; 16], hi: [u8; 16], offset: usize) -> [u8; 16] {
+        debug_assert!(offset > 0 && offset < 16);
+        from_fn(|i| {
+            if offset + i < 16 {
+                lo[offset + i]
+            } else {
+                hi[offset + i - 16]
+            }
+        })
+    }
 }
 
 impl DescriptorSealed for Emu128Descriptor {
@@ -130,6 +142,14 @@ macro_rules! impl_emu_mask {
             #[inline(always)]
             fn mask_any(self, a: [bool; $n]) -> bool {
                 a.into_iter().any(|x| x)
+            }
+            #[inline(always)]
+            fn mask_to_bitmask(self, a: [bool; $n]) -> u64 {
+                let mut out = 0u64;
+                for i in 0..$n {
+                    out |= (a[i] as u64) << i;
+                }
+                out
             }
         }
     };
@@ -394,7 +414,7 @@ impl_emu_compare!(i64, 2, 0, Ord::min, Ord::max);
 impl_emu_compare!(u64, 2, 0, Ord::min, Ord::max);
 
 macro_rules! impl_emu_float_arith_signed {
-    ($t:ty, $n:literal) => {
+    ($t:ty, $n:literal, $radd:expr) => {
         impl ArithBackend<$t> for Emu128Descriptor {
             #[inline(always)]
             fn add(self, a: [$t; $n], b: [$t; $n]) -> [$t; $n] {
@@ -403,6 +423,10 @@ macro_rules! impl_emu_float_arith_signed {
             #[inline(always)]
             fn sub(self, a: [$t; $n], b: [$t; $n]) -> [$t; $n] {
                 from_fn(|i| a[i] - b[i])
+            }
+            #[inline(always)]
+            fn reduce_add(self, a: [$t; $n]) -> $t {
+                ($radd)(a)
             }
         }
         impl MulBackend<$t> for Emu128Descriptor {
@@ -465,8 +489,8 @@ macro_rules! impl_emu_float_arith_signed {
         }
     };
 }
-impl_emu_float_arith_signed!(f32, 4);
-impl_emu_float_arith_signed!(f64, 2);
+impl_emu_float_arith_signed!(f32, 4, |a: [f32; 4]| (a[0] + a[1]) + (a[2] + a[3]));
+impl_emu_float_arith_signed!(f64, 2, |a: [f64; 2]| a[0] + a[1]);
 
 macro_rules! impl_emu_int_ops {
     ($(($t:ty, $n:literal)),*) => {
@@ -474,6 +498,7 @@ macro_rules! impl_emu_int_ops {
             impl ArithBackend<$t> for Emu128Descriptor {
                 #[inline(always)] fn add(self, a: [$t; $n], b: [$t; $n]) -> [$t; $n] { from_fn(|i| a[i].wrapping_add(b[i])) }
                 #[inline(always)] fn sub(self, a: [$t; $n], b: [$t; $n]) -> [$t; $n] { from_fn(|i| a[i].wrapping_sub(b[i])) }
+                #[inline(always)] fn reduce_add(self, a: [$t; $n]) -> $t { a.into_iter().fold(0, <$t>::wrapping_add) }
             }
             impl MulBackend<$t> for Emu128Descriptor {
                 #[inline(always)] fn mul(self, a: [$t; $n], b: [$t; $n]) -> [$t; $n] { from_fn(|i| a[i].wrapping_mul(b[i])) }
@@ -486,6 +511,8 @@ macro_rules! impl_emu_int_ops {
                 #[inline(always)] fn andnot(self, na: [$t; $n], b: [$t; $n]) -> [$t; $n] { from_fn(|i| !na[i] & b[i]) }
                 #[inline(always)] fn shl<const N: u32>(self, a: [$t; $n]) -> [$t; $n] { a.map(|x| x.wrapping_shl(N)) }
                 #[inline(always)] fn shr<const N: u32>(self, a: [$t; $n]) -> [$t; $n] { a.map(|x| x.wrapping_shr(N)) }
+                #[inline(always)] fn reduce_or(self, a: [$t; $n]) -> $t { a.into_iter().fold(0, |x, y| x | y) }
+                #[inline(always)] fn reduce_and(self, a: [$t; $n]) -> $t { a.into_iter().fold(!0, |x, y| x & y) }
             }
         )*
     };
@@ -608,6 +635,13 @@ impl I16ExtraBackend for Emu128Descriptor {
     #[inline(always)]
     fn i16_mul_wide_take_high(self, a: [i16; 8], b: [i16; 8]) -> [i16; 8] {
         from_fn(|i| ((a[i] as i32 * b[i] as i32) >> 16) as i16)
+    }
+    #[inline(always)]
+    fn i16_madd_to_i32(self, a: [i16; 8], b: [i16; 8]) -> [i32; 4] {
+        from_fn(|k| {
+            (a[2 * k] as i32 * b[2 * k] as i32)
+                .wrapping_add(a[2 * k + 1] as i32 * b[2 * k + 1] as i32)
+        })
     }
 }
 

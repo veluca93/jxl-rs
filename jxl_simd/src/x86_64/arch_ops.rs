@@ -218,3 +218,31 @@ x86_si_load_store!(
     (_mm512_loadu_si512_u64, _mm512_storeu_si512_u64, [u64; 8]),
     (_mm512_loadu_si512_i64, _mm512_storeu_si512_i64, [i64; 8]),
 );
+
+#[inline]
+#[target_feature(enable = "sse")]
+pub fn prefetch_t0<T: ?Sized>(r: &T) {
+    #[cfg(miri)]
+    let _ = r;
+    #[cfg(not(miri))]
+    {
+        let base = (r as *const T).cast::<i8>();
+        for i in (0..core::mem::size_of_val(r)).step_by(64) {
+            arch::_mm_prefetch::<{ arch::_MM_HINT_T0 }>(base.wrapping_add(i));
+        }
+    }
+}
+
+#[inline]
+#[target_feature(enable = "sse")]
+pub fn prefetch_et0<T: ?Sized>(r: &T) {
+    #[cfg(miri)]
+    let _ = r;
+    #[cfg(not(miri))]
+    {
+        let base = (r as *const T).cast::<i8>();
+        for i in (0..core::mem::size_of_val(r)).step_by(64) {
+            arch::_mm_prefetch::<{ arch::_MM_HINT_ET0 }>(base.wrapping_add(i));
+        }
+    }
+}

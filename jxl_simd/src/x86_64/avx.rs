@@ -21,6 +21,68 @@ use crate::{W8, W16, W32, W64, generic_ops};
 impl BytesBackend for AvxDescriptor {
     type RawBytes = __m256i;
     #[inline(always)]
+    fn combine_shift_right_bytes(self, lo: __m256i, hi: __m256i, offset: usize) -> __m256i {
+        let mid = avx_call!(self, |lo: __m256i, hi: __m256i| -> __m256i {
+            _mm256_permute2x128_si256::<0x21>(lo, hi)
+        });
+        if offset == 16 {
+            return mid;
+        }
+        let (x, y, rem) = if offset < 16 {
+            (mid, lo, offset)
+        } else {
+            (hi, mid, offset - 16)
+        };
+        match rem {
+            1 => avx_call!(self, |x: __m256i, y: __m256i| -> __m256i {
+                _mm256_alignr_epi8::<1>(x, y)
+            }),
+            2 => avx_call!(self, |x: __m256i, y: __m256i| -> __m256i {
+                _mm256_alignr_epi8::<2>(x, y)
+            }),
+            3 => avx_call!(self, |x: __m256i, y: __m256i| -> __m256i {
+                _mm256_alignr_epi8::<3>(x, y)
+            }),
+            4 => avx_call!(self, |x: __m256i, y: __m256i| -> __m256i {
+                _mm256_alignr_epi8::<4>(x, y)
+            }),
+            5 => avx_call!(self, |x: __m256i, y: __m256i| -> __m256i {
+                _mm256_alignr_epi8::<5>(x, y)
+            }),
+            6 => avx_call!(self, |x: __m256i, y: __m256i| -> __m256i {
+                _mm256_alignr_epi8::<6>(x, y)
+            }),
+            7 => avx_call!(self, |x: __m256i, y: __m256i| -> __m256i {
+                _mm256_alignr_epi8::<7>(x, y)
+            }),
+            8 => avx_call!(self, |x: __m256i, y: __m256i| -> __m256i {
+                _mm256_alignr_epi8::<8>(x, y)
+            }),
+            9 => avx_call!(self, |x: __m256i, y: __m256i| -> __m256i {
+                _mm256_alignr_epi8::<9>(x, y)
+            }),
+            10 => avx_call!(self, |x: __m256i, y: __m256i| -> __m256i {
+                _mm256_alignr_epi8::<10>(x, y)
+            }),
+            11 => avx_call!(self, |x: __m256i, y: __m256i| -> __m256i {
+                _mm256_alignr_epi8::<11>(x, y)
+            }),
+            12 => avx_call!(self, |x: __m256i, y: __m256i| -> __m256i {
+                _mm256_alignr_epi8::<12>(x, y)
+            }),
+            13 => avx_call!(self, |x: __m256i, y: __m256i| -> __m256i {
+                _mm256_alignr_epi8::<13>(x, y)
+            }),
+            14 => avx_call!(self, |x: __m256i, y: __m256i| -> __m256i {
+                _mm256_alignr_epi8::<14>(x, y)
+            }),
+            15 => avx_call!(self, |x: __m256i, y: __m256i| -> __m256i {
+                _mm256_alignr_epi8::<15>(x, y)
+            }),
+            _ => unreachable!(),
+        }
+    }
+    #[inline(always)]
     fn interleave_128_halves(self, a: __m256i, b: __m256i) -> (__m256i, __m256i) {
         avx_call!(self, |a: __m256i, b: __m256i| -> (__m256i, __m256i) {
             (
@@ -90,6 +152,12 @@ impl MaskBackend<W8> for AvxDescriptor {
     fn mask_any(self, a: __m256i) -> bool {
         avx_call!(self, |a: __m256i| -> bool { _mm256_movemask_epi8(a) != 0 })
     }
+    #[inline(always)]
+    fn mask_to_bitmask(self, a: __m256i) -> u64 {
+        avx_call!(self, |a: __m256i| -> u64 {
+            _mm256_movemask_epi8(a) as u32 as u64
+        })
+    }
 }
 
 impl MaskBackend<W16> for AvxDescriptor {
@@ -132,6 +200,15 @@ impl MaskBackend<W16> for AvxDescriptor {
     #[inline(always)]
     fn mask_any(self, a: __m256i) -> bool {
         avx_call!(self, |a: __m256i| -> bool { _mm256_movemask_epi8(a) != 0 })
+    }
+    #[inline(always)]
+    fn mask_to_bitmask(self, a: __m256i) -> u64 {
+        avx_call!(self, |a: __m256i| -> u64 {
+            _mm256_movemask_epi8(_mm256_permute4x64_epi64::<0xD8>(_mm256_packs_epi16(
+                a,
+                _mm256_setzero_si256(),
+            ))) as u32 as u64
+        })
     }
 }
 
@@ -176,6 +253,12 @@ impl MaskBackend<W32> for AvxDescriptor {
     fn mask_any(self, a: __m256) -> bool {
         avx_call!(self, |a: __m256| -> bool { _mm256_movemask_ps(a) != 0 })
     }
+    #[inline(always)]
+    fn mask_to_bitmask(self, a: __m256) -> u64 {
+        avx_call!(self, |a: __m256| -> u64 {
+            _mm256_movemask_ps(a) as u32 as u64
+        })
+    }
 }
 
 impl MaskBackend<W64> for AvxDescriptor {
@@ -218,6 +301,12 @@ impl MaskBackend<W64> for AvxDescriptor {
     #[inline(always)]
     fn mask_any(self, a: __m256d) -> bool {
         avx_call!(self, |a: __m256d| -> bool { _mm256_movemask_pd(a) != 0 })
+    }
+    #[inline(always)]
+    fn mask_to_bitmask(self, a: __m256d) -> u64 {
+        avx_call!(self, |a: __m256d| -> u64 {
+            _mm256_movemask_pd(a) as u32 as u64
+        })
     }
 }
 
@@ -378,6 +467,14 @@ impl ArithBackend<f32> for AvxDescriptor {
     fn sub(self, a: __m256, b: __m256) -> __m256 {
         avx_call!(self, |a: __m256, b: __m256| -> __m256 {
             _mm256_sub_ps(a, b)
+        })
+    }
+    #[inline(always)]
+    fn reduce_add(self, a: __m256) -> f32 {
+        avx_call!(self, |a: __m256| -> f32 {
+            let v = _mm_add_ps(_mm256_castps256_ps128(a), _mm256_extractf128_ps::<1>(a));
+            let s = _mm_add_ps(v, _mm_movehl_ps(v, v));
+            _mm_cvtss_f32(_mm_add_ss(s, _mm_shuffle_ps::<0x55>(s, s)))
         })
     }
 }
@@ -623,6 +720,13 @@ impl ArithBackend<f64> for AvxDescriptor {
             _mm256_sub_pd(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: __m256d) -> f64 {
+        avx_call!(self, |a: __m256d| -> f64 {
+            let v = _mm_add_pd(_mm256_castpd256_pd128(a), _mm256_extractf128_pd::<1>(a));
+            _mm_cvtsd_f64(_mm_add_sd(v, _mm_unpackhi_pd(v, v)))
+        })
+    }
 }
 
 impl MulBackend<f64> for AvxDescriptor {
@@ -866,6 +970,14 @@ impl ArithBackend<i8> for AvxDescriptor {
             _mm256_sub_epi8(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: __m256i) -> i8 {
+        avx_call!(self, |a: __m256i| -> i8 {
+            let v = _mm_add_epi8(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let s = _mm_sad_epu8(v, _mm_setzero_si128());
+            (_mm_cvtsi128_si64(s).wrapping_add(_mm_extract_epi64::<1>(s))) as i8
+        })
+    }
 }
 
 impl MulBackend<i8> for AvxDescriptor {
@@ -952,6 +1064,28 @@ impl IntBitBackend<i8> for AvxDescriptor {
                 ),
                 _mm256_set1_epi8((0x80u8.checked_shr(AMOUNT).unwrap_or(0)) as i8),
             )
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: __m256i) -> i8 {
+        avx_call!(self, |a: __m256i| -> i8 {
+            let v = _mm_or_si128(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let q = (_mm_cvtsi128_si64(v) | _mm_extract_epi64::<1>(v)) as u64;
+            let q = q | (q >> 32);
+            let q = q | (q >> 16);
+            let q = q | (q >> 8);
+            q as i8
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: __m256i) -> i8 {
+        avx_call!(self, |a: __m256i| -> i8 {
+            let v = _mm_and_si128(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let q = (_mm_cvtsi128_si64(v) & _mm_extract_epi64::<1>(v)) as u64;
+            let q = q & (q >> 32);
+            let q = q & (q >> 16);
+            let q = q & (q >> 8);
+            q as i8
         })
     }
 }
@@ -1131,6 +1265,14 @@ impl ArithBackend<u8> for AvxDescriptor {
             _mm256_sub_epi8(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: __m256i) -> u8 {
+        avx_call!(self, |a: __m256i| -> u8 {
+            let v = _mm_add_epi8(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let s = _mm_sad_epu8(v, _mm_setzero_si128());
+            (_mm_cvtsi128_si64(s).wrapping_add(_mm_extract_epi64::<1>(s))) as u8
+        })
+    }
 }
 
 impl MulBackend<u8> for AvxDescriptor {
@@ -1194,6 +1336,28 @@ impl IntBitBackend<u8> for AvxDescriptor {
                 _mm256_srl_epi16(a, _mm_cvtsi64_si128(AMOUNT as i64)),
                 _mm256_set1_epi8((0xFFu8.checked_shr(AMOUNT).unwrap_or(0)) as i8),
             )
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: __m256i) -> u8 {
+        avx_call!(self, |a: __m256i| -> u8 {
+            let v = _mm_or_si128(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let q = (_mm_cvtsi128_si64(v) | _mm_extract_epi64::<1>(v)) as u64;
+            let q = q | (q >> 32);
+            let q = q | (q >> 16);
+            let q = q | (q >> 8);
+            q as u8
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: __m256i) -> u8 {
+        avx_call!(self, |a: __m256i| -> u8 {
+            let v = _mm_and_si128(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let q = (_mm_cvtsi128_si64(v) & _mm_extract_epi64::<1>(v)) as u64;
+            let q = q & (q >> 32);
+            let q = q & (q >> 16);
+            let q = q & (q >> 8);
+            q as u8
         })
     }
 }
@@ -1372,6 +1536,16 @@ impl ArithBackend<i16> for AvxDescriptor {
             _mm256_sub_epi16(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: __m256i) -> i16 {
+        avx_call!(self, |a: __m256i| -> i16 {
+            let v = _mm_add_epi16(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let s = _mm_add_epi16(v, _mm_shuffle_epi32::<0x4E>(v));
+            let s = _mm_add_epi16(s, _mm_shuffle_epi32::<0xB1>(s));
+            let x = _mm_cvtsi128_si32(s) as u32;
+            (x as u16).wrapping_add((x >> 16) as u16) as i16
+        })
+    }
 }
 
 impl MulBackend<i16> for AvxDescriptor {
@@ -1443,6 +1617,26 @@ impl IntBitBackend<i16> for AvxDescriptor {
     fn shr<const AMOUNT: u32>(self, a: __m256i) -> __m256i {
         avx_shift!(self, AMOUNT, |a: __m256i| -> __m256i {
             _mm256_sra_epi16(a, _mm_cvtsi64_si128(AMOUNT as i64))
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: __m256i) -> i16 {
+        avx_call!(self, |a: __m256i| -> i16 {
+            let v = _mm_or_si128(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let q = (_mm_cvtsi128_si64(v) | _mm_extract_epi64::<1>(v)) as u64;
+            let q = q | (q >> 32);
+            let q = q | (q >> 16);
+            q as i16
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: __m256i) -> i16 {
+        avx_call!(self, |a: __m256i| -> i16 {
+            let v = _mm_and_si128(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let q = (_mm_cvtsi128_si64(v) & _mm_extract_epi64::<1>(v)) as u64;
+            let q = q & (q >> 32);
+            let q = q & (q >> 16);
+            q as i16
         })
     }
 }
@@ -1622,6 +1816,16 @@ impl ArithBackend<u16> for AvxDescriptor {
             _mm256_sub_epi16(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: __m256i) -> u16 {
+        avx_call!(self, |a: __m256i| -> u16 {
+            let v = _mm_add_epi16(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let s = _mm_add_epi16(v, _mm_shuffle_epi32::<0x4E>(v));
+            let s = _mm_add_epi16(s, _mm_shuffle_epi32::<0xB1>(s));
+            let x = _mm_cvtsi128_si32(s) as u32;
+            (x as u16).wrapping_add((x >> 16) as u16)
+        })
+    }
 }
 
 impl MulBackend<u16> for AvxDescriptor {
@@ -1674,6 +1878,26 @@ impl IntBitBackend<u16> for AvxDescriptor {
     fn shr<const AMOUNT: u32>(self, a: __m256i) -> __m256i {
         avx_shift!(self, AMOUNT, |a: __m256i| -> __m256i {
             _mm256_srl_epi16(a, _mm_cvtsi64_si128(AMOUNT as i64))
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: __m256i) -> u16 {
+        avx_call!(self, |a: __m256i| -> u16 {
+            let v = _mm_or_si128(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let q = (_mm_cvtsi128_si64(v) | _mm_extract_epi64::<1>(v)) as u64;
+            let q = q | (q >> 32);
+            let q = q | (q >> 16);
+            q as u16
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: __m256i) -> u16 {
+        avx_call!(self, |a: __m256i| -> u16 {
+            let v = _mm_and_si128(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let q = (_mm_cvtsi128_si64(v) & _mm_extract_epi64::<1>(v)) as u64;
+            let q = q & (q >> 32);
+            let q = q & (q >> 16);
+            q as u16
         })
     }
 }
@@ -1852,6 +2076,15 @@ impl ArithBackend<i32> for AvxDescriptor {
             _mm256_sub_epi32(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: __m256i) -> i32 {
+        avx_call!(self, |a: __m256i| -> i32 {
+            let v = _mm_add_epi32(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let s = _mm_add_epi32(v, _mm_shuffle_epi32::<0x4E>(v));
+            let s = _mm_add_epi32(s, _mm_shuffle_epi32::<0xB1>(s));
+            _mm_cvtsi128_si32(s)
+        })
+    }
 }
 
 impl MulBackend<i32> for AvxDescriptor {
@@ -1935,6 +2168,24 @@ impl IntBitBackend<i32> for AvxDescriptor {
     fn shr_vec(self, a: __m256i, counts: __m256i) -> __m256i {
         avx_call!(self, |a: __m256i, counts: __m256i| -> __m256i {
             _mm256_srav_epi32(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: __m256i) -> i32 {
+        avx_call!(self, |a: __m256i| -> i32 {
+            let v = _mm_or_si128(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let q = (_mm_cvtsi128_si64(v) | _mm_extract_epi64::<1>(v)) as u64;
+            let q = q | (q >> 32);
+            q as i32
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: __m256i) -> i32 {
+        avx_call!(self, |a: __m256i| -> i32 {
+            let v = _mm_and_si128(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let q = (_mm_cvtsi128_si64(v) & _mm_extract_epi64::<1>(v)) as u64;
+            let q = q & (q >> 32);
+            q as i32
         })
     }
 }
@@ -2102,6 +2353,15 @@ impl ArithBackend<u32> for AvxDescriptor {
             _mm256_sub_epi32(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: __m256i) -> u32 {
+        avx_call!(self, |a: __m256i| -> u32 {
+            let v = _mm_add_epi32(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let s = _mm_add_epi32(v, _mm_shuffle_epi32::<0x4E>(v));
+            let s = _mm_add_epi32(s, _mm_shuffle_epi32::<0xB1>(s));
+            _mm_cvtsi128_si32(s) as u32
+        })
+    }
 }
 
 impl MulBackend<u32> for AvxDescriptor {
@@ -2166,6 +2426,24 @@ impl IntBitBackend<u32> for AvxDescriptor {
     fn shr_vec(self, a: __m256i, counts: __m256i) -> __m256i {
         avx_call!(self, |a: __m256i, counts: __m256i| -> __m256i {
             _mm256_srlv_epi32(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: __m256i) -> u32 {
+        avx_call!(self, |a: __m256i| -> u32 {
+            let v = _mm_or_si128(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let q = (_mm_cvtsi128_si64(v) | _mm_extract_epi64::<1>(v)) as u64;
+            let q = q | (q >> 32);
+            q as u32
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: __m256i) -> u32 {
+        avx_call!(self, |a: __m256i| -> u32 {
+            let v = _mm_and_si128(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let q = (_mm_cvtsi128_si64(v) & _mm_extract_epi64::<1>(v)) as u64;
+            let q = q & (q >> 32);
+            q as u32
         })
     }
 }
@@ -2329,6 +2607,14 @@ impl ArithBackend<i64> for AvxDescriptor {
             _mm256_sub_epi64(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: __m256i) -> i64 {
+        avx_call!(self, |a: __m256i| -> i64 {
+            let v = _mm_add_epi64(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let s = _mm_add_epi64(v, _mm_unpackhi_epi64(v, v));
+            _mm_cvtsi128_si64(s)
+        })
+    }
 }
 
 impl MulBackend<i64> for AvxDescriptor {
@@ -2430,6 +2716,20 @@ impl IntBitBackend<i64> for AvxDescriptor {
                 _mm256_srlv_epi64(_mm256_xor_si256(a, b), counts),
                 _mm256_srlv_epi64(b, counts),
             )
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: __m256i) -> i64 {
+        avx_call!(self, |a: __m256i| -> i64 {
+            let v = _mm_or_si128(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            ((_mm_cvtsi128_si64(v) | _mm_extract_epi64::<1>(v)) as u64) as i64
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: __m256i) -> i64 {
+        avx_call!(self, |a: __m256i| -> i64 {
+            let v = _mm_and_si128(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            ((_mm_cvtsi128_si64(v) & _mm_extract_epi64::<1>(v)) as u64) as i64
         })
     }
 }
@@ -2607,6 +2907,14 @@ impl ArithBackend<u64> for AvxDescriptor {
             _mm256_sub_epi64(a, b)
         })
     }
+    #[inline(always)]
+    fn reduce_add(self, a: __m256i) -> u64 {
+        avx_call!(self, |a: __m256i| -> u64 {
+            let v = _mm_add_epi64(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            let s = _mm_add_epi64(v, _mm_unpackhi_epi64(v, v));
+            _mm_cvtsi128_si64(s) as u64
+        })
+    }
 }
 
 impl MulBackend<u64> for AvxDescriptor {
@@ -2676,6 +2984,20 @@ impl IntBitBackend<u64> for AvxDescriptor {
     fn shr_vec(self, a: __m256i, counts: __m256i) -> __m256i {
         avx_call!(self, |a: __m256i, counts: __m256i| -> __m256i {
             _mm256_srlv_epi64(a, counts)
+        })
+    }
+    #[inline(always)]
+    fn reduce_or(self, a: __m256i) -> u64 {
+        avx_call!(self, |a: __m256i| -> u64 {
+            let v = _mm_or_si128(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            (_mm_cvtsi128_si64(v) | _mm_extract_epi64::<1>(v)) as u64
+        })
+    }
+    #[inline(always)]
+    fn reduce_and(self, a: __m256i) -> u64 {
+        avx_call!(self, |a: __m256i| -> u64 {
+            let v = _mm_and_si128(_mm256_castsi256_si128(a), _mm256_extracti128_si256::<1>(a));
+            (_mm_cvtsi128_si64(v) & _mm_extract_epi64::<1>(v)) as u64
         })
     }
 }
@@ -2827,6 +3149,12 @@ impl I16ExtraBackend for AvxDescriptor {
     fn i16_mul_wide_take_high(self, a: __m256i, b: __m256i) -> __m256i {
         avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
             _mm256_mulhi_epi16(a, b)
+        })
+    }
+    #[inline(always)]
+    fn i16_madd_to_i32(self, a: __m256i, b: __m256i) -> __m256i {
+        avx_call!(self, |a: __m256i, b: __m256i| -> __m256i {
+            _mm256_madd_epi16(a, b)
         })
     }
 }

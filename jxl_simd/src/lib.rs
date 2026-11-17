@@ -369,6 +369,18 @@ pub trait SimdDescriptor:
     /// Calls `f` inside an inlinable (`#[inline]`) `#[target_feature]` boundary matching `Self`.
     fn call_inlined<R>(self, f: impl FnOnce(Self) -> R) -> R;
 
+    /// Prefetches all 64-byte cache lines covered by `r` into L1 cache for reading.
+    #[inline(always)]
+    fn prefetch_t0<T: ?Sized>(self, r: &T) {
+        let _ = r;
+    }
+
+    /// Prefetches all 64-byte cache lines covered by `r` into L1 cache with write intent.
+    #[inline(always)]
+    fn prefetch_et0<T: ?Sized>(self, r: &T) {
+        let _ = r;
+    }
+
     #[doc(hidden)]
     #[inline(always)]
     fn try_emu128<F: TypeFamily<Self> + TypeFamily<Emu128Descriptor>, P, IndRet>(
@@ -477,7 +489,10 @@ pub trait SimdDescriptor:
 }
 
 /// Marker trait for SIMD mask lane widths (`W8`, `W16`, `W32`, `W64`).
-pub trait MaskWidth: sealed::MaskWidth {}
+pub trait MaskWidth: sealed::MaskWidth {
+    /// Width of each mask lane in bytes.
+    const BYTES: usize;
+}
 
 /// 8-bit lane mask width.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -495,10 +510,18 @@ pub struct W32;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct W64;
 
-impl MaskWidth for W8 {}
-impl MaskWidth for W16 {}
-impl MaskWidth for W32 {}
-impl MaskWidth for W64 {}
+impl MaskWidth for W8 {
+    const BYTES: usize = 1;
+}
+impl MaskWidth for W16 {
+    const BYTES: usize = 2;
+}
+impl MaskWidth for W32 {
+    const BYTES: usize = 4;
+}
+impl MaskWidth for W64 {
+    const BYTES: usize = 8;
+}
 
 /// Sealed marker trait for elements supported in [`SimdVec`].
 pub trait SimdElement: sealed::Element {}
@@ -799,6 +822,9 @@ impl<W: MaskWidth, D: SimdDescriptor> Not for SimdMask<W, D> {
 // Generic methods on `SimdMask`.
 
 impl<W: MaskWidth, D: SimdDescriptor> SimdMask<W, D> {
+    /// Number of mask lanes for width `W` and descriptor `D`.
+    pub const LEN: usize = D::BYTES / W::BYTES;
+
     #[allow(dead_code)]
     #[inline(always)]
     pub(crate) fn from_raw(d: D, raw: W::Raw<D>) -> Self {
@@ -859,6 +885,13 @@ impl<W: MaskWidth, D: SimdDescriptor> SimdMask<W, D> {
     #[inline(always)]
     pub fn andnot(self, rhs: Self) -> Self {
         Self(W::mask_andnot(self.1, self.0, rhs.0), self.1)
+    }
+
+    /// Packs active lane flags into the low `Self::LEN` bits of a `u64`,
+    /// with all upper bits `Self::LEN..64` guaranteed `0`.
+    #[inline(always)]
+    pub fn to_bitmask(self) -> u64 {
+        W::mask_to_bitmask(self.1, self.0)
     }
 }
 
@@ -1071,6 +1104,60 @@ impl<T: SimdElement, D: SimdDescriptor> SimdVec<T, D> {
     {
         SimdVec(T::demote_to(self.1, self.0, hi.0), self.1)
     }
+
+    /// Shifts `self` toward higher lane indices by `N` lanes, inserting the top `N` lanes
+    /// of `prev` into lanes `0..N`
+    /// (`out[i] = if i < N { prev[Self::LEN - N + i] } else { self[i - N] }`).
+    #[inline(always)]
+    pub fn slide_right<const N: usize>(self, prev: Self) -> Self {
+        const { assert!(N <= Self::LEN) };
+        if N == 0 {
+            return self;
+        }
+        if N == Self::LEN {
+            return prev;
+        }
+        let d = self.1;
+        let offset = D::BYTES - N * std::mem::size_of::<T>();
+        let out = sealed::BytesBackend::combine_shift_right_bytes(
+            d,
+            T::to_raw_bytes(d, prev.0),
+            T::to_raw_bytes(d, self.0),
+            offset,
+        );
+        Self(T::from_raw_bytes(d, out), d)
+    }
+
+    /// Shifts `self` toward lower lane indices by `N` lanes, inserting the bottom `N` lanes
+    /// of `next` into lanes `(Self::LEN - N)..Self::LEN`
+    /// (`out[i] = if i + N < Self::LEN { self[i + N] } else { next[i + N - Self::LEN] }`).
+    #[inline(always)]
+    pub fn slide_left<const N: usize>(self, next: Self) -> Self {
+        const { assert!(N <= Self::LEN) };
+        if N == 0 {
+            return self;
+        }
+        if N == Self::LEN {
+            return next;
+        }
+        let d = self.1;
+        let offset = N * std::mem::size_of::<T>();
+        let out = sealed::BytesBackend::combine_shift_right_bytes(
+            d,
+            T::to_raw_bytes(d, self.0),
+            T::to_raw_bytes(d, next.0),
+            offset,
+        );
+        Self(T::from_raw_bytes(d, out), d)
+    }
+}
+
+impl<T: ArithElement, D: SimdDescriptor> SimdVec<T, D> {
+    /// Horizontally sums all lanes (wrapping addition for integer element types).
+    #[inline(always)]
+    pub fn reduce_add(self) -> T {
+        T::reduce_add(self.1, self.0)
+    }
 }
 
 impl<T: ComparableElement, D: SimdDescriptor> SimdVec<T, D> {
@@ -1231,6 +1318,18 @@ impl<T: IntElement, D: SimdDescriptor> SimdVec<T, D> {
     pub fn trailing_zeros(self) -> Self {
         generic_ops::int_trailing_zeros(self)
     }
+
+    /// Horizontally bitwise-ORs all lanes.
+    #[inline(always)]
+    pub fn reduce_or(self) -> T {
+        T::reduce_or(self.1, self.0)
+    }
+
+    /// Horizontally bitwise-ANDs all lanes.
+    #[inline(always)]
+    pub fn reduce_and(self) -> T {
+        T::reduce_and(self.1, self.0)
+    }
 }
 
 impl<T: SatElement, D: SimdDescriptor> SimdVec<T, D> {
@@ -1354,6 +1453,13 @@ impl<D: SimdDescriptor> SimdVec<i16, D> {
     #[inline(always)]
     pub fn mul_wide_take_high(self, rhs: Self) -> Self {
         Self(self.1.i16_mul_wide_take_high(self.0, rhs.0), self.1)
+    }
+
+    /// Multiplies adjacent `i16` pairs and horizontally adds them (wrapping) into `i32` lanes:
+    /// `out[k] = (self[2 * k] as i32 * rhs[2 * k] as i32).wrapping_add(self[2 * k + 1] as i32 * rhs[2 * k + 1] as i32)`.
+    #[inline(always)]
+    pub fn madd_to_i32(self, rhs: Self) -> I32Vec<D> {
+        SimdVec(self.1.i16_madd_to_i32(self.0, rhs.0), self.1)
     }
 }
 
