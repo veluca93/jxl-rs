@@ -649,7 +649,7 @@ fn simd_test_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream, T
         TokenTree::Punct(Punct::new(',', Spacing::Alone)),
         bracket(span, flat_test_attrs),
     ];
-    for suffix in ["avx512", "avx", "sse42", "neon", "simd128", "scalar"] {
+    for suffix in ["avx512", "avx", "sse42", "neon", "simd128", "emu128"] {
         macro_args.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
         macro_args.push(TokenTree::Ident(Ident::new(
             &format!("{fn_name}_{suffix}"),
