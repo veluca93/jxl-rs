@@ -33,92 +33,17 @@ SIZES = [
 
 print(HEADER)
 
-print("use jxl_simd::{SimdDescriptor, F32SimdVec};")
+print("use jxl_simd::{F32Vec, SimdDescriptor, SimdDescriptor128};")
+print()
 print("use crate::*;")
 
 
-def impl_r_less_c(ROWS, COLS):
-    print("let data = D::F32Vec::make_array_slice_mut(data);")
-    print("let column_chunks = %d / D::F32Vec::LEN;" % COLS)
-    print("let row_chunks = %d / D::F32Vec::LEN;" % ROWS)
-    # Step 1: do rowblock-DCTs on the first K rows, transposing KxK blocks first.
-    print("for i in 0..row_chunks {")
-    print("for j in 0..column_chunks {")
-    print(
-        "D::F32Vec::transpose_square(d, &mut data[i * %d + j..], column_chunks);" % COLS
-    )
-    print("}")
-    print("do_reinterpreting_dct_%d_rowblock(d, &mut data[i * %d..]);" % (COLS, COLS))
-    print("}")
-    # Step 2: do column-DCTs on groups of K columns, transposing KxK blocks back.
-    print("for i in 0..column_chunks {")
-    print("for j in 0..row_chunks {")
-    print(
-        "D::F32Vec::transpose_square(d, &mut data[j * %d + i..], column_chunks);" % COLS
-    )
-    print("}")
-    print("do_reinterpreting_dct_%d(d, &mut data[i..], column_chunks)" % ROWS)
-    print("}")
-
-
-def impl_square(N):
-    print("let data = D::F32Vec::make_array_slice_mut(data);")
-    print("let chunks = %d / D::F32Vec::LEN;" % N)
-    # Step 1: do column-DCTs on the first K columns.
-    print("for i in 0..chunks {")
-    print("do_reinterpreting_dct_%d(d, &mut data[i..], chunks);" % N)
-    print("}")
-    # Step 2: do column-DCTs on groups of K columns, transposing KxK blocks and
-    # swapping them in their final place as we do so.
-    print("for i in 0..chunks {")
-    print("D::F32Vec::transpose_square(d, &mut data[i * %d + i..], chunks);" % N)
-    print("for j in i+1..chunks {")
-    print("D::F32Vec::transpose_square(d, &mut data[j * %d + i..], chunks);" % N)
-    print("D::F32Vec::transpose_square(d, &mut data[i * %d + j..], chunks);" % N)
-    print("for k in 0..D::F32Vec::LEN {")
-    print("data.swap(i * %d + j + k * chunks, j * %d + i + k * chunks);" % (N, N))
-    print("}")
-    print("}")
-    print("do_reinterpreting_dct_%d(d, &mut data[i..], chunks);" % N)
-    print("}")
-
-
-def impl_r_greater_c(ROWS, COLS):
-    ratio = ROWS / COLS
-    print("let data = D::F32Vec::make_array_slice_mut(data);")
-    print("let column_chunks = %d / D::F32Vec::LEN;" % COLS)
-    print("let row_chunks = %d / D::F32Vec::LEN;" % ROWS)
-    # Step 1: do column-DCTs on columns, which does the first part of the full matrix transpose.
-    print("for i in 0..column_chunks {")
-    print("do_reinterpreting_dct_%d_trh(d, &mut data[i..]);" % ROWS)
-    print("}")
-    # Step 2: Incrementally transpose each square sub-block of the matrix, then do a column-IDCT.
-    print("for l in 0..%d {" % ratio)
-    print("for i in 0..column_chunks {")
-    print(
-        "let tr_block = |data: &mut [<D::F32Vec as F32SimdVec>::UnderlyingArray], i, j, l| {"
-    )
-    print(
-        "D::F32Vec::transpose_square(d, &mut data[i * %d + j + l * column_chunks..], row_chunks)};"
-        % ROWS
-    )
-    print("tr_block(data, i, i, l);")
-    print("for j in i+1..column_chunks {")
-    print("tr_block(data, i, j, l);")
-    print("tr_block(data, j, i, l);")
-    print("for k in 0..D::F32Vec::LEN {")
-    print(
-        "data.swap(i * %d + j + k * row_chunks + l * column_chunks, j * %d + i + k * row_chunks + l * column_chunks);"
-        % (ROWS, ROWS)
-    )
-    print("}")
-    print("}")
-    print(
-        "do_reinterpreting_dct_%d(d, &mut data[i + l * column_chunks..], row_chunks);"
-        % COLS
-    )
-    print("}")
-    print("}")
+def descr_for_width(w):
+    if w < 8:
+        return "d.maybe_downgrade_128bit()"
+    if w < 16:
+        return "d.maybe_downgrade_256bit()"
+    return "d"
 
 
 for ROWS, COLS in SIZES:
@@ -126,55 +51,117 @@ for ROWS, COLS in SIZES:
     SZ = ROWS * COLS
     L = min(ROWS, COLS)
     S = max(ROWS, COLS)
-    print("#[inline(always)]")
-    print(
-        "fn reinterpreting_dct2d_%d_%d_impl<D: SimdDescriptor>(d: D, data: &mut[f32], output: &mut[f32]) {"
-        % (ROWS, COLS)
-    )
-    print('assert_eq!(data.len(), %d, "Data length mismatch");' % SZ)
-    print("assert!(output.len() > %d);" % ((L - 1) * S * 8 + S - 1))
-
-    print("const { assert!(%dusize.is_multiple_of(D::F32Vec::LEN)) };" % ROWS)
-    print("const { assert!(%dusize.is_multiple_of(D::F32Vec::LEN)) };" % COLS)
-    print("{")
-    if ROWS == 1 or COLS == 1:
-        print("let data = D::F32Vec::make_array_slice_mut(data);")
-        print("do_reinterpreting_dct_%d(d, data, 1);" % S)
-    elif ROWS < COLS:
-        impl_r_less_c(ROWS, COLS)
-    elif ROWS == COLS:
-        impl_square(ROWS)
-    else:
-        impl_r_greater_c(ROWS, COLS)
-    print("}")
-
-    print("for y in 0..%d {" % L)
-    print("for x in 0..%d {" % S)
-    print("output[y * %d + x] = data[y * %d + x];" % (S * 8, S))
-    print("}")
-    print("}")
-    print("}")
-
-# Wrappers to reduce SIMD size.
-for ROWS, COLS in SIZES:
-    print()
-    print("#[inline(always)]")
-    print("#[allow(unused_variables)]")
-    print(
-        "pub fn reinterpreting_dct2d_%d_%d<D: SimdDescriptor>(d: D, data: &mut[f32], output: &mut[f32]) {"
-        % (ROWS, COLS)
-    )
+    OUT_STRIDE = S * 8
     if ROWS < 4 or COLS < 4:
-        descriptor = "jxl_simd::ScalarDescriptor"
-        print("let d = %s::new().unwrap();" % descriptor)
-    elif ROWS < 8 or COLS < 8:
-        descriptor = "D::Descriptor128"
-        print("let d = d.maybe_downgrade_128bit();")
-    elif ROWS < 16 or COLS < 16:
-        descriptor = "D::Descriptor256"
-        print("let d = d.maybe_downgrade_256bit();")
+        print("#[inline(always)]")
+        print(
+            "fn reinterpreting_dct2d_%d_%d_impl<D: SimdDescriptor128>(d: D, data: &mut [f32], output: &mut [f32]) {"
+            % (ROWS, COLS)
+        )
+        print('assert_eq!(data.len(), %d, "Data length mismatch");' % SZ)
+        print("assert!(output.len() > %d);" % ((L - 1) * OUT_STRIDE + S - 1))
+        print("const { assert!(F32Vec::<D>::LEN == 4) };")
+        if ROWS == 1 or COLS == 1:
+            print("let mut buf = [0.0f32; %d];" % (S * 4))
+            print("for i in 0..%d {" % S)
+            print("buf[i * 4] = data[i];")
+            print("}")
+            print("{")
+            print("let buf = F32Vec::<D>::make_array_slice_mut(&mut buf);")
+            print("do_reinterpreting_dct_%d(d, buf, 1);" % S)
+            print("}")
+            print("for x in 0..%d {" % S)
+            print("output[x] = buf[x * 4];")
+            print("}")
+        else:
+            print("let mut buf = [0.0f32; 16];")
+            print("for r in 0..%d {" % ROWS)
+            print(
+                "buf[r * 4..r * 4 + %d].copy_from_slice(&data[r * %d..r * %d + %d]);"
+                % (COLS, COLS, COLS, COLS)
+            )
+            print("}")
+            if ROWS < COLS:
+                print("crate::transpose::transpose_in_place(d, &mut buf, 4);")
+                print("do_reinterpreting_dct_%d(d, F32Vec::<D>::make_array_slice_mut(&mut buf), 1);" % COLS)
+                print("crate::transpose::transpose_in_place(d, &mut buf, 4);")
+                print("do_reinterpreting_dct_%d(d, F32Vec::<D>::make_array_slice_mut(&mut buf), 1);" % ROWS)
+            else:
+                print("do_reinterpreting_dct_%d(d, F32Vec::<D>::make_array_slice_mut(&mut buf), 1);" % ROWS)
+                print("crate::transpose::transpose_in_place(d, &mut buf, 4);")
+                print("do_reinterpreting_dct_%d(d, F32Vec::<D>::make_array_slice_mut(&mut buf), 1);" % COLS)
+            print("for y in 0..%d {" % L)
+            print("for x in 0..%d {" % S)
+            print("output[y * %d + x] = buf[y * 4 + x];" % OUT_STRIDE)
+            print("}")
+            print("}")
+        print("}")
+        print()
+        print("#[inline(always)]")
+        print(
+            "pub fn reinterpreting_dct2d_%d_%d<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {"
+            % (ROWS, COLS)
+        )
+        print(
+            "reinterpreting_dct2d_%d_%d_impl(d.maybe_downgrade_128bit(), data, output)"
+            % (ROWS, COLS)
+        )
+        print("}")
     else:
-        descriptor = "D"
-
-    print("reinterpreting_dct2d_%d_%d_impl(d, data, output)" % (ROWS, COLS))
-    print("}")
+        print("#[inline(always)]")
+        print(
+            "pub fn reinterpreting_dct2d_%d_%d<D: SimdDescriptor>(d: D, data: &mut [f32], output: &mut [f32]) {"
+            % (ROWS, COLS)
+        )
+        print('assert_eq!(data.len(), %d, "Data length mismatch");' % SZ)
+        print("assert!(output.len() > %d);" % ((L - 1) * OUT_STRIDE + S - 1))
+        if ROWS == 32 and COLS == 32:
+            print("col_reinterpreting_dct_32(d, data, 32, 32);")
+            print("let chunks = 32 / F32Vec::<D>::LEN;")
+            print("for i in 0..chunks {")
+            print("crate::transpose::transpose_in_place_step(d, data, 32, i);")
+            print("let data_arr = F32Vec::<D>::make_array_slice_mut(&mut data[..1024]);")
+            print("do_reinterpreting_dct_32(d, &mut data_arr[i..], chunks);")
+            print("}")
+            print("let data = &data[..1024];")
+            print("let output = &mut output[..31 * 256 + 32];")
+            print("let len = F32Vec::<D>::LEN;")
+            print("for y in 0..32 {")
+            print("for x in (0..32).step_by(len) {")
+            print(
+                "F32Vec::load(d, &data[y * 32 + x..]).store(&mut output[y * 256 + x..]);"
+            )
+            print("}")
+            print("}")
+        elif ROWS >= COLS:
+            print(
+                "col_reinterpreting_dct_%d(%s, data, %d, %d);"
+                % (ROWS, descr_for_width(COLS), COLS, COLS)
+            )
+            print(
+                "crate::transpose::transpose_into_strided(d, data, output, %d, %d, %d);"
+                % (ROWS, COLS, OUT_STRIDE)
+            )
+            print(
+                "col_reinterpreting_dct_%d(%s, output, %d, %d);"
+                % (COLS, descr_for_width(ROWS), ROWS, OUT_STRIDE)
+            )
+        else:
+            print(
+                "col_reinterpreting_dct_%d(%s, data, %d, %d);"
+                % (ROWS, descr_for_width(COLS), COLS, COLS)
+            )
+            print("let mut tmp = [0.0f32; %d];" % SZ)
+            print(
+                "crate::transpose::transpose(d, data, &mut tmp, %d, %d);"
+                % (ROWS, COLS)
+            )
+            print(
+                "col_reinterpreting_dct_%d(%s, &mut tmp, %d, %d);"
+                % (COLS, descr_for_width(ROWS), ROWS, ROWS)
+            )
+            print(
+                "crate::transpose::transpose_into_strided(d, &tmp, output, %d, %d, %d);"
+                % (COLS, ROWS, OUT_STRIDE)
+            )
+        print("}")
