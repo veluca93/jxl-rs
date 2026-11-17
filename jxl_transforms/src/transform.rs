@@ -373,7 +373,8 @@ fn afv_transform_to_pixels<D: SimdDescriptor>(
     }
 }
 
-#[inline(always)]
+/// This includes a call to what libjxl calls lowest_frequencies_from_lf.
+#[simd_dispatch(transform_to_pixels)]
 pub fn transform_to_pixels_impl<D: SimdDescriptor>(
     d: D,
     transform_type: HfTransformType,
@@ -661,15 +662,4 @@ pub fn transform_to_pixels_impl<D: SimdDescriptor>(
             }
         }
     };
-}
-
-/// This includes a call to what libjxl calls lowest_frequencies_from_lf.
-#[simd_dispatch(transform_to_pixels)]
-pub fn transform_to_pixels_trampoline<D: SimdDescriptor>(
-    d: D,
-    transform_type: HfTransformType,
-    lf: &mut [f32],
-    transform_buffer: &mut [f32],
-) {
-    transform_to_pixels_impl(d, transform_type, lf, transform_buffer);
 }

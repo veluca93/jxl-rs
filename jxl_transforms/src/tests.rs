@@ -5,7 +5,7 @@
 
 use std::f64::consts::{FRAC_1_SQRT_2, PI, SQRT_2};
 
-use jxl_simd::{simd_test, Emu128Descriptor, ScalarDescriptor, SimdDescriptor};
+use jxl_simd::{simd_test, Emu128Descriptor, SimdDescriptor};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha12Rng;
 use test_log::test;
@@ -265,15 +265,16 @@ macro_rules! test_idct1d_eq_slow_n {
 
             let output_matrix_slow: Vec<Vec<f64>> = idct1d(&input_matrix_for_ref);
 
-            let mut output: Vec<_> = input_matrix_for_ref.iter().map(|x| x[0] as f32).collect();
-            let d = ScalarDescriptor {};
+            let mut output: Vec<[f32; 4]> = input_matrix_for_ref
+                .iter()
+                .map(|x| [x[0] as f32; 4])
+                .collect();
+            let d = Emu128Descriptor::new().unwrap();
 
-            let (output_chunks, remainder) = output.as_chunks_mut::<1>();
-            assert!(remainder.is_empty());
-            $do_idct_fun(d, output_chunks, 1);
+            $do_idct_fun(d, &mut output, 1);
 
             for i in 0..N {
-                check_close(output[i] as f64, output_matrix_slow[i][0], $tolerance);
+                check_close(output[i][0] as f64, output_matrix_slow[i][0], $tolerance);
             }
         }
     };
