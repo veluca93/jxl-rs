@@ -15,7 +15,7 @@ pub(super) mod avx512;
 pub(super) mod sse42;
 
 #[cfg(any(feature = "sse42", feature = "avx", feature = "avx512"))]
-use crate::{SimdDescriptor, SimdDescriptor128};
+use crate::{SimdDescriptor, SimdDescriptor128, TypeFamily};
 
 #[cfg(feature = "sse42")]
 #[derive(Clone, Copy, Debug)]
@@ -79,6 +79,23 @@ impl SimdDescriptor for Sse42Descriptor {
         }
         // SAFETY: descriptor invariant guarantees `sse4.2`.
         unsafe { inner(self, f) }
+    }
+
+    #[inline(always)]
+    fn try_sse42<F: TypeFamily<Self> + TypeFamily<Sse42Descriptor>, P, IndRet>(
+        self,
+        p: P,
+        d_args: <F as TypeFamily<Self>>::Args,
+        f: impl FnOnce(
+            Sse42Descriptor,
+            P,
+            <F as TypeFamily<Sse42Descriptor>>::Args,
+        ) -> <F as TypeFamily<Sse42Descriptor>>::Ret<IndRet>,
+    ) -> Result<<F as TypeFamily<Self>>::Ret<IndRet>, (P, <F as TypeFamily<Self>>::Args)> {
+        self.call_inlined(
+            #[inline(always)]
+            |d| Ok(f(d, p, d_args)),
+        )
     }
 }
 
@@ -154,6 +171,23 @@ impl SimdDescriptor for AvxDescriptor {
         }
         // SAFETY: descriptor invariant guarantees `avx2,fma,f16c`.
         unsafe { inner(self, f) }
+    }
+
+    #[inline(always)]
+    fn try_avx<F: TypeFamily<Self> + TypeFamily<AvxDescriptor>, P, IndRet>(
+        self,
+        p: P,
+        d_args: <F as TypeFamily<Self>>::Args,
+        f: impl FnOnce(
+            AvxDescriptor,
+            P,
+            <F as TypeFamily<AvxDescriptor>>::Args,
+        ) -> <F as TypeFamily<AvxDescriptor>>::Ret<IndRet>,
+    ) -> Result<<F as TypeFamily<Self>>::Ret<IndRet>, (P, <F as TypeFamily<Self>>::Args)> {
+        self.call_inlined(
+            #[inline(always)]
+            |d| Ok(f(d, p, d_args)),
+        )
     }
 }
 
@@ -233,6 +267,23 @@ impl SimdDescriptor for Avx512Descriptor {
         }
         // SAFETY: descriptor invariant guarantees `avx512f,avx512bw,avx2,fma,f16c`.
         unsafe { inner(self, f) }
+    }
+
+    #[inline(always)]
+    fn try_avx512<F: TypeFamily<Self> + TypeFamily<Avx512Descriptor>, P, IndRet>(
+        self,
+        p: P,
+        d_args: <F as TypeFamily<Self>>::Args,
+        f: impl FnOnce(
+            Avx512Descriptor,
+            P,
+            <F as TypeFamily<Avx512Descriptor>>::Args,
+        ) -> <F as TypeFamily<Avx512Descriptor>>::Ret<IndRet>,
+    ) -> Result<<F as TypeFamily<Self>>::Ret<IndRet>, (P, <F as TypeFamily<Self>>::Args)> {
+        self.call_inlined(
+            #[inline(always)]
+            |d| Ok(f(d, p, d_args)),
+        )
     }
 }
 

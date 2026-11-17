@@ -10,7 +10,7 @@ pub(super) mod arch_ops;
 pub(super) mod simd128;
 
 #[cfg(feature = "simd128")]
-use crate::{SimdDescriptor, SimdDescriptor128};
+use crate::{SimdDescriptor, SimdDescriptor128, TypeFamily};
 
 #[cfg(feature = "simd128")]
 #[derive(Clone, Copy, Debug)]
@@ -66,6 +66,23 @@ impl SimdDescriptor for Simd128Descriptor {
     #[inline(always)]
     fn call_inlined<R>(self, f: impl FnOnce(Self) -> R) -> R {
         f(self)
+    }
+
+    #[inline(always)]
+    fn try_simd128<F: TypeFamily<Self> + TypeFamily<Simd128Descriptor>, P, IndRet>(
+        self,
+        p: P,
+        d_args: <F as TypeFamily<Self>>::Args,
+        f: impl FnOnce(
+            Simd128Descriptor,
+            P,
+            <F as TypeFamily<Simd128Descriptor>>::Args,
+        ) -> <F as TypeFamily<Simd128Descriptor>>::Ret<IndRet>,
+    ) -> Result<<F as TypeFamily<Self>>::Ret<IndRet>, (P, <F as TypeFamily<Self>>::Args)> {
+        self.call_inlined(
+            #[inline(always)]
+            |d| Ok(f(d, p, d_args)),
+        )
     }
 }
 

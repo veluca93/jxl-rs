@@ -7,7 +7,9 @@ use std::iter::FromIterator;
 
 use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream, TokenTree};
 
-fn err(span: Span, msg: &str) -> TokenStream {
+mod specialize;
+
+pub(crate) fn err(span: Span, msg: &str) -> TokenStream {
     let mut inner = TokenStream::new();
     let mut lit = Literal::string(msg);
     lit.set_span(span);
@@ -24,11 +26,11 @@ fn err(span: Span, msg: &str) -> TokenStream {
     out
 }
 
-fn ts(trees: impl IntoIterator<Item = TokenTree>) -> TokenStream {
+pub(crate) fn ts(trees: impl IntoIterator<Item = TokenTree>) -> TokenStream {
     TokenStream::from_iter(trees)
 }
 
-fn flatten_none(stream: TokenStream) -> Vec<TokenTree> {
+pub(crate) fn flatten_none(stream: TokenStream) -> Vec<TokenTree> {
     fn go(stream: TokenStream, out: &mut Vec<TokenTree>) {
         for tt in stream {
             if let TokenTree::Group(g) = &tt
@@ -45,19 +47,19 @@ fn flatten_none(stream: TokenStream) -> Vec<TokenTree> {
     out
 }
 
-fn is_ident(tt: &TokenTree, kw: &str) -> bool {
+pub(crate) fn is_ident(tt: &TokenTree, kw: &str) -> bool {
     matches!(tt, TokenTree::Ident(id) if id.to_string() == kw)
 }
 
-fn is_punct(tt: &TokenTree, ch: char) -> bool {
+pub(crate) fn is_punct(tt: &TokenTree, ch: char) -> bool {
     matches!(tt, TokenTree::Punct(p) if p.as_char() == ch)
 }
 
-fn span_of(toks: &[TokenTree]) -> Span {
+pub(crate) fn span_of(toks: &[TokenTree]) -> Span {
     toks.first().map_or_else(Span::call_site, TokenTree::span)
 }
 
-fn path_tokens(span: Span, segments: &[&str]) -> Vec<TokenTree> {
+pub(crate) fn path_tokens(span: Span, segments: &[&str]) -> Vec<TokenTree> {
     let mut out = Vec::new();
     for seg in segments {
         out.push(TokenTree::Punct(Punct::new(':', Spacing::Joint)));
@@ -67,25 +69,25 @@ fn path_tokens(span: Span, segments: &[&str]) -> Vec<TokenTree> {
     out
 }
 
-fn paren(span: Span, inner: TokenStream) -> TokenTree {
+pub(crate) fn paren(span: Span, inner: TokenStream) -> TokenTree {
     let mut g = Group::new(Delimiter::Parenthesis, inner);
     g.set_span(span);
     TokenTree::Group(g)
 }
 
-fn bracket(span: Span, inner: TokenStream) -> TokenTree {
+pub(crate) fn bracket(span: Span, inner: TokenStream) -> TokenTree {
     let mut g = Group::new(Delimiter::Bracket, inner);
     g.set_span(span);
     TokenTree::Group(g)
 }
 
-fn brace(span: Span, inner: TokenStream) -> TokenTree {
+pub(crate) fn brace(span: Span, inner: TokenStream) -> TokenTree {
     let mut g = Group::new(Delimiter::Brace, inner);
     g.set_span(span);
     TokenTree::Group(g)
 }
 
-fn attr_first_ident(attr_toks: &[TokenTree]) -> Option<String> {
+pub(crate) fn attr_first_ident(attr_toks: &[TokenTree]) -> Option<String> {
     let [_, TokenTree::Group(g)] = attr_toks else {
         return None;
     };
@@ -96,7 +98,7 @@ fn attr_first_ident(attr_toks: &[TokenTree]) -> Option<String> {
     }
 }
 
-fn parse_outer_attrs(toks: &[TokenTree], pos: &mut usize) -> Vec<Vec<TokenTree>> {
+pub(crate) fn parse_outer_attrs(toks: &[TokenTree], pos: &mut usize) -> Vec<Vec<TokenTree>> {
     let mut attrs = Vec::new();
     while *pos + 1 < toks.len()
         && is_punct(&toks[*pos], '#')
@@ -108,13 +110,21 @@ fn parse_outer_attrs(toks: &[TokenTree], pos: &mut usize) -> Vec<Vec<TokenTree>>
     attrs
 }
 
-fn split_top_level_commas(toks: &[TokenTree]) -> Vec<&[TokenTree]> {
+pub(crate) fn is_fat_arrow(toks: &[TokenTree], pos: usize) -> bool {
+    matches!(
+        (toks.get(pos), toks.get(pos + 1)),
+        (Some(TokenTree::Punct(a)), Some(TokenTree::Punct(b)))
+            if a.as_char() == '=' && a.spacing() == Spacing::Joint && b.as_char() == '>'
+    )
+}
+
+pub(crate) fn split_top_level_commas(toks: &[TokenTree]) -> Vec<&[TokenTree]> {
     let mut parts = Vec::new();
     let mut start = 0;
     let mut angle_depth = 0usize;
     let mut i = 0;
     while i < toks.len() {
-        if is_arrow(toks, i) {
+        if is_arrow(toks, i) || is_fat_arrow(toks, i) {
             i += 2;
             continue;
         }
@@ -139,11 +149,11 @@ fn split_top_level_commas(toks: &[TokenTree]) -> Vec<&[TokenTree]> {
     parts
 }
 
-fn find_single_colon(toks: &[TokenTree]) -> Option<usize> {
+pub(crate) fn find_single_colon(toks: &[TokenTree]) -> Option<usize> {
     let mut angle_depth = 0usize;
     let mut i = 0;
     while i < toks.len() {
-        if is_arrow(toks, i) {
+        if is_arrow(toks, i) || is_fat_arrow(toks, i) {
             i += 2;
             continue;
         }
@@ -186,18 +196,18 @@ fn default_inline_attr(has_inline: bool, span: Span) -> TokenStream {
     ])
 }
 
-enum GenericKind<'a> {
-    Lifetime,
+pub(crate) enum GenericKind<'a> {
+    Lifetime(&'a Ident),
     Type(&'a Ident),
     Const(&'a Ident),
 }
 
-struct GenericParam<'a> {
-    tokens: &'a [TokenTree],
-    kind: GenericKind<'a>,
+pub(crate) struct GenericParam<'a> {
+    pub(crate) tokens: &'a [TokenTree],
+    pub(crate) kind: GenericKind<'a>,
 }
 
-fn parse_generics<'a>(
+pub(crate) fn parse_generics<'a>(
     toks: &'a [TokenTree],
     pos: &mut usize,
 ) -> Result<Vec<GenericParam<'a>>, TokenStream> {
@@ -209,7 +219,7 @@ fn parse_generics<'a>(
     let mut depth = 1usize;
     let mut i = start;
     while i < toks.len() {
-        if is_arrow(toks, i) {
+        if is_arrow(toks, i) || is_fat_arrow(toks, i) {
             i += 2;
             continue;
         }
@@ -231,9 +241,12 @@ fn parse_generics<'a>(
     let mut params = Vec::new();
     for raw in split_top_level_commas(&toks[start..i]) {
         if is_punct(&raw[0], '\'') {
+            let Some(TokenTree::Ident(id)) = raw.get(1) else {
+                return Err(err(span_of(raw), "expected lifetime identifier after `'`"));
+            };
             params.push(GenericParam {
                 tokens: raw,
-                kind: GenericKind::Lifetime,
+                kind: GenericKind::Lifetime(id),
             });
         } else if is_ident(&raw[0], "const") {
             let Some(TokenTree::Ident(id)) = raw.get(1) else {
@@ -255,7 +268,7 @@ fn parse_generics<'a>(
     Ok(params)
 }
 
-fn bounded_ty_starts_with(pred: &[TokenTree], ident_str: &str) -> bool {
+pub(crate) fn bounded_ty_starts_with(pred: &[TokenTree], ident_str: &str) -> bool {
     // Strip optional `for<'a>` binder before checking the bounded type.
     let mut slice = pred;
     if slice.first().is_some_and(|t| is_ident(t, "for")) {
@@ -280,13 +293,16 @@ fn bounded_ty_starts_with(pred: &[TokenTree], ident_str: &str) -> bool {
     }
 }
 
-struct ParsedParam {
-    attrs: Vec<Vec<TokenTree>>,
-    pat: Vec<TokenTree>,
-    ty: Vec<TokenTree>,
+pub(crate) struct ParsedParam {
+    pub(crate) attrs: Vec<Vec<TokenTree>>,
+    pub(crate) pat: Vec<TokenTree>,
+    pub(crate) ty: Vec<TokenTree>,
 }
 
-fn parse_params(stream: TokenStream, err_span: Span) -> Result<Vec<ParsedParam>, TokenStream> {
+pub(crate) fn parse_params(
+    stream: TokenStream,
+    err_span: Span,
+) -> Result<Vec<ParsedParam>, TokenStream> {
     let toks = flatten_none(stream);
     let mut out = Vec::new();
     for raw in split_top_level_commas(&toks) {
@@ -295,7 +311,7 @@ fn parse_params(stream: TokenStream, err_span: Span) -> Result<Vec<ParsedParam>,
         let rest = &raw[idx..];
         let Some(colon) = find_single_colon(rest) else {
             return Err(err(
-                span_of(rest.first().map_or(&[], |x| std::slice::from_ref(x))),
+                span_of(rest.first().map_or(&[], std::slice::from_ref)),
                 "expected typed parameter `name: Type` (methods taking `self` are not supported)",
             ));
         };
@@ -309,7 +325,7 @@ fn parse_params(stream: TokenStream, err_span: Span) -> Result<Vec<ParsedParam>,
     Ok(out)
 }
 
-fn clean_param_ident(pat: &[TokenTree], idx: usize, fallback_span: Span) -> Ident {
+pub(crate) fn clean_param_ident(pat: &[TokenTree], idx: usize, fallback_span: Span) -> Ident {
     match pat {
         [TokenTree::Ident(id)] => id.clone(),
         [mut_kw, TokenTree::Ident(id)] if is_ident(mut_kw, "mut") => id.clone(),
@@ -317,12 +333,138 @@ fn clean_param_ident(pat: &[TokenTree], idx: usize, fallback_span: Span) -> Iden
     }
 }
 
-fn is_arrow(toks: &[TokenTree], pos: usize) -> bool {
+pub(crate) fn is_arrow(toks: &[TokenTree], pos: usize) -> bool {
     matches!(
         (toks.get(pos), toks.get(pos + 1)),
         (Some(TokenTree::Punct(a)), Some(TokenTree::Punct(b)))
             if a.as_char() == '-' && a.spacing() == Spacing::Joint && b.as_char() == '>'
     )
+}
+
+pub(crate) struct ParsedSimdFn<'a> {
+    pub(crate) attrs: Vec<Vec<TokenTree>>,
+    pub(crate) vis: &'a [TokenTree],
+    pub(crate) fn_name: &'a Ident,
+    pub(crate) span: Span,
+    pub(crate) generic_params: Vec<GenericParam<'a>>,
+    pub(crate) params: Vec<ParsedParam>,
+    pub(crate) descr_ty_ident: Ident,
+    pub(crate) ret_toks: &'a [TokenTree],
+    pub(crate) where_preds: Vec<&'a [TokenTree]>,
+    pub(crate) body_group: &'a Group,
+}
+
+pub(crate) fn parse_simd_fn<'a>(
+    item_toks: &'a [TokenTree],
+    macro_name: &str,
+) -> Result<ParsedSimdFn<'a>, TokenStream> {
+    let mut pos = 0;
+    let attrs = parse_outer_attrs(item_toks, &mut pos);
+
+    let vis_start = pos;
+    if item_toks.get(pos).is_some_and(|t| is_ident(t, "pub")) {
+        pos += 1;
+        if matches!(
+            item_toks.get(pos),
+            Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Parenthesis
+        ) {
+            pos += 1;
+        }
+    }
+    let vis = &item_toks[vis_start..pos];
+
+    if !item_toks.get(pos).is_some_and(|t| is_ident(t, "fn")) {
+        return Err(err(
+            span_of(&item_toks[pos..]),
+            &format!("`#[{macro_name}]` must be applied to a `fn` item"),
+        ));
+    }
+    pos += 1;
+
+    let Some(TokenTree::Ident(fn_name)) = item_toks.get(pos) else {
+        return Err(err(span_of(&item_toks[pos..]), "expected function name"));
+    };
+    let span = fn_name.span();
+    pos += 1;
+
+    let generic_params = parse_generics(item_toks, &mut pos)?;
+
+    let Some(TokenTree::Group(params_group)) = item_toks.get(pos) else {
+        return Err(err(span, "expected parameter list"));
+    };
+    if params_group.delimiter() != Delimiter::Parenthesis {
+        return Err(err(params_group.span(), "expected parameter list `(...)`"));
+    }
+    pos += 1;
+
+    let params = parse_params(params_group.stream(), params_group.span())?;
+    let Some(first_param) = params.first() else {
+        return Err(err(
+            params_group.span(),
+            "expected first parameter to be the generic SIMD descriptor, e.g. `d: D`",
+        ));
+    };
+    let [TokenTree::Ident(descr_ty_ident)] = first_param.ty.as_slice() else {
+        return Err(err(
+            span_of(&first_param.ty),
+            "expected first parameter type to be the generic `SimdDescriptor` type parameter (e.g. `d: D`)",
+        ));
+    };
+    let descr_ty_ident = descr_ty_ident.clone();
+    let descr_ty_str = descr_ty_ident.to_string();
+    if !generic_params
+        .iter()
+        .any(|gp| matches!(gp.kind, GenericKind::Type(id) if id.to_string() == descr_ty_str))
+    {
+        return Err(err(
+            descr_ty_ident.span(),
+            &format!("type `{descr_ty_str}` must be a generic type parameter on `{fn_name}`"),
+        ));
+    }
+
+    let ret_start = pos;
+    if is_arrow(item_toks, pos) {
+        pos += 2;
+        while pos < item_toks.len()
+            && !is_ident(&item_toks[pos], "where")
+            && !matches!(&item_toks[pos], TokenTree::Group(g) if g.delimiter() == Delimiter::Brace)
+        {
+            pos += 1;
+        }
+    }
+    let ret_toks = &item_toks[ret_start..pos];
+
+    let mut where_preds = Vec::new();
+    if item_toks.get(pos).is_some_and(|t| is_ident(t, "where")) {
+        pos += 1;
+        let where_start = pos;
+        while pos < item_toks.len()
+            && !matches!(&item_toks[pos], TokenTree::Group(g) if g.delimiter() == Delimiter::Brace)
+        {
+            pos += 1;
+        }
+        where_preds = split_top_level_commas(&item_toks[where_start..pos]);
+    }
+
+    let Some(TokenTree::Group(body_group)) = item_toks.get(pos) else {
+        return Err(err(span_of(&item_toks[pos..]), "expected function body"));
+    };
+    if body_group.delimiter() != Delimiter::Brace {
+        return Err(err(body_group.span(), "expected function body"));
+    }
+
+    Ok(ParsedSimdFn {
+        attrs,
+        vis,
+        fn_name,
+        span,
+        generic_params,
+        params,
+        descr_ty_ident,
+        ret_toks,
+        where_preds,
+        body_group,
+    })
 }
 
 /// Generates a runtime-dispatched wrapper function around a generic SIMD implementation.
@@ -352,114 +494,27 @@ fn simd_dispatch_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStrea
     };
 
     let item_toks = flatten_none(item.clone());
-    let mut pos = 0;
-    let attrs = parse_outer_attrs(&item_toks, &mut pos);
-    let has_inline = attrs
+    let parsed = parse_simd_fn(&item_toks, "simd_dispatch")?;
+    let has_inline = parsed
+        .attrs
         .iter()
         .any(|a| attr_first_ident(a).as_deref() == Some("inline"));
-
-    let vis_start = pos;
-    if item_toks.get(pos).is_some_and(|t| is_ident(t, "pub")) {
-        pos += 1;
-        if matches!(
-            item_toks.get(pos),
-            Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Parenthesis
-        ) {
-            pos += 1;
-        }
-    }
-    let vis = &item_toks[vis_start..pos];
-
-    if !item_toks.get(pos).is_some_and(|t| is_ident(t, "fn")) {
-        return Err(err(
-            span_of(&item_toks[pos..]),
-            "`#[simd_dispatch]` must be applied to a `fn` item",
-        ));
-    }
-    pos += 1;
-
-    let Some(TokenTree::Ident(fn_name)) = item_toks.get(pos) else {
-        return Err(err(span_of(&item_toks[pos..]), "expected function name"));
-    };
-    let span = fn_name.span();
-    pos += 1;
-
-    let generic_params = parse_generics(&item_toks, &mut pos)?;
-
-    let Some(TokenTree::Group(params_group)) = item_toks.get(pos) else {
-        return Err(err(span, "expected parameter list"));
-    };
-    if params_group.delimiter() != Delimiter::Parenthesis {
-        return Err(err(params_group.span(), "expected parameter list `(...)`"));
-    }
-    pos += 1;
-
-    let params = parse_params(params_group.stream(), params_group.span())?;
-    let Some(first_param) = params.first() else {
-        return Err(err(
-            params_group.span(),
-            "expected first parameter to be the generic SIMD descriptor, e.g. `d: D`",
-        ));
-    };
-    let [TokenTree::Ident(descr_ty_ident)] = first_param.ty.as_slice() else {
-        return Err(err(
-            span_of(&first_param.ty),
-            "expected first parameter type to be the generic `SimdDescriptor` type parameter (e.g. `d: D`)",
-        ));
-    };
-    let descr_ty_str = descr_ty_ident.to_string();
-    if !generic_params
+    let descr_ty_str = parsed.descr_ty_ident.to_string();
+    let span = parsed.span;
+    let kept_where: Vec<&[TokenTree]> = parsed
+        .where_preds
         .iter()
-        .any(|gp| matches!(gp.kind, GenericKind::Type(id) if id.to_string() == descr_ty_str))
-    {
-        return Err(err(
-            descr_ty_ident.span(),
-            &format!("type `{descr_ty_str}` must be a generic type parameter on `{fn_name}`"),
-        ));
-    }
-
-    let ret_start = pos;
-    if is_arrow(&item_toks, pos) {
-        pos += 2;
-        while pos < item_toks.len()
-            && !is_ident(&item_toks[pos], "where")
-            && !matches!(&item_toks[pos], TokenTree::Group(g) if g.delimiter() == Delimiter::Brace)
-        {
-            pos += 1;
-        }
-    }
-    let ret_toks = &item_toks[ret_start..pos];
-
-    let mut kept_where: Vec<&[TokenTree]> = Vec::new();
-    if item_toks.get(pos).is_some_and(|t| is_ident(t, "where")) {
-        pos += 1;
-        let where_start = pos;
-        while pos < item_toks.len()
-            && !matches!(&item_toks[pos], TokenTree::Group(g) if g.delimiter() == Delimiter::Brace)
-        {
-            pos += 1;
-        }
-        for pred in split_top_level_commas(&item_toks[where_start..pos]) {
-            if !bounded_ty_starts_with(pred, &descr_ty_str) {
-                kept_where.push(pred);
-            }
-        }
-    }
-
-    if !matches!(
-        item_toks.get(pos),
-        Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace
-    ) {
-        return Err(err(span_of(&item_toks[pos..]), "expected function body"));
-    }
+        .copied()
+        .filter(|pred| !bounded_ty_starts_with(pred, &descr_ty_str))
+        .collect();
 
     // Build generic list for the dispatch wrapper (strip `D`), plus turbofish args for the call.
     let mut dispatch_generic_list: Vec<&[TokenTree]> = Vec::new();
     let mut turbofish: Vec<TokenTree> = Vec::new();
     let mut has_extra_type_or_const = false;
-    for gp in &generic_params {
+    for gp in &parsed.generic_params {
         match gp.kind {
-            GenericKind::Lifetime => dispatch_generic_list.push(gp.tokens),
+            GenericKind::Lifetime(_) => dispatch_generic_list.push(gp.tokens),
             GenericKind::Type(id) if id.to_string() == descr_ty_str => {
                 if !turbofish.is_empty() {
                     turbofish.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
@@ -479,7 +534,7 @@ fn simd_dispatch_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStrea
 
     let mut clean_params_inner = Vec::new();
     let mut arg_vals = Vec::new();
-    for (idx, param) in params.iter().skip(1).enumerate() {
+    for (idx, param) in parsed.params.iter().skip(1).enumerate() {
         let arg_id = clean_param_ident(&param.pat, idx, span);
         if !clean_params_inner.is_empty() {
             clean_params_inner.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
@@ -496,7 +551,7 @@ fn simd_dispatch_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStrea
 
     let descr_arg = Ident::new("__d", span);
     let mut call_toks = Vec::new();
-    call_toks.push(TokenTree::Ident(fn_name.clone()));
+    call_toks.push(TokenTree::Ident(parsed.fn_name.clone()));
     if has_extra_type_or_const {
         call_toks.push(TokenTree::Punct(Punct::new(':', Spacing::Joint)));
         call_toks.push(TokenTree::Punct(Punct::new(':', Spacing::Alone)));
@@ -525,12 +580,12 @@ fn simd_dispatch_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStrea
     let mut out = default_inline_attr(has_inline, span);
     out.extend(item);
 
-    for attr in attrs {
+    for attr in parsed.attrs {
         if attr_first_ident(&attr).as_deref() != Some("inline") {
             out.extend(attr);
         }
     }
-    out.extend(vis.iter().cloned());
+    out.extend(parsed.vis.iter().cloned());
     out.extend([
         TokenTree::Ident(Ident::new("fn", span)),
         TokenTree::Ident(dname.clone()),
@@ -546,7 +601,7 @@ fn simd_dispatch_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStrea
         out.extend([TokenTree::Punct(Punct::new('>', Spacing::Alone))]);
     }
     out.extend([paren(span, ts(clean_params_inner))]);
-    out.extend(ret_toks.iter().cloned());
+    out.extend(parsed.ret_toks.iter().cloned());
     if !kept_where.is_empty() {
         out.extend([TokenTree::Ident(Ident::new("where", span))]);
         for (i, pred) in kept_where.iter().enumerate() {
@@ -558,6 +613,27 @@ fn simd_dispatch_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStrea
     }
     out.extend([brace(span, ts(fn_body))]);
     Ok(out)
+}
+
+/// Dispatches specialized per-ISA implementations inside a generic SIMD function.
+///
+/// # Example
+/// ```ignore
+/// #[simd_specialize(
+///     Avx512Descriptor => my_op_avx512,
+///     AvxDescriptor => my_op_avx,
+///     NeonDescriptor => my_op_neon,
+/// )]
+/// fn my_op<D: SimdDescriptor>(d: D, input: &[f32], output: &mut [f32]) {
+///     // Generic fallback body
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn simd_specialize(attr: TokenStream, item: TokenStream) -> TokenStream {
+    match specialize::simd_specialize_impl(attr, item) {
+        Ok(tokens) => tokens,
+        Err(err_ts) => err_ts,
+    }
 }
 
 /// Generates per-instruction-set `#[test]` functions calling the annotated generic SIMD test.

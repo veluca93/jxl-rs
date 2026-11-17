@@ -11,7 +11,7 @@ pub(super) mod arch_ops;
 pub(super) mod neon;
 
 #[cfg(feature = "neon")]
-use crate::{SimdDescriptor, SimdDescriptor128};
+use crate::{SimdDescriptor, SimdDescriptor128, TypeFamily};
 
 #[cfg(feature = "neon")]
 #[derive(Clone, Copy, Debug)]
@@ -75,6 +75,23 @@ impl SimdDescriptor for NeonDescriptor {
         }
         // SAFETY: descriptor invariant guarantees `neon`.
         unsafe { inner(self, f) }
+    }
+
+    #[inline(always)]
+    fn try_neon<F: TypeFamily<Self> + TypeFamily<NeonDescriptor>, P, IndRet>(
+        self,
+        p: P,
+        d_args: <F as TypeFamily<Self>>::Args,
+        f: impl FnOnce(
+            NeonDescriptor,
+            P,
+            <F as TypeFamily<NeonDescriptor>>::Args,
+        ) -> <F as TypeFamily<NeonDescriptor>>::Ret<IndRet>,
+    ) -> Result<<F as TypeFamily<Self>>::Ret<IndRet>, (P, <F as TypeFamily<Self>>::Args)> {
+        self.call_inlined(
+            #[inline(always)]
+            |d| Ok(f(d, p, d_args)),
+        )
     }
 }
 

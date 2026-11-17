@@ -12,7 +12,7 @@ use crate::sealed::{
     FloatBackend, I16ExtraBackend, I32ExtraBackend, I64ExtraBackend, IntBitBackend, LaneBackend,
     MaskBackend, MulBackend, SatBackend, SignedBackend, U8ExtraBackend,
 };
-use crate::{SimdDescriptor, SimdDescriptor128, W8, W16, W32, W64, f16, generic_ops};
+use crate::{SimdDescriptor, SimdDescriptor128, TypeFamily, W8, W16, W32, W64, f16, generic_ops};
 
 /// Portable 128-bit SIMD descriptor backed by plain Rust arrays.
 #[derive(Clone, Copy, Debug)]
@@ -60,6 +60,20 @@ impl SimdDescriptor for Emu128Descriptor {
     #[inline(always)]
     fn call_inlined<R>(self, f: impl FnOnce(Self) -> R) -> R {
         f(self)
+    }
+
+    #[inline(always)]
+    fn try_emu128<F: TypeFamily<Self> + TypeFamily<Emu128Descriptor>, P, IndRet>(
+        self,
+        p: P,
+        d_args: <F as TypeFamily<Self>>::Args,
+        f: impl FnOnce(
+            Emu128Descriptor,
+            P,
+            <F as TypeFamily<Emu128Descriptor>>::Args,
+        ) -> <F as TypeFamily<Emu128Descriptor>>::Ret<IndRet>,
+    ) -> Result<<F as TypeFamily<Self>>::Ret<IndRet>, (P, <F as TypeFamily<Self>>::Args)> {
+        Ok(f(self, p, d_args))
     }
 }
 

@@ -7,7 +7,7 @@ use crate::{
     ComparableElement, DemoteTo, Emu128Descriptor, F32Vec, F64Vec, FloatElement, I8Vec, I16Vec,
     I32Vec, I64Vec, IntElement, MaskWidth, MulElement, PromoteTo, SatElement, SignedElement,
     SimdDescriptor, SimdElement, SimdMask, SimdVec, U8Vec, U16Vec, U32Vec, U64Vec, W8, W16, W32,
-    W64, simd_test,
+    W64, simd_specialize, simd_test,
 };
 
 struct Rng(u64);
@@ -1083,4 +1083,260 @@ fn test_call_and_inlined<D: SimdDescriptor>(d: D) {
     let b = d.call_inlined(|d| F32Vec::splat(d, 2.0) * F32Vec::splat(d, 5.0));
     assert_eq!(a.extract_lane0(), 7.0);
     assert_eq!(b.extract_lane0(), 10.0);
+}
+
+#[test]
+fn test_simd_specialize_dispatch_and_lifetimes() {
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    fn tag_avx512(d: crate::Avx512Descriptor, src: &[f32], dst: &mut [f32]) -> &'static str {
+        let len = F32Vec::<crate::Avx512Descriptor>::LEN;
+        let _ = (d, len);
+        dst[0] = src[0] + 512.0;
+        "avx512"
+    }
+    #[cfg(all(target_arch = "x86_64", feature = "avx"))]
+    fn tag_avx(d: crate::AvxDescriptor, src: &[f32], dst: &mut [f32]) -> &'static str {
+        let _ = d;
+        dst[0] = src[0] + 256.0;
+        "avx"
+    }
+    #[cfg(all(target_arch = "x86_64", feature = "sse42"))]
+    fn tag_sse42(d: crate::Sse42Descriptor, src: &[f32], dst: &mut [f32]) -> &'static str {
+        let _ = d;
+        dst[0] = src[0] + 128.0;
+        "sse42"
+    }
+    #[cfg(all(target_arch = "aarch64", feature = "neon"))]
+    fn tag_neon(d: crate::NeonDescriptor, src: &[f32], dst: &mut [f32]) -> &'static str {
+        let _ = d;
+        dst[0] = src[0] + 64.0;
+        "neon"
+    }
+    #[cfg(all(target_arch = "wasm32", feature = "simd128"))]
+    fn tag_simd128(d: crate::Simd128Descriptor, src: &[f32], dst: &mut [f32]) -> &'static str {
+        let _ = d;
+        dst[0] = src[0] + 32.0;
+        "simd128"
+    }
+    fn tag_emu128(_d: Emu128Descriptor, src: &[f32], dst: &mut [f32]) -> &'static str {
+        dst[0] = src[0] + 1.0;
+        "emu128"
+    }
+
+    #[simd_specialize(
+        Avx512Descriptor => tag_avx512,
+        AvxDescriptor => tag_avx,
+        Sse42Descriptor => tag_sse42,
+        NeonDescriptor => tag_neon,
+        Simd128Descriptor => tag_simd128,
+        Emu128Descriptor => tag_emu128,
+    )]
+    fn dispatch_tag<D: SimdDescriptor>(_d: D, src: &[f32], dst: &mut [f32]) -> &'static str {
+        dst[0] = src[0];
+        "fallback"
+    }
+
+    #[simd_specialize(AvxDescriptor => tag_avx)]
+    fn partial_avx_only<D: SimdDescriptor>(_d: D, src: &[f32], dst: &mut [f32]) -> &'static str {
+        dst[0] = src[0] + 9.0;
+        "fallback"
+    }
+
+    let mut dst = [0.0f32; 1];
+    assert_eq!(
+        dispatch_tag(Emu128Descriptor::new().unwrap(), &[2.0], &mut dst),
+        "emu128"
+    );
+    assert_eq!(dst[0], 3.0);
+    assert_eq!(
+        partial_avx_only(Emu128Descriptor::new().unwrap(), &[2.0], &mut dst),
+        "fallback"
+    );
+    assert_eq!(dst[0], 11.0);
+
+    crate::__if_sse42! {
+        if let Some(d) = crate::Sse42Descriptor::new() {
+            assert_eq!(dispatch_tag(d, &[2.0], &mut dst), "sse42");
+            assert_eq!(dst[0], 130.0);
+            assert_eq!(partial_avx_only(d, &[2.0], &mut dst), "fallback");
+            assert_eq!(dst[0], 11.0);
+        }
+    }
+    crate::__if_avx! {
+        if let Some(d) = crate::AvxDescriptor::new() {
+            assert_eq!(dispatch_tag(d, &[2.0], &mut dst), "avx");
+            assert_eq!(dst[0], 258.0);
+            assert_eq!(partial_avx_only(d, &[2.0], &mut dst), "avx");
+            assert_eq!(dst[0], 258.0);
+        }
+    }
+    crate::__if_avx512! {
+        if let Some(d) = crate::Avx512Descriptor::new() {
+            assert_eq!(dispatch_tag(d, &[2.0], &mut dst), "avx512");
+            assert_eq!(dst[0], 514.0);
+            assert_eq!(partial_avx_only(d, &[2.0], &mut dst), "fallback");
+            assert_eq!(dst[0], 11.0);
+        }
+    }
+    crate::__if_neon! {
+        if let Some(d) = crate::NeonDescriptor::new() {
+            assert_eq!(dispatch_tag(d, &[2.0], &mut dst), "neon");
+            assert_eq!(dst[0], 66.0);
+            assert_eq!(partial_avx_only(d, &[2.0], &mut dst), "fallback");
+            assert_eq!(dst[0], 11.0);
+        }
+    }
+    crate::__if_simd128! {
+        if let Some(d) = crate::Simd128Descriptor::new() {
+            assert_eq!(dispatch_tag(d, &[2.0], &mut dst), "simd128");
+            assert_eq!(dst[0], 34.0);
+            assert_eq!(partial_avx_only(d, &[2.0], &mut dst), "fallback");
+            assert_eq!(dst[0], 11.0);
+        }
+    }
+}
+
+#[simd_test]
+fn test_simd_specialize_elided_ret_mut_early_return_and_result<D: SimdDescriptor>(d: D) {
+    #[cfg(all(target_arch = "x86_64", feature = "avx"))]
+    fn slice_prefix_avx(_d: crate::AvxDescriptor, a: &[f32], mut n: usize, _: u32) -> &[f32] {
+        if n == 0 {
+            return &[];
+        }
+        n = n.min(a.len());
+        &a[..n]
+    }
+    #[simd_specialize(AvxDescriptor => slice_prefix_avx)]
+    fn slice_prefix<D: SimdDescriptor>(_d: D, a: &[f32], mut n: usize, _: u32) -> &[f32] {
+        if n == 0 {
+            return &[];
+        }
+        n = n.min(a.len());
+        &a[..n]
+    }
+
+    let data = [1.0f32, 2.0, 3.0, 4.0];
+    assert_eq!(slice_prefix(d, &data, 2, 0), &[1.0, 2.0]);
+    assert!(slice_prefix(d, &data, 0, 1).is_empty());
+
+    #[cfg(all(target_arch = "x86_64", feature = "sse42"))]
+    fn checked_first_sse42(_d: crate::Sse42Descriptor, src: &[i32]) -> Result<i32, &'static str> {
+        src.first().copied().ok_or("empty")
+    }
+    #[simd_specialize(Sse42Descriptor => checked_first_sse42)]
+    fn checked_first<D: SimdDescriptor>(d: D, src: &[i32]) -> Result<i32, &'static str> {
+        let _ = d;
+        let first = *src.first().ok_or("empty")?;
+        Ok(first + 1 - 1)
+    }
+
+    assert_eq!(checked_first(d, &[42, 7]), Ok(42));
+    assert_eq!(checked_first(d, &[]), Err("empty"));
+}
+
+#[simd_test]
+fn test_simd_specialize_vec_value_args_and_return<D: SimdDescriptor>(d: D) {
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    fn scale_bias_avx512<T: FloatElement, const N: usize>(
+        d: crate::Avx512Descriptor,
+        v: SimdVec<T, crate::Avx512Descriptor>,
+        gain: T,
+    ) -> SimdVec<T, crate::Avx512Descriptor> {
+        v * SimdVec::splat(d, gain)
+            + SimdVec::load(
+                d,
+                &[gain; 16][..SimdVec::<T, crate::Avx512Descriptor>::LEN.max(N)],
+            )
+    }
+    #[cfg(all(target_arch = "aarch64", feature = "neon"))]
+    fn scale_bias_neon<T: FloatElement, const N: usize>(
+        d: crate::NeonDescriptor,
+        v: SimdVec<T, crate::NeonDescriptor>,
+        gain: T,
+    ) -> SimdVec<T, crate::NeonDescriptor> {
+        let _ = N;
+        v * SimdVec::splat(d, gain) + SimdVec::splat(d, gain)
+    }
+    fn scale_bias_emu128<T: FloatElement, const N: usize>(
+        d: Emu128Descriptor,
+        v: SimdVec<T, Emu128Descriptor>,
+        gain: T,
+    ) -> SimdVec<T, Emu128Descriptor> {
+        let _ = N;
+        v * SimdVec::splat(d, gain) + SimdVec::splat(d, gain)
+    }
+
+    #[simd_specialize(
+        Avx512Descriptor => scale_bias_avx512,
+        NeonDescriptor => scale_bias_neon,
+        Emu128Descriptor => scale_bias_emu128,
+    )]
+    fn scale_bias<T, D: SimdDescriptor, const N: usize>(
+        d: D,
+        v: SimdVec<T, D>,
+        gain: T,
+    ) -> SimdVec<T, D>
+    where
+        T: FloatElement,
+    {
+        let _ = N;
+        v * SimdVec::splat(d, gain) + SimdVec::splat(d, gain)
+    }
+
+    let x = F32Vec::splat(d, 3.0);
+    let y = scale_bias::<f32, D, 4>(d, x, 2.0);
+    assert_eq!(y.extract_lane0(), 8.0);
+    let xd = F64Vec::splat(d, 5.0);
+    let yd = scale_bias::<f64, D, 2>(d, xd, 3.0);
+    assert_eq!(yd.extract_lane0(), 18.0);
+}
+
+#[simd_test]
+fn test_simd_specialize_vec_refs_and_mixed_params<D: SimdDescriptor>(d: D) {
+    #[cfg(all(target_arch = "x86_64", feature = "avx"))]
+    fn pick_vec_avx<'a, T: AsRef<[u8]>, const K: usize>(
+        d: crate::AvxDescriptor,
+        extra: &T,
+        vecs: &'a mut [F32Vec<crate::AvxDescriptor>],
+        mut count: usize,
+        arr: &[F32Vec<crate::AvxDescriptor>; K],
+        _: u32,
+    ) -> &'a F32Vec<crate::AvxDescriptor> {
+        count += extra.as_ref().len() + arr.len();
+        vecs[0] += F32Vec::splat(d, count as f32);
+        &vecs[0]
+    }
+    fn pick_vec_emu128<'a, T: AsRef<[u8]>, const K: usize>(
+        d: Emu128Descriptor,
+        extra: &T,
+        vecs: &'a mut [F32Vec<Emu128Descriptor>],
+        mut count: usize,
+        arr: &[F32Vec<Emu128Descriptor>; K],
+        _: u32,
+    ) -> &'a F32Vec<Emu128Descriptor> {
+        count += extra.as_ref().len() + arr.len();
+        vecs[0] += F32Vec::splat(d, count as f32);
+        &vecs[0]
+    }
+
+    #[simd_specialize(AvxDescriptor => pick_vec_avx, Emu128Descriptor => pick_vec_emu128)]
+    fn pick_vec<'a, D: SimdDescriptor, T: AsRef<[u8]>, const K: usize>(
+        d: D,
+        extra: &T,
+        vecs: &'a mut [F32Vec<D>],
+        mut count: usize,
+        arr: &[F32Vec<D>; K],
+        _: u32,
+    ) -> &'a F32Vec<D> {
+        count += extra.as_ref().len() + arr.len();
+        vecs[0] += F32Vec::splat(d, count as f32);
+        &vecs[0]
+    }
+
+    let local_ref: &[u8] = &[1u8, 2, 3];
+    let mut vecs = [F32Vec::splat(d, 10.0)];
+    let arr = [F32Vec::splat(d, 0.0); 4];
+    let mut out = vec![0.0f32; F32Vec::<D>::LEN];
+    pick_vec::<D, &[u8], 4>(d, &local_ref, &mut vecs, 5, &arr, 99).store(&mut out);
+    assert_eq!(out[0], 22.0);
 }

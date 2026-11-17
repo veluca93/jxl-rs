@@ -32,7 +32,7 @@ mod sealed;
 pub use aarch64::NeonDescriptor;
 pub use emu128::Emu128Descriptor;
 pub use float16::f16;
-pub use jxl_simd_macros::{simd_dispatch, simd_test};
+pub use jxl_simd_macros::{simd_dispatch, simd_specialize, simd_test};
 #[cfg(all(target_arch = "wasm32", feature = "simd128"))]
 pub use wasm32::Simd128Descriptor;
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
@@ -324,10 +324,23 @@ macro_rules! bench_all_instruction_sets {
     };
 }
 
+/// Argument/return type family parameterized by SIMD descriptor for [`simd_specialize`].
+#[doc(hidden)]
+pub trait TypeFamily<D: SimdDescriptor> {
+    type Args;
+    type Ret<IndRet>;
+}
+
+impl<D: SimdDescriptor> TypeFamily<D> for () {
+    type Args = ();
+    type Ret<IndRet> = IndRet;
+}
+
 /// Marker trait for 128-bit SIMD descriptors (16-byte vectors).
 pub trait SimdDescriptor128: SimdDescriptor {}
 
 /// Zero-sized capability token describing a SIMD instruction set and vector width.
+#[allow(clippy::type_complexity)]
 pub trait SimdDescriptor:
     sealed::DescriptorSealed + Sized + Copy + Debug + Send + Sync + 'static
 {
@@ -355,6 +368,112 @@ pub trait SimdDescriptor:
 
     /// Calls `f` inside an inlinable (`#[inline]`) `#[target_feature]` boundary matching `Self`.
     fn call_inlined<R>(self, f: impl FnOnce(Self) -> R) -> R;
+
+    #[doc(hidden)]
+    #[inline(always)]
+    fn try_emu128<F: TypeFamily<Self> + TypeFamily<Emu128Descriptor>, P, IndRet>(
+        self,
+        p: P,
+        d_args: <F as TypeFamily<Self>>::Args,
+        f: impl FnOnce(
+            Emu128Descriptor,
+            P,
+            <F as TypeFamily<Emu128Descriptor>>::Args,
+        ) -> <F as TypeFamily<Emu128Descriptor>>::Ret<IndRet>,
+    ) -> Result<<F as TypeFamily<Self>>::Ret<IndRet>, (P, <F as TypeFamily<Self>>::Args)> {
+        let _ = f;
+        Err((p, d_args))
+    }
+
+    __if_sse42! {
+        #[doc(hidden)]
+        #[inline(always)]
+        fn try_sse42<F: TypeFamily<Self> + TypeFamily<Sse42Descriptor>, P, IndRet>(
+            self,
+            p: P,
+            d_args: <F as TypeFamily<Self>>::Args,
+            f: impl FnOnce(
+                Sse42Descriptor,
+                P,
+                <F as TypeFamily<Sse42Descriptor>>::Args,
+            ) -> <F as TypeFamily<Sse42Descriptor>>::Ret<IndRet>,
+        ) -> Result<<F as TypeFamily<Self>>::Ret<IndRet>, (P, <F as TypeFamily<Self>>::Args)> {
+            let _ = f;
+            Err((p, d_args))
+        }
+    }
+
+    __if_avx! {
+        #[doc(hidden)]
+        #[inline(always)]
+        fn try_avx<F: TypeFamily<Self> + TypeFamily<AvxDescriptor>, P, IndRet>(
+            self,
+            p: P,
+            d_args: <F as TypeFamily<Self>>::Args,
+            f: impl FnOnce(
+                AvxDescriptor,
+                P,
+                <F as TypeFamily<AvxDescriptor>>::Args,
+            ) -> <F as TypeFamily<AvxDescriptor>>::Ret<IndRet>,
+        ) -> Result<<F as TypeFamily<Self>>::Ret<IndRet>, (P, <F as TypeFamily<Self>>::Args)> {
+            let _ = f;
+            Err((p, d_args))
+        }
+    }
+
+    __if_avx512! {
+        #[doc(hidden)]
+        #[inline(always)]
+        fn try_avx512<F: TypeFamily<Self> + TypeFamily<Avx512Descriptor>, P, IndRet>(
+            self,
+            p: P,
+            d_args: <F as TypeFamily<Self>>::Args,
+            f: impl FnOnce(
+                Avx512Descriptor,
+                P,
+                <F as TypeFamily<Avx512Descriptor>>::Args,
+            ) -> <F as TypeFamily<Avx512Descriptor>>::Ret<IndRet>,
+        ) -> Result<<F as TypeFamily<Self>>::Ret<IndRet>, (P, <F as TypeFamily<Self>>::Args)> {
+            let _ = f;
+            Err((p, d_args))
+        }
+    }
+
+    __if_neon! {
+        #[doc(hidden)]
+        #[inline(always)]
+        fn try_neon<F: TypeFamily<Self> + TypeFamily<NeonDescriptor>, P, IndRet>(
+            self,
+            p: P,
+            d_args: <F as TypeFamily<Self>>::Args,
+            f: impl FnOnce(
+                NeonDescriptor,
+                P,
+                <F as TypeFamily<NeonDescriptor>>::Args,
+            ) -> <F as TypeFamily<NeonDescriptor>>::Ret<IndRet>,
+        ) -> Result<<F as TypeFamily<Self>>::Ret<IndRet>, (P, <F as TypeFamily<Self>>::Args)> {
+            let _ = f;
+            Err((p, d_args))
+        }
+    }
+
+    __if_simd128! {
+        #[doc(hidden)]
+        #[inline(always)]
+        fn try_simd128<F: TypeFamily<Self> + TypeFamily<Simd128Descriptor>, P, IndRet>(
+            self,
+            p: P,
+            d_args: <F as TypeFamily<Self>>::Args,
+            f: impl FnOnce(
+                Simd128Descriptor,
+                P,
+                <F as TypeFamily<Simd128Descriptor>>::Args,
+            ) -> <F as TypeFamily<Simd128Descriptor>>::Ret<IndRet>,
+        ) -> Result<<F as TypeFamily<Self>>::Ret<IndRet>, (P, <F as TypeFamily<Self>>::Args)> {
+            let _ = f;
+            Err((p, d_args))
+        }
+    }
 }
 
 /// Marker trait for SIMD mask lane widths (`W8`, `W16`, `W32`, `W64`).
