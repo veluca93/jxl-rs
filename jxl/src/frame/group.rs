@@ -16,7 +16,8 @@ use crate::frame::color_correlation_map::COLOR_TILE_DIM_IN_BLOCKS;
 use crate::frame::quant_weights::DequantMatrices;
 use crate::frame::{HfGlobalState, HfMetadata, LfGlobalState, coeff_order};
 use crate::headers::frame_header::FrameHeader;
-use crate::image::{Image, ImageRect, Rect};
+use crate::image::{Image, ImageDataType, ImageRect, Rect};
+use crate::render::I32VecLoad;
 use crate::render::low_memory_pipeline::row_buffers::RowBuffer;
 use crate::util::tracing_wrappers::*;
 use crate::util::{
@@ -76,16 +77,25 @@ impl VarDctBuffers {
     }
 }
 
-fn get_single_pass_coeffs<'a>(
-    coeffs_storage: &'a mut Vec<CacheLine>,
-    use_i16: bool,
+fn coeffs_from_cachelines<S: CoeffStorage>(
+    cachelines: &mut [CacheLine],
+    stride: usize,
+) -> [&mut [S]; 3] {
+    let slice = slice_from_cachelines_mut::<S>(cachelines);
+    let (x, y_b) = slice.split_at_mut(stride);
+    let (y, b) = y_b.split_at_mut(stride);
+    [x, y, b]
+}
+
+fn get_single_pass_coeffs<S: CoeffStorage>(
+    coeffs_storage: &mut Vec<CacheLine>,
     num_coeffs: usize,
-) -> CoeffsMut<'a> {
-    let needed_cache_lines = num_cache_lines_for::<i32>(3 * num_coeffs);
+) -> [&mut [S]; 3] {
+    let needed_cache_lines = num_cache_lines_for::<S>(3 * num_coeffs);
     if coeffs_storage.len() < needed_cache_lines {
         coeffs_storage.resize(needed_cache_lines, CacheLine::default());
     }
-    CoeffsMut::from_cachelines(&mut coeffs_storage[..], use_i16, num_coeffs)
+    coeffs_from_cachelines::<S>(&mut coeffs_storage[..needed_cache_lines], num_coeffs)
 }
 
 #[inline]
@@ -113,16 +123,11 @@ fn adjust_quant_bias<D: SimdDescriptor>(
         .if_then_else(quant_i.as_f32() * F32Vec::splat(d, bias_c), adjusted)
 }
 
-pub trait CoeffStorage: Sized {
-    fn load_simd<D: SimdDescriptor>(slice: &[Self], d: D, offset: usize) -> I32Vec<D>;
+trait CoeffStorage: ImageDataType + I32VecLoad + Default {
     fn add_coeff(&mut self, val: i32);
 }
 
 impl CoeffStorage for i32 {
-    #[inline(always)]
-    fn load_simd<D: SimdDescriptor>(slice: &[i32], d: D, offset: usize) -> I32Vec<D> {
-        I32Vec::load(d, &slice[offset..])
-    }
     #[inline(always)]
     fn add_coeff(&mut self, val: i32) {
         *self = self.wrapping_add(val);
@@ -131,18 +136,9 @@ impl CoeffStorage for i32 {
 
 impl CoeffStorage for i16 {
     #[inline(always)]
-    fn load_simd<D: SimdDescriptor>(slice: &[i16], d: D, offset: usize) -> I32Vec<D> {
-        I32Vec::load_from_i16(d, &slice[offset..])
-    }
-    #[inline(always)]
     fn add_coeff(&mut self, val: i32) {
         *self = self.wrapping_add(val as i16);
     }
-}
-
-enum CoeffsMut<'a> {
-    I32([&'a mut [i32]; 3]),
-    I16([&'a mut [i16]; 3]),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -283,76 +279,6 @@ fn decode_channel_coeffs<T: CoeffStorage>(
     Ok(())
 }
 
-impl<'a> CoeffsMut<'a> {
-    fn from_cachelines(cachelines: &'a mut [CacheLine], use_i16: bool, stride: usize) -> Self {
-        if use_i16 {
-            let slice = slice_from_cachelines_mut::<i16>(cachelines);
-            let (x, y_b) = slice.split_at_mut(stride);
-            let (y, b) = y_b.split_at_mut(stride);
-            CoeffsMut::I16([x, y, b])
-        } else {
-            let slice = slice_from_cachelines_mut::<i32>(cachelines);
-            let (x, y_b) = slice.split_at_mut(stride);
-            let (y, b) = y_b.split_at_mut(stride);
-            CoeffsMut::I32([x, y, b])
-        }
-    }
-
-    #[inline(always)]
-    fn zero_channel(&mut self, c: usize, num_coeffs: usize) {
-        match self {
-            Self::I32(c_arr) => c_arr[c][..num_coeffs].fill(0),
-            Self::I16(c_arr) => c_arr[c][..num_coeffs].fill(0),
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn decode_channel(
-        &mut self,
-        c: usize,
-        offset: usize,
-        permutation: &[u32],
-        num_blocks: usize,
-        num_coeffs: usize,
-        log_num_blocks: usize,
-        histo_offset: usize,
-        shift: u32,
-        nonzeros: usize,
-        reader: &mut SymbolReader,
-        histograms: &Histograms,
-        br: &mut BitReader,
-    ) -> Result<(), Error> {
-        match self {
-            Self::I32(c_arr) => decode_channel_coeffs(
-                &mut c_arr[c][offset..offset + num_coeffs],
-                permutation,
-                num_blocks,
-                num_coeffs,
-                log_num_blocks,
-                histo_offset,
-                shift,
-                nonzeros,
-                reader,
-                histograms,
-                br,
-            ),
-            Self::I16(c_arr) => decode_channel_coeffs(
-                &mut c_arr[c][offset..offset + num_coeffs],
-                permutation,
-                num_blocks,
-                num_coeffs,
-                log_num_blocks,
-                histo_offset,
-                shift,
-                nonzeros,
-                reader,
-                histograms,
-                br,
-            ),
-        }
-    }
-}
-
 #[inline(always)]
 fn dequant_channel<D: SimdDescriptor, S: CoeffStorage>(
     d: D,
@@ -368,7 +294,7 @@ fn dequant_channel<D: SimdDescriptor, S: CoeffStorage>(
         let cc_vec = F32Vec::splat(d, cc_mul);
         for k in (0..dequant_matrix.len()).step_by(F32Vec::<D>::LEN) {
             let mul = F32Vec::load(d, &dequant_matrix[k..]) * dm_mul;
-            let quantized = S::load_simd(qblock_c, d, k);
+            let quantized = S::into_i32(S::load(d, &qblock_c[k..]));
             let dequant_c = adjust_quant_bias(d, quantized, bias_c, bias_num) * mul;
             let dequant_y = F32Vec::load(d, &block_y[k..]);
             cc_vec
@@ -378,7 +304,7 @@ fn dequant_channel<D: SimdDescriptor, S: CoeffStorage>(
     } else {
         for k in (0..dequant_matrix.len()).step_by(F32Vec::<D>::LEN) {
             let mul = F32Vec::load(d, &dequant_matrix[k..]) * dm_mul;
-            let quantized = S::load_simd(qblock_c, d, k);
+            let quantized = S::into_i32(S::load(d, &qblock_c[k..]));
             let dequant = adjust_quant_bias(d, quantized, bias_c, bias_num) * mul;
             dequant.store(&mut block_c[k..]);
         }
@@ -387,7 +313,7 @@ fn dequant_channel<D: SimdDescriptor, S: CoeffStorage>(
 
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
-fn dequant_block_impl<D: SimdDescriptor, S: CoeffStorage>(
+fn dequant_block<D: SimdDescriptor, S: CoeffStorage>(
     d: D,
     scaled_dequant_y: f32,
     x_dm_multiplier: f32,
@@ -453,75 +379,6 @@ fn dequant_block_impl<D: SimdDescriptor, S: CoeffStorage>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-#[inline(always)]
-fn dequant_block<D: SimdDescriptor>(
-    d: D,
-    hf_type: HfTransformType,
-    inv_global_scale: f32,
-    quant: u32,
-    x_dm_multiplier: f32,
-    b_dm_multiplier: f32,
-    x_cc_mul: f32,
-    b_cc_mul: f32,
-    size: usize,
-    dequant_matrices: &DequantMatrices,
-    biases: &[f32; 4],
-    coeffs: &CoeffsMut,
-    offset: usize,
-    block: &mut [Vec<f32>; 3],
-    active: [bool; 3],
-    nz: [usize; 3],
-    dc_only: [bool; 3],
-) {
-    let scaled_dequant_y = inv_global_scale / (quant as f32);
-    let matrices = dequant_matrices.matrix(hf_type, 0);
-
-    assert!(BLOCK_SIZE.is_multiple_of(F32Vec::<D>::LEN));
-    match coeffs {
-        CoeffsMut::I32(qb) => {
-            let qb_refs = [&qb[0][..], &qb[1][..], &qb[2][..]];
-            dequant_block_impl(
-                d,
-                scaled_dequant_y,
-                x_dm_multiplier,
-                b_dm_multiplier,
-                x_cc_mul,
-                b_cc_mul,
-                size,
-                matrices,
-                biases,
-                &qb_refs,
-                offset,
-                block,
-                active,
-                nz,
-                dc_only,
-            );
-        }
-        CoeffsMut::I16(qb) => {
-            let qb_refs = [&qb[0][..], &qb[1][..], &qb[2][..]];
-            dequant_block_impl(
-                d,
-                scaled_dequant_y,
-                x_dm_multiplier,
-                b_dm_multiplier,
-                x_cc_mul,
-                b_cc_mul,
-                size,
-                matrices,
-                biases,
-                &qb_refs,
-                offset,
-                block,
-                active,
-                nz,
-                dc_only,
-            );
-        }
-    }
-}
-
 #[inline(always)]
 fn copy_lf_rows<const XS: usize>(
     lf: &mut [f32],
@@ -548,7 +405,7 @@ fn copy_block_rows<const W: usize>(
 
 #[simd_dispatch(dequant_and_transform_to_pixels_dispatch)]
 #[allow(clippy::too_many_arguments)]
-fn dequant_and_transform_to_pixels<D: SimdDescriptor>(
+fn dequant_and_transform_to_pixels<S: CoeffStorage, D: SimdDescriptor>(
     d: D,
     quant_biases: &[f32; 4],
     x_dm_multiplier: f32,
@@ -571,7 +428,7 @@ fn dequant_and_transform_to_pixels<D: SimdDescriptor>(
     block_rect: Rect,
     num_blocks: usize,
     num_coeffs: usize,
-    coeffs: &CoeffsMut,
+    coeffs: &[&[S]; 3],
     offset: usize,
     dequant_matrices: &DequantMatrices,
     nz: [usize; 3],
@@ -592,17 +449,18 @@ fn dequant_and_transform_to_pixels<D: SimdDescriptor>(
                 b.resize(num_coeffs, 0.0);
             }
         }
-        dequant_block::<D>(
+        let scaled_dequant_y = inv_global_scale / (raw_quant as f32);
+        let matrices = dequant_matrices.matrix(transform_type, 0);
+        assert!(BLOCK_SIZE.is_multiple_of(F32Vec::<D>::LEN));
+        dequant_block::<D, S>(
             d,
-            transform_type,
-            inv_global_scale,
-            raw_quant,
+            scaled_dequant_y,
             x_dm_multiplier,
             b_dm_multiplier,
             x_cc_mul,
             b_cc_mul,
             num_coeffs,
-            dequant_matrices,
+            matrices,
             quant_biases,
             coeffs,
             offset,
@@ -726,7 +584,7 @@ impl<'a, 'b> PassInfo<'a, 'b> {
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
-pub fn decode_vardct_group(
+fn decode_vardct_group_typed<S: CoeffStorage>(
     group: usize,
     passes: &mut [(usize, BitReader)],
     frame_header: &FrameHeader,
@@ -776,17 +634,12 @@ pub fn decode_vardct_group(
     let raw_quant_map = hf_meta.raw_quant_map.get_rect(block_group_rect);
     let quant_lf_rect = hf_meta.quant_lf.get_rect(block_group_rect);
     let block_context_map = lf_global.block_context_map.as_ref().unwrap();
-    let use_i16 = hf_global.use_i16;
     let is_multi_pass =
         !hf_global.hf_coefficients.is_empty() && pass_info.len() < hf_global.passes.len();
     let mut locked_coeffs = if is_multi_pass {
         let mut guard = hf_global.hf_coefficients[group].try_lock().unwrap();
         if guard.is_empty() {
-            let num_cache_lines = if use_i16 {
-                num_cache_lines_for::<i16>(GROUP_DIM * GROUP_DIM * 3)
-            } else {
-                num_cache_lines_for::<i32>(GROUP_DIM * GROUP_DIM * 3)
-            };
+            let num_cache_lines = num_cache_lines_for::<S>(GROUP_DIM * GROUP_DIM * 3);
             guard.try_reserve_exact(num_cache_lines)?;
             guard.resize(num_cache_lines, CacheLine::default());
         }
@@ -876,13 +729,13 @@ pub fn decode_vardct_group(
                 (sbx[2] << hshift[2]) == bx && (sby[2] << vshift[2]) == by,
             ];
 
-            let (mut coeffs, offset) = match &mut locked_coeffs {
+            let (coeffs, offset) = match &mut locked_coeffs {
                 Some(locked) => (
-                    CoeffsMut::from_cachelines(&mut locked[..], use_i16, GROUP_DIM * GROUP_DIM),
+                    coeffs_from_cachelines::<S>(&mut locked[..], GROUP_DIM * GROUP_DIM),
                     coeffs_offset,
                 ),
                 None => (
-                    get_single_pass_coeffs(&mut buffers.coeffs_storage, use_i16, num_coeffs),
+                    get_single_pass_coeffs::<S>(&mut buffers.coeffs_storage, num_coeffs),
                     0,
                 ),
             };
@@ -934,16 +787,15 @@ pub fn decode_vardct_group(
                         continue;
                     }
                     if !is_multi_pass && block_nonzeros[c] == 0 {
-                        coeffs.zero_channel(c, num_coeffs);
+                        coeffs[c][..num_coeffs].fill(S::default());
                     }
                     block_nonzeros[c] += nonzeros;
                     let histo_offset = block_context_map.zero_density_context_offset(block_context)
                         + context_offset;
                     let permutation =
                         coeff_order::coeff_order_for(&pass_info.coeff_orders, shape_id, c);
-                    coeffs.decode_channel(
-                        c,
-                        offset,
+                    decode_channel_coeffs(
+                        &mut coeffs[c][offset..offset + num_coeffs],
                         permutation,
                         num_blocks,
                         num_coeffs,
@@ -959,6 +811,7 @@ pub fn decode_vardct_group(
             }
             if let Some(pixels) = pixels {
                 let dequant_matrices = &hf_global.dequant_matrices;
+                let coeff_refs = [&coeffs[0][..], &coeffs[1][..], &coeffs[2][..]];
                 dequant_and_transform_to_pixels_dispatch(
                     quant_biases,
                     x_dm_multiplier,
@@ -981,7 +834,7 @@ pub fn decode_vardct_group(
                     block_rect,
                     num_blocks,
                     num_coeffs,
-                    &coeffs,
+                    &coeff_refs,
                     offset,
                     dequant_matrices,
                     block_nonzeros,
@@ -1004,6 +857,49 @@ pub fn decode_vardct_group(
         reader.check_final_state(&hf_global.passes[*pass].histograms, br)?;
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
+pub fn decode_vardct_group(
+    group: usize,
+    passes: &mut [(usize, BitReader)],
+    frame_header: &FrameHeader,
+    lf_global: &LfGlobalState,
+    hf_global: &HfGlobalState,
+    hf_meta: &HfMetadata,
+    lf_image: &[Image<f32>; 3],
+    quant_biases: &[f32; 4],
+    pixels: &mut Option<[Image<f32>; 3]>,
+    buffers: &mut VarDctBuffers,
+) -> Result<(), Error> {
+    if hf_global.use_i16 {
+        decode_vardct_group_typed::<i16>(
+            group,
+            passes,
+            frame_header,
+            lf_global,
+            hf_global,
+            hf_meta,
+            lf_image,
+            quant_biases,
+            pixels,
+            buffers,
+        )
+    } else {
+        decode_vardct_group_typed::<i32>(
+            group,
+            passes,
+            frame_header,
+            lf_global,
+            hf_global,
+            hf_meta,
+            lf_image,
+            quant_biases,
+            pixels,
+            buffers,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -1074,7 +970,7 @@ mod test {
         let mut block_i32 = [vec![0.0f32; 64], vec![0.0f32; 64], vec![0.0f32; 64]];
         let mut block_i16 = [vec![0.0f32; 64], vec![0.0f32; 64], vec![0.0f32; 64]];
 
-        dequant_block_impl(
+        dequant_block(
             d,
             1.0,
             1.0,
@@ -1091,7 +987,7 @@ mod test {
             [64; 3],
             [false; 3],
         );
-        dequant_block_impl(
+        dequant_block(
             d,
             1.0,
             1.0,
