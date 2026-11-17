@@ -5,7 +5,7 @@
 
 #![allow(unsafe_code)]
 
-use jxl_simd::{F32SimdVec, I32SimdVec, SimdDescriptor};
+use jxl_simd::{F32Vec, I32Vec, SimdDescriptor};
 
 use crate::image::ImageDataType;
 use crate::render::low_memory_pipeline::row_buffers::RowBuffer;
@@ -22,49 +22,49 @@ pub trait VecStore<D: SimdDescriptor>: VecLoad<D> {
 }
 
 impl<D: SimdDescriptor> VecLoad<D> for f32 {
-    type Vec = D::F32Vec;
-    const LEN: usize = D::F32Vec::LEN;
+    type Vec = F32Vec<D>;
+    const LEN: usize = F32Vec::<D>::LEN;
 
     #[inline(always)]
-    fn load(d: D, slice: &[f32]) -> D::F32Vec {
-        D::F32Vec::load(d, slice)
+    fn load(d: D, slice: &[f32]) -> F32Vec<D> {
+        F32Vec::load(d, slice)
     }
 }
 
 impl<D: SimdDescriptor> VecStore<D> for f32 {
     #[inline(always)]
-    fn store(_d: D, vec: D::F32Vec, slice: &mut [f32]) {
+    fn store(_d: D, vec: F32Vec<D>, slice: &mut [f32]) {
         vec.store(slice);
     }
 }
 
 impl<D: SimdDescriptor> VecLoad<D> for i32 {
-    type Vec = D::I32Vec;
-    const LEN: usize = D::I32Vec::LEN;
+    type Vec = I32Vec<D>;
+    const LEN: usize = I32Vec::<D>::LEN;
 
     #[inline(always)]
-    fn load(d: D, slice: &[i32]) -> D::I32Vec {
-        D::I32Vec::load(d, slice)
+    fn load(d: D, slice: &[i32]) -> I32Vec<D> {
+        I32Vec::load(d, slice)
     }
 }
 
 impl<D: SimdDescriptor> VecLoad<D> for i16 {
-    type Vec = D::I32Vec;
-    const LEN: usize = D::I32Vec::LEN;
+    type Vec = I32Vec<D>;
+    const LEN: usize = I32Vec::<D>::LEN;
 
     #[inline(always)]
-    fn load(d: D, slice: &[i16]) -> D::I32Vec {
-        D::I32Vec::load_from_i16(d, slice)
+    fn load(d: D, slice: &[i16]) -> I32Vec<D> {
+        I32Vec::load_from_i16(d, slice)
     }
 }
 
 impl<D: SimdDescriptor> VecLoad<D> for u16 {
-    type Vec = D::I32Vec;
-    const LEN: usize = D::I32Vec::LEN;
+    type Vec = I32Vec<D>;
+    const LEN: usize = I32Vec::<D>::LEN;
 
     #[inline(always)]
-    fn load(d: D, slice: &[u16]) -> D::I32Vec {
-        D::I32Vec::load_from_u16(d, slice)
+    fn load(d: D, slice: &[u16]) -> I32Vec<D> {
+        I32Vec::load_from_u16(d, slice)
     }
 }
 
@@ -74,22 +74,22 @@ pub trait StoreInterleaved<D: SimdDescriptor, const NUM: usize>: VecStore<D> {
 
 impl<D: SimdDescriptor> StoreInterleaved<D, 2> for f32 {
     #[inline(always)]
-    fn store_interleaved(_d: D, vals: [D::F32Vec; 2], dest: &mut [f32]) {
-        D::F32Vec::store_interleaved_2(vals[0], vals[1], dest);
+    fn store_interleaved(_d: D, vals: [F32Vec<D>; 2], dest: &mut [f32]) {
+        F32Vec::store_interleaved_2(vals[0], vals[1], dest);
     }
 }
 
 impl<D: SimdDescriptor> StoreInterleaved<D, 4> for f32 {
     #[inline(always)]
-    fn store_interleaved(_d: D, vals: [D::F32Vec; 4], dest: &mut [f32]) {
-        D::F32Vec::store_interleaved_4(vals[0], vals[1], vals[2], vals[3], dest);
+    fn store_interleaved(_d: D, vals: [F32Vec<D>; 4], dest: &mut [f32]) {
+        F32Vec::store_interleaved_4(vals[0], vals[1], vals[2], vals[3], dest);
     }
 }
 
 impl<D: SimdDescriptor> StoreInterleaved<D, 8> for f32 {
     #[inline(always)]
-    fn store_interleaved(_d: D, vals: [D::F32Vec; 8], dest: &mut [f32]) {
-        D::F32Vec::store_interleaved_8(
+    fn store_interleaved(_d: D, vals: [F32Vec<D>; 8], dest: &mut [f32]) {
+        F32Vec::store_interleaved_8(
             vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6], vals[7], dest,
         );
     }
@@ -520,7 +520,7 @@ pub fn for_each_chunk<
 
 #[cfg(test)]
 mod tests {
-    use jxl_simd::{I32SimdVec, SimdDescriptor, simd_dispatch, simd_test};
+    use jxl_simd::{I32Vec, SimdDescriptor, simd_dispatch, simd_test};
 
     use super::*;
     use crate::image::DataTypeTag;
@@ -910,7 +910,7 @@ mod tests {
                         in_channels.view::<1, 1, 0>(),
                         out_channels.view::<1, 1, 1>(),
                         |_x, inv, outv| {
-                            let val: D::I32Vec = inv.load::<_, 0>(d, 0, 0);
+                            let val: I32Vec<D> = inv.load::<_, 0>(d, 0, 0);
                             outv.store::<_, 0>(d, 0, val.as_f32());
                         },
                     );
@@ -946,7 +946,7 @@ mod tests {
                         in_channels.view::<1, 1, 0>(),
                         out_channels.view::<1, 1, 1>(),
                         |_x, inv, outv| {
-                            let val: D::I32Vec = inv.load::<_, 0>(d, 0, 0);
+                            let val: I32Vec<D> = inv.load::<_, 0>(d, 0, 0);
                             outv.store::<_, 0>(d, 0, val.as_f32());
                         },
                     );
@@ -982,7 +982,7 @@ mod tests {
                         in_channels.view::<1, 1, 0>(),
                         out_channels.view::<1, 1, 1>(),
                         |_x, inv, outv| {
-                            let val: D::I32Vec = inv.load::<_, 0>(d, 0, 0);
+                            let val: I32Vec<D> = inv.load::<_, 0>(d, 0, 0);
                             outv.store::<_, 0>(d, 0, val.as_f32());
                         },
                     );

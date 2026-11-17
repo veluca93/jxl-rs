@@ -5,7 +5,7 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use jxl_simd::{F32SimdVec, SimdDescriptor, simd_dispatch};
+use jxl_simd::{SimdDescriptor, simd_dispatch};
 
 use super::Epf2Stage;
 use super::common::epf_process_row_chunk;

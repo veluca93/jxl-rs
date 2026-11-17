@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use jxl_simd::{F32SimdVec, SimdDescriptor, simd_dispatch};
+use jxl_simd::{F32Vec, SimdDescriptor, simd_dispatch};
 
 use crate::render::{
     Channels, ChannelsMut, ErasedLocalState, RenderPipelineInOutStage, for_each_chunk,
@@ -38,8 +38,8 @@ fn hchroma_upsample_simd<D: SimdDescriptor>(
     xsize: usize,
 ) {
     // Precompute constants
-    let c025 = D::F32Vec::splat(d, 0.25);
-    let c075 = D::F32Vec::splat(d, 0.75);
+    let c025 = F32Vec::splat(d, 0.25);
+    let c075 = F32Vec::splat(d, 0.75);
 
     for_each_chunk(
         d,
@@ -112,8 +112,8 @@ fn vchroma_upsample_simd<D: SimdDescriptor>(
     xsize: usize,
 ) {
     // Precompute constants
-    let c025 = D::F32Vec::splat(d, 0.25);
-    let c075 = D::F32Vec::splat(d, 0.75);
+    let c025 = F32Vec::splat(d, 0.25);
+    let c075 = F32Vec::splat(d, 0.75);
 
     for_each_chunk(
         d,

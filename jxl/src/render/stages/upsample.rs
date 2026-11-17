@@ -6,7 +6,7 @@
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::too_many_arguments)]
 
-use jxl_simd::{F32SimdVec, SimdDescriptor, simd_dispatch};
+use jxl_simd::{F32Vec, SimdDescriptor, simd_dispatch};
 
 use crate::headers::CustomTransformData;
 use crate::render::{
@@ -67,14 +67,14 @@ impl<const N: usize, const SHIFT: u8> std::fmt::Display for Upsample<N, SHIFT> {
 /// Processes 2 output rows per pass (`N = 2` or `N = 4`), keeping `2 * N <= 8` vector
 /// accumulators plus `minval`/`maxval` in SIMD registers.
 #[inline(always)]
-fn upsample_2rows_per_step<D: jxl_simd::SimdDescriptor, const N: usize>(
+fn upsample_2rows_per_step<D: SimdDescriptor, const N: usize>(
     d: D,
     input_rows: &Channels<f32>,
     xsize: usize,
     kernels: &[[[[f32; N]; 5]; 5]; N],
     output_rows: &mut ChannelsMut<f32>,
 ) where
-    f32: StoreInterleaved<D, N, Vec = D::F32Vec>,
+    f32: StoreInterleaved<D, N, Vec = F32Vec<D>>,
 {
     const { assert!(N == 2 || N == 4) };
     for_each_chunk(
@@ -110,8 +110,8 @@ fn upsample_2rows_per_step<D: jxl_simd::SimdDescriptor, const N: usize>(
                 let mut acc0 = [first; N];
                 let mut acc1 = [first; N];
                 for ox in 0..N {
-                    acc0[ox] = first * D::F32Vec::splat(d, k0_00[ox]);
-                    acc1[ox] = first * D::F32Vec::splat(d, k1_00[ox]);
+                    acc0[ox] = first * F32Vec::splat(d, k0_00[ox]);
+                    acc1[ox] = first * F32Vec::splat(d, k1_00[ox]);
                 }
 
                 for ty in 0..5 {
@@ -127,8 +127,8 @@ fn upsample_2rows_per_step<D: jxl_simd::SimdDescriptor, const N: usize>(
                         let k0 = &kernels[oy0][ty][tx];
                         let k1 = &kernels[oy1][ty][tx];
                         for ox in 0..N {
-                            acc0[ox] = v.mul_add(D::F32Vec::splat(d, k0[ox]), acc0[ox]);
-                            acc1[ox] = v.mul_add(D::F32Vec::splat(d, k1[ox]), acc1[ox]);
+                            acc0[ox] = v.mul_add(F32Vec::splat(d, k0[ox]), acc0[ox]);
+                            acc1[ox] = v.mul_add(F32Vec::splat(d, k1[ox]), acc1[ox]);
                         }
                     }
                 }
@@ -198,7 +198,7 @@ fn upsample_8x_simd<D: SimdDescriptor>(
                 let k_00 = &kernels[oy][0][0];
                 let mut acc = [first; 8];
                 for ox in 0..8 {
-                    acc[ox] = first * D::F32Vec::splat(d, k_00[ox]);
+                    acc[ox] = first * F32Vec::splat(d, k_00[ox]);
                 }
 
                 for ty in 0..5 {
@@ -209,7 +209,7 @@ fn upsample_8x_simd<D: SimdDescriptor>(
                         let v = inv.load::<_, 0>(d, ty as isize - 2, tx as isize - 2);
                         let k = &kernels[oy][ty][tx];
                         for ox in 0..8 {
-                            acc[ox] = v.mul_add(D::F32Vec::splat(d, k[ox]), acc[ox]);
+                            acc[ox] = v.mul_add(F32Vec::splat(d, k[ox]), acc[ox]);
                         }
                     }
                 }

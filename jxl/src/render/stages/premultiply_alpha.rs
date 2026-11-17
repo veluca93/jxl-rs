@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use jxl_simd::{F32SimdVec, SimdDescriptor, simd_dispatch};
+use jxl_simd::{F32Vec, SimdDescriptor, simd_dispatch};
 
 use crate::render::{ErasedLocalState, RenderPipelineInPlaceStage};
 
@@ -57,31 +57,31 @@ fn apply_alpha<D: SimdDescriptor>(
     color_rows: &mut [&mut [f32]],
     alpha_row: &[f32],
     xsize: usize,
-    alpha_mul: impl Fn(D::F32Vec) -> D::F32Vec,
+    alpha_mul: impl Fn(F32Vec<D>) -> F32Vec<D>,
 ) {
-    let num_chunks = xsize.div_ceil(D::F32Vec::LEN);
+    let num_chunks = xsize.div_ceil(F32Vec::<D>::LEN);
     if let [row_r, row_g, row_b] = color_rows {
         for (((r_chunk, g_chunk), b_chunk), alpha_chunk) in row_r
-            .chunks_exact_mut(D::F32Vec::LEN)
-            .zip(row_g.chunks_exact_mut(D::F32Vec::LEN))
-            .zip(row_b.chunks_exact_mut(D::F32Vec::LEN))
-            .zip(alpha_row.chunks_exact(D::F32Vec::LEN))
+            .chunks_exact_mut(F32Vec::<D>::LEN)
+            .zip(row_g.chunks_exact_mut(F32Vec::<D>::LEN))
+            .zip(row_b.chunks_exact_mut(F32Vec::<D>::LEN))
+            .zip(alpha_row.chunks_exact(F32Vec::<D>::LEN))
             .take(num_chunks)
         {
-            let mul = alpha_mul(D::F32Vec::load(d, alpha_chunk));
-            (D::F32Vec::load(d, r_chunk) * mul).store(r_chunk);
-            (D::F32Vec::load(d, g_chunk) * mul).store(g_chunk);
-            (D::F32Vec::load(d, b_chunk) * mul).store(b_chunk);
+            let mul = alpha_mul(F32Vec::load(d, alpha_chunk));
+            (F32Vec::load(d, r_chunk) * mul).store(r_chunk);
+            (F32Vec::load(d, g_chunk) * mul).store(g_chunk);
+            (F32Vec::load(d, b_chunk) * mul).store(b_chunk);
         }
     } else {
         for color_row in color_rows.iter_mut() {
             for (color_chunk, alpha_chunk) in color_row
-                .chunks_exact_mut(D::F32Vec::LEN)
-                .zip(alpha_row.chunks_exact(D::F32Vec::LEN))
+                .chunks_exact_mut(F32Vec::<D>::LEN)
+                .zip(alpha_row.chunks_exact(F32Vec::<D>::LEN))
                 .take(num_chunks)
             {
-                let mul = alpha_mul(D::F32Vec::load(d, alpha_chunk));
-                (D::F32Vec::load(d, color_chunk) * mul).store(color_chunk);
+                let mul = alpha_mul(F32Vec::load(d, alpha_chunk));
+                (F32Vec::load(d, color_chunk) * mul).store(color_chunk);
             }
         }
     }
@@ -96,8 +96,8 @@ fn premultiply_rows_simd<D: SimdDescriptor>(
     unpremultiply: bool,
 ) {
     if unpremultiply {
-        let one = D::F32Vec::splat(d, 1.0);
-        let small_alpha = D::F32Vec::splat(d, SMALL_ALPHA);
+        let one = F32Vec::splat(d, 1.0);
+        let small_alpha = F32Vec::splat(d, SMALL_ALPHA);
         apply_alpha(
             d,
             color_rows,

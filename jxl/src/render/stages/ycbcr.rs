@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use jxl_simd::{F32SimdVec, SimdDescriptor, simd_dispatch};
+use jxl_simd::{F32Vec, SimdDescriptor, simd_dispatch};
 
 use crate::render::{ErasedLocalState, RenderPipelineInPlaceStage};
 
@@ -41,25 +41,25 @@ fn ycbcr_to_rgb_simd<D: SimdDescriptor>(
     xsize: usize,
 ) {
     // Precompute constants as SIMD vectors
-    let c128 = D::F32Vec::splat(d, 128.0 / 255.0);
-    let cr_to_r = D::F32Vec::splat(d, 1.402);
-    let cr_to_g = D::F32Vec::splat(d, -0.299 * 1.402 / 0.587);
-    let cb_to_g = D::F32Vec::splat(d, -0.114 * 1.772 / 0.587);
-    let cb_to_b = D::F32Vec::splat(d, 1.772);
+    let c128 = F32Vec::splat(d, 128.0 / 255.0);
+    let cr_to_r = F32Vec::splat(d, 1.402);
+    let cr_to_g = F32Vec::splat(d, -0.299 * 1.402 / 0.587);
+    let cb_to_g = F32Vec::splat(d, -0.114 * 1.772 / 0.587);
+    let cb_to_b = F32Vec::splat(d, 1.772);
 
     // SIMD loop processing SIMD_WIDTH pixels at once
-    let iter_cb = row_cb.chunks_exact_mut(D::F32Vec::LEN);
-    let iter_y = row_y.chunks_exact_mut(D::F32Vec::LEN);
-    let iter_cr = row_cr.chunks_exact_mut(D::F32Vec::LEN);
+    let iter_cb = row_cb.chunks_exact_mut(F32Vec::<D>::LEN);
+    let iter_y = row_y.chunks_exact_mut(F32Vec::<D>::LEN);
+    let iter_cr = row_cr.chunks_exact_mut(F32Vec::<D>::LEN);
     for ((cb_chunk, y_chunk), cr_chunk) in iter_cb
         .zip(iter_y)
         .zip(iter_cr)
-        .take(xsize.div_ceil(D::F32Vec::LEN))
+        .take(xsize.div_ceil(F32Vec::<D>::LEN))
     {
         // Load Y, Cb, Cr vectors
-        let y_vec = D::F32Vec::load(d, y_chunk) + c128;
-        let cb_vec = D::F32Vec::load(d, cb_chunk);
-        let cr_vec = D::F32Vec::load(d, cr_chunk);
+        let y_vec = F32Vec::load(d, y_chunk) + c128;
+        let cb_vec = F32Vec::load(d, cb_chunk);
+        let cr_vec = F32Vec::load(d, cr_chunk);
 
         // Compute RGB using FMA (fused multiply-add)
         // R = Y + 1.402 * Cr

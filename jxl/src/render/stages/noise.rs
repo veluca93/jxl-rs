@@ -5,7 +5,7 @@
 
 #![allow(clippy::needless_range_loop)]
 
-use jxl_simd::{F32SimdVec, I32SimdVec, SimdDescriptor, SimdMask, simd_dispatch};
+use jxl_simd::{F32Vec, I32Vec, SimdDescriptor, simd_dispatch};
 
 use crate::error::Result;
 use crate::features::noise::Noise;
@@ -46,8 +46,9 @@ fn grow_noise_state(state: &mut [Vec<[i32; 16]>; 3], num_chunks: usize) {
     }
 }
 
-#[inline(always)]
-fn convolve_noise_simd_impl<D: SimdDescriptor>(
+// SIMD noise convolution (5x5 kernel)
+#[simd_dispatch(convolve_noise_simd_dispatch)]
+fn convolve_noise_simd<D: SimdDescriptor>(
     d: D,
     input_rows: &Channels<u16>,
     output_rows: &mut ChannelsMut<f32>,
@@ -55,12 +56,12 @@ fn convolve_noise_simd_impl<D: SimdDescriptor>(
     previous_call_was_previous_row: bool,
     xsize: usize,
 ) {
-    const { assert!(D::I32Vec::LEN <= 16) };
-    const { assert!(D::I32Vec::LEN == D::F32Vec::LEN) };
+    const { assert!(I32Vec::<D>::LEN <= 16) };
+    const { assert!(I32Vec::<D>::LEN == F32Vec::<D>::LEN) };
     if xsize == 0 {
         return;
     }
-    let len = D::F32Vec::LEN;
+    let len = F32Vec::<D>::LEN;
     let num_chunks = (xsize - 1) / len + 1;
     if state.iter().any(|s| s.len() < num_chunks) {
         grow_noise_state(state, num_chunks);
@@ -73,8 +74,8 @@ fn convolve_noise_simd_impl<D: SimdDescriptor>(
     // Multipliers compensated by 128 for the lack of shift by 7 in the mantissa:
     // c_sum = 0.16 * 128 / 2^23 = 0.16 / 65536.0
     // c_center = -4.0 * 128 / 2^23 = -4.0 / 65536.0
-    let c_sum = D::F32Vec::splat(d, 0.16 / 65536.0);
-    let c_center = D::F32Vec::splat(d, -4.0 / 65536.0);
+    let c_sum = F32Vec::splat(d, 0.16 / 65536.0);
+    let c_center = F32Vec::splat(d, -4.0 / 65536.0);
 
     macro_rules! row_sum {
         ($inv:expr, $ch:literal, $dy:expr) => {{
@@ -94,7 +95,7 @@ fn convolve_noise_simd_impl<D: SimdDescriptor>(
             let idx = x / len;
             macro_rules! step {
                 ($ch:literal, $s:ident) => {{
-                    let prev_state = D::I32Vec::load(d, &$s[idx]);
+                    let prev_state = I32Vec::load(d, &$s[idx]);
                     let r4 = row_sum!(inv, $ch, 2);
                     let sum_5x5 = prev_state + r4;
                     let p00 = inv.load::<_, $ch>(d, 0, 0);
@@ -132,27 +133,6 @@ fn convolve_noise_simd_impl<D: SimdDescriptor>(
             step!(2, s2);
         });
     }
-}
-
-// SIMD noise convolution (5x5 kernel)
-// SIMD noise convolution (5x5 kernel)
-#[simd_dispatch(convolve_noise_simd_dispatch)]
-fn convolve_noise_simd<D: SimdDescriptor>(
-    d: D,
-    input_rows: &Channels<u16>,
-    output_rows: &mut ChannelsMut<f32>,
-    state: &mut [Vec<[i32; 16]>; 3],
-    previous_call_was_previous_row: bool,
-    xsize: usize,
-) {
-    convolve_noise_simd_impl(
-        d,
-        input_rows,
-        output_rows,
-        state,
-        previous_call_was_previous_row,
-        xsize,
-    )
 }
 
 impl RenderPipelineInOutStage for ConvolveNoiseStage {
@@ -193,8 +173,9 @@ impl RenderPipelineInOutStage for ConvolveNoiseStage {
     }
 }
 
-#[inline(always)]
-fn add_noise_simd_impl<D: SimdDescriptor>(
+// SIMD noise addition
+#[simd_dispatch(add_noise_simd_dispatch)]
+fn add_noise_simd<D: SimdDescriptor>(
     d: D,
     row_c: &mut [&mut [f32]],
     row_rnd: &[&[f32]],
@@ -203,30 +184,30 @@ fn add_noise_simd_impl<D: SimdDescriptor>(
     ytob: f32,
     xsize: usize,
 ) {
-    let table = D::F32Vec::prepare_table_bf16_8(d, lut);
-    let c_zero = D::F32Vec::zero(d);
-    let c_one = D::F32Vec::splat(d, 1.0);
-    let c_six = D::F32Vec::splat(d, 6.0);
-    let c_half = D::F32Vec::splat(d, 0.5);
-    let c_norm = D::F32Vec::splat(d, 0.22);
-    let c_rgn_corr = D::F32Vec::splat(d, 0.0078125);
-    let c_rg_corr = D::F32Vec::splat(d, 0.9921875);
-    let c_ytox = D::F32Vec::splat(d, ytox);
-    let c_ytob = D::F32Vec::splat(d, ytob);
-    let c_i32_one = D::I32Vec::splat(d, 1);
+    let table = F32Vec::prepare_table_bf16_8(d, lut);
+    let c_zero = F32Vec::zero(d);
+    let c_one = F32Vec::splat(d, 1.0);
+    let c_six = F32Vec::splat(d, 6.0);
+    let c_half = F32Vec::splat(d, 0.5);
+    let c_norm = F32Vec::splat(d, 0.22);
+    let c_rgn_corr = F32Vec::splat(d, 0.0078125);
+    let c_rg_corr = F32Vec::splat(d, 0.9921875);
+    let c_ytox = F32Vec::splat(d, ytox);
+    let c_ytob = F32Vec::splat(d, ytob);
+    let c_i32_one = I32Vec::splat(d, 1);
 
     let noise_strength = {
         #[inline(always)]
-        |vx: D::F32Vec| -> D::F32Vec {
+        |vx: F32Vec<D>| -> F32Vec<D> {
             let scaled_vx = (vx * c_six).max(c_zero);
             let pre_floor_x = scaled_vx.floor();
             let pre_frac_x = scaled_vx - pre_floor_x;
             let is_ge_7 = pre_floor_x.gt(c_six);
             let floor_x = pre_floor_x.min(c_six);
-            let frac_x = is_ge_7.if_then_else_f32(c_one, pre_frac_x);
+            let frac_x = is_ge_7.if_then_else(c_one, pre_frac_x);
             let floor_x_int = floor_x.as_i32();
-            let low = D::F32Vec::table_lookup_bf16_8(d, table, floor_x_int);
-            let hi = D::F32Vec::table_lookup_bf16_8(d, table, floor_x_int + c_i32_one);
+            let low = F32Vec::table_lookup_bf16_8(d, table, floor_x_int);
+            let hi = F32Vec::table_lookup_bf16_8(d, table, floor_x_int + c_i32_one);
             (hi - low).mul_add(frac_x, low).max(c_zero).min(c_one)
         }
     };
@@ -234,12 +215,12 @@ fn add_noise_simd_impl<D: SimdDescriptor>(
     let (row_c0, rest_c) = row_c.split_at_mut(1);
     let (row_c1, row_c2) = rest_c.split_at_mut(1);
 
-    let iter_c0 = row_c0[0].chunks_exact_mut(D::F32Vec::LEN);
-    let iter_c1 = row_c1[0].chunks_exact_mut(D::F32Vec::LEN);
-    let iter_c2 = row_c2[0].chunks_exact_mut(D::F32Vec::LEN);
-    let iter_rnd_r = row_rnd[0].chunks_exact(D::F32Vec::LEN);
-    let iter_rnd_g = row_rnd[1].chunks_exact(D::F32Vec::LEN);
-    let iter_rnd_c = row_rnd[2].chunks_exact(D::F32Vec::LEN);
+    let iter_c0 = row_c0[0].chunks_exact_mut(F32Vec::<D>::LEN);
+    let iter_c1 = row_c1[0].chunks_exact_mut(F32Vec::<D>::LEN);
+    let iter_c2 = row_c2[0].chunks_exact_mut(F32Vec::<D>::LEN);
+    let iter_rnd_r = row_rnd[0].chunks_exact(F32Vec::<D>::LEN);
+    let iter_rnd_g = row_rnd[1].chunks_exact(F32Vec::<D>::LEN);
+    let iter_rnd_c = row_rnd[2].chunks_exact(F32Vec::<D>::LEN);
 
     for (((((c0, c1), c2), rnd_r_chunk), rnd_g_chunk), rnd_c_chunk) in iter_c0
         .zip(iter_c1)
@@ -247,11 +228,11 @@ fn add_noise_simd_impl<D: SimdDescriptor>(
         .zip(iter_rnd_r)
         .zip(iter_rnd_g)
         .zip(iter_rnd_c)
-        .take(xsize.div_ceil(D::F32Vec::LEN))
+        .take(xsize.div_ceil(F32Vec::<D>::LEN))
     {
-        let vx = D::F32Vec::load(d, c0);
-        let vy = D::F32Vec::load(d, c1);
-        let vb = D::F32Vec::load(d, c2);
+        let vx = F32Vec::load(d, c0);
+        let vy = F32Vec::load(d, c1);
+        let vb = F32Vec::load(d, c2);
 
         let in_g = (vy - vx) * c_half;
         let in_r = (vy + vx) * c_half;
@@ -259,9 +240,9 @@ fn add_noise_simd_impl<D: SimdDescriptor>(
         let noise_strength_g = noise_strength(in_g);
         let noise_strength_r = noise_strength(in_r);
 
-        let rnd_r = D::F32Vec::load(d, rnd_r_chunk) * c_norm;
-        let rnd_g = D::F32Vec::load(d, rnd_g_chunk) * c_norm;
-        let rnd_c = D::F32Vec::load(d, rnd_c_chunk) * c_norm;
+        let rnd_r = F32Vec::load(d, rnd_r_chunk) * c_norm;
+        let rnd_g = F32Vec::load(d, rnd_g_chunk) * c_norm;
+        let rnd_c = F32Vec::load(d, rnd_c_chunk) * c_norm;
 
         let red_noise = noise_strength_r * (rnd_r.mul_add(c_rgn_corr, rnd_c * c_rg_corr));
         let green_noise = noise_strength_g * (rnd_g.mul_add(c_rgn_corr, rnd_c * c_rg_corr));
@@ -275,20 +256,6 @@ fn add_noise_simd_impl<D: SimdDescriptor>(
         out_y.store(c1);
         out_b.store(c2);
     }
-}
-
-// SIMD noise addition
-#[simd_dispatch(add_noise_simd_dispatch)]
-fn add_noise_simd<D: SimdDescriptor>(
-    d: D,
-    row_c: &mut [&mut [f32]],
-    row_rnd: &[&[f32]],
-    lut: &[f32; 8],
-    ytox: f32,
-    ytob: f32,
-    xsize: usize,
-) {
-    add_noise_simd_impl(d, row_c, row_rnd, lut, ytox, ytob, xsize)
 }
 
 pub struct AddNoiseStage {

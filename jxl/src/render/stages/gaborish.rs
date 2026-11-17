@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use jxl_simd::{F32SimdVec, SimdDescriptor, simd_dispatch};
+use jxl_simd::{F32Vec, SimdDescriptor, simd_dispatch};
 
 use crate::render::{
     Channels, ChannelsMut, ErasedLocalState, RenderPipelineInOutStage, for_each_chunk,
@@ -50,9 +50,9 @@ fn gaborish_process<D: SimdDescriptor>(
     input_rows: &Channels<f32>,
     output_rows: &mut ChannelsMut<f32>,
 ) {
-    let w0 = stage.weight0.map(|w| D::F32Vec::splat(d, w));
-    let w1 = stage.weight1.map(|w| D::F32Vec::splat(d, w));
-    let w2 = stage.weight2.map(|w| D::F32Vec::splat(d, w));
+    let w0 = stage.weight0.map(|w| F32Vec::splat(d, w));
+    let w1 = stage.weight1.map(|w| F32Vec::splat(d, w));
+    let w2 = stage.weight2.map(|w| F32Vec::splat(d, w));
 
     for_each_chunk(
         d,

@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use jxl_simd::{F32SimdVec, I32SimdVec, ScalarDescriptor, SimdDescriptor, simd_dispatch};
+use jxl_simd::{Emu128Descriptor, F32Vec, I32Vec, SimdDescriptor, simd_dispatch};
 
 use crate::frame::quantizer::LfQuantFactors;
 use crate::headers::bit_depth::BitDepth;
@@ -47,16 +47,16 @@ impl std::fmt::Display for ConvertModularXYBToF32Stage {
 }
 
 #[inline(always)]
-fn modular_xyb_to_float_simd<D: SimdDescriptor, T: VecLoad<D, Vec = D::I32Vec>>(
+fn modular_xyb_to_float_simd<D: SimdDescriptor, T: VecLoad<D, Vec = I32Vec<D>>>(
     d: D,
     input_rows: &Channels<T>,
     output_rows: &mut ChannelsMut<f32>,
     [scale_x, scale_y, scale_b]: [f32; 3],
     xsize: usize,
 ) {
-    let scale_x = D::F32Vec::splat(d, scale_x);
-    let scale_y = D::F32Vec::splat(d, scale_y);
-    let scale_b = D::F32Vec::splat(d, scale_b);
+    let scale_x = F32Vec::splat(d, scale_x);
+    let scale_y = F32Vec::splat(d, scale_y);
+    let scale_b = F32Vec::splat(d, scale_b);
 
     // Input channels: [Y, X, B] (modular XYB order)
     // Output channels: [X, Y, B] (standard XYB order)
@@ -235,7 +235,7 @@ fn int_to_float_32bit_simd<D: SimdDescriptor>(
         output_rows.view::<1, 1, 1>(),
         |_x, inv, outv| {
             let val = inv.load::<_, 0>(d, 0, 0);
-            outv.store::<_, 0>(d, 0, val.bitcast_to_f32());
+            outv.store::<_, 0>(d, 0, val.bitcast::<f32>());
         },
     );
 }
@@ -243,18 +243,18 @@ fn int_to_float_32bit_simd<D: SimdDescriptor>(
 // SIMD 16-bit float (half-precision) to 32-bit float conversion
 // Uses hardware F16C/NEON instructions when available via F32Vec::load_f16_bits()
 #[inline(always)]
-fn int_to_float_16bit_simd<D: SimdDescriptor, T: VecLoad<D, Vec = D::I32Vec>>(
+fn int_to_float_16bit_simd<D: SimdDescriptor, T: VecLoad<D, Vec = I32Vec<D>>>(
     d: D,
     input_rows: &Channels<T>,
     output_rows: &mut ChannelsMut<f32>,
     xsize: usize,
 ) {
-    let simd_width = D::F32Vec::LEN;
+    let simd_width = F32Vec::<D>::LEN;
 
     // Temporary buffer for i32->u16 conversion via SIMD
-    // Note: Using constant 16 (max AVX-512 width) because D::F32Vec::LEN
+    // Note: Using constant 16 (max AVX-512 width) because F32Vec::<D>::LEN
     // cannot be used as array size in Rust (const generics limitation)
-    const { assert!(D::F32Vec::LEN <= 16) }
+    const { assert!(F32Vec::<D>::LEN <= 16) }
     let mut u16_buf = [0u16; 16];
 
     for_each_chunk(
@@ -267,7 +267,7 @@ fn int_to_float_16bit_simd<D: SimdDescriptor, T: VecLoad<D, Vec = D::I32Vec>>(
             let i32_vec = inv.load::<_, 0>(d, 0, 0);
             i32_vec.store_u16(&mut u16_buf[..simd_width]);
             // Use hardware f16->f32 conversion
-            let result = D::F32Vec::load_f16_bits(d, &u16_buf[..simd_width]);
+            let result = F32Vec::load_f16_bits(d, &u16_buf[..simd_width]);
             outv.store::<_, 0>(d, 0, result);
         },
     );
@@ -372,31 +372,32 @@ fn int_to_float_generic<T>(
     exp_bits: u32,
     xsize: usize,
 ) where
-    T: VecLoad<ScalarDescriptor, Vec = std::num::Wrapping<i32>>,
+    T: VecLoad<Emu128Descriptor, Vec = I32Vec<Emu128Descriptor>>,
 {
-    let d = ScalarDescriptor::new().unwrap();
+    let d = Emu128Descriptor::new().unwrap();
     for_each_chunk(
         d,
         xsize,
         input_rows.view::<1, 1, 0>(),
         output_rows.view::<1, 1, 1>(),
         |_x, inv, outv| {
-            let in_val = inv.load::<_, 0>(d, 0, 0).0;
-            let out_val = custom_float_sample_to_f32(in_val as u32, bits, exp_bits);
-            outv.store::<_, 0>(d, 0, out_val);
+            let mut in_arr = [0i32; 4];
+            inv.load::<_, 0>(d, 0, 0).store_array(&mut in_arr);
+            let out_arr = in_arr.map(|v| custom_float_sample_to_f32(v as u32, bits, exp_bits));
+            outv.store::<_, 0>(d, 0, F32Vec::load_array(d, &out_arr));
         },
     );
 }
 
 #[inline(always)]
-fn modular_to_float_simd<D: SimdDescriptor, T: VecLoad<D, Vec = D::I32Vec>>(
+fn modular_to_float_simd<D: SimdDescriptor, T: VecLoad<D, Vec = I32Vec<D>>>(
     d: D,
     input_rows: &Channels<T>,
     output_rows: &mut ChannelsMut<f32>,
     scale: f32,
     xsize: usize,
 ) {
-    let scale = D::F32Vec::splat(d, scale);
+    let scale = F32Vec::splat(d, scale);
 
     for_each_chunk(
         d,
