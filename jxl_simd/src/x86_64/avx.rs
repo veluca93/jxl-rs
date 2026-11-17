@@ -143,10 +143,15 @@ impl SimdDescriptor for AvxDescriptor {
         self.as_sse42()
     }
 
+    #[inline]
     fn new() -> Option<Self> {
-        if is_x86_feature_detected!("avx2")
+        if cfg!(all(
+            target_feature = "avx2",
+            target_feature = "fma",
+            target_feature = "f16c"
+        )) || (is_x86_feature_detected!("avx2")
             && is_x86_feature_detected!("fma")
-            && is_x86_feature_detected!("f16c")
+            && is_x86_feature_detected!("f16c"))
         {
             // SAFETY: we just checked avx2, fma, and f16c.
             Some(unsafe { Self::new_unchecked() })
@@ -158,7 +163,18 @@ impl SimdDescriptor for AvxDescriptor {
     fn call<R>(self, f: impl FnOnce(Self) -> R) -> R {
         #[target_feature(enable = "avx2,fma,f16c")]
         #[inline(never)]
-        unsafe fn inner<R>(d: AvxDescriptor, f: impl FnOnce(AvxDescriptor) -> R) -> R {
+        fn inner<R>(d: AvxDescriptor, f: impl FnOnce(AvxDescriptor) -> R) -> R {
+            f(d)
+        }
+        // SAFETY: the safety invariant on `self` guarantees avx2, fma, and f16c.
+        unsafe { inner(self, f) }
+    }
+
+    #[inline(always)]
+    fn call_inlined<R>(self, f: impl FnOnce(Self) -> R) -> R {
+        #[target_feature(enable = "avx2,fma,f16c")]
+        #[inline]
+        fn inner<R>(d: AvxDescriptor, f: impl FnOnce(AvxDescriptor) -> R) -> R {
             f(d)
         }
         // SAFETY: the safety invariant on `self` guarantees avx2, fma, and f16c.

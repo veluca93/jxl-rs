@@ -5,6 +5,8 @@
 
 #![allow(clippy::too_many_arguments)]
 
+extern crate self as jxl_simd;
+
 use std::fmt::Debug;
 use std::ops::{
     Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Div, DivAssign,
@@ -26,6 +28,7 @@ pub mod scalar;
 #[cfg(all(target_arch = "aarch64", feature = "neon"))]
 pub use aarch64::neon::NeonDescriptor;
 pub use float16::f16;
+pub use jxl_simd_macros::{simd_dispatch, simd_test};
 pub use scalar::ScalarDescriptor;
 #[cfg(all(target_arch = "wasm32", feature = "simd128"))]
 pub use wasm32::simd128::Simd128Descriptor;
@@ -35,6 +38,288 @@ pub use x86_64::avx::AvxDescriptor;
 pub use x86_64::avx512::Avx512Descriptor;
 #[cfg(all(target_arch = "x86_64", feature = "sse42"))]
 pub use x86_64::sse42::Sse42Descriptor;
+
+#[cfg(all(target_arch = "x86_64", feature = "sse42"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __if_sse42 {
+    ($($tt:tt)*) => {
+        $($tt)*
+    };
+}
+
+#[cfg(not(all(target_arch = "x86_64", feature = "sse42")))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __if_sse42 {
+    ($($tt:tt)*) => {};
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __if_avx {
+    ($($tt:tt)*) => {
+        $($tt)*
+    };
+}
+
+#[cfg(not(all(target_arch = "x86_64", feature = "avx")))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __if_avx {
+    ($($tt:tt)*) => {};
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __if_avx512 {
+    ($($tt:tt)*) => {
+        $($tt)*
+    };
+}
+
+#[cfg(not(all(target_arch = "x86_64", feature = "avx512")))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __if_avx512 {
+    ($($tt:tt)*) => {};
+}
+
+#[cfg(all(target_arch = "aarch64", feature = "neon"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __if_neon {
+    ($($tt:tt)*) => {
+        $($tt)*
+    };
+}
+
+#[cfg(not(all(target_arch = "aarch64", feature = "neon")))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __if_neon {
+    ($($tt:tt)*) => {};
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "simd128"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __if_simd128 {
+    ($($tt:tt)*) => {
+        $($tt)*
+    };
+}
+
+#[cfg(not(all(target_arch = "wasm32", feature = "simd128")))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __if_simd128 {
+    ($($tt:tt)*) => {};
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_dispatch {
+    (|$d:ident| $call:expr) => {{
+        $crate::__if_avx512! {
+            if let Some($d) = <$crate::Avx512Descriptor as $crate::SimdDescriptor>::new() {
+                return $crate::SimdDescriptor::call_inlined(
+                    $d,
+                    #[inline(always)]
+                    |$d| $call,
+                );
+            }
+        }
+        $crate::__if_avx! {
+            if let Some($d) = <$crate::AvxDescriptor as $crate::SimdDescriptor>::new() {
+                return $crate::SimdDescriptor::call_inlined(
+                    $d,
+                    #[inline(always)]
+                    |$d| $call,
+                );
+            }
+        }
+        $crate::__if_sse42! {
+            if let Some($d) = <$crate::Sse42Descriptor as $crate::SimdDescriptor>::new() {
+                return $crate::SimdDescriptor::call_inlined(
+                    $d,
+                    #[inline(always)]
+                    |$d| $call,
+                );
+            }
+        }
+        $crate::__if_neon! {
+            if let Some($d) = <$crate::NeonDescriptor as $crate::SimdDescriptor>::new() {
+                return $crate::SimdDescriptor::call_inlined(
+                    $d,
+                    #[inline(always)]
+                    |$d| $call,
+                );
+            }
+        }
+        $crate::__if_simd128! {
+            if let Some($d) = <$crate::Simd128Descriptor as $crate::SimdDescriptor>::new() {
+                return $crate::SimdDescriptor::call_inlined(
+                    $d,
+                    #[inline(always)]
+                    |$d| $call,
+                );
+            }
+        }
+        let $d = <$crate::ScalarDescriptor as $crate::SimdDescriptor>::new().unwrap();
+        #[cold]
+        #[inline(never)]
+        fn emu<R>(f: impl FnOnce() -> R) -> R {
+            f()
+        }
+        emu(|| $call)
+    }};
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __simd_test_fns {
+    (
+        $fn_name:ident,
+        [$(#[$test_attr:meta])*],
+        $avx512:ident,
+        $avx:ident,
+        $sse42:ident,
+        $neon:ident,
+        $simd128:ident,
+        $scalar:ident
+    ) => {
+        $crate::__if_avx512! {
+            $(#[$test_attr])*
+            #[test]
+            fn $avx512() {
+                if let Some(d) = <$crate::Avx512Descriptor as $crate::SimdDescriptor>::new() {
+                    $crate::SimdDescriptor::call_inlined(
+                        d,
+                        #[inline(always)]
+                        |d| $fn_name(d),
+                    );
+                }
+            }
+        }
+        $crate::__if_avx! {
+            $(#[$test_attr])*
+            #[test]
+            fn $avx() {
+                if let Some(d) = <$crate::AvxDescriptor as $crate::SimdDescriptor>::new() {
+                    $crate::SimdDescriptor::call_inlined(
+                        d,
+                        #[inline(always)]
+                        |d| $fn_name(d),
+                    );
+                }
+            }
+        }
+        $crate::__if_sse42! {
+            $(#[$test_attr])*
+            #[test]
+            fn $sse42() {
+                if let Some(d) = <$crate::Sse42Descriptor as $crate::SimdDescriptor>::new() {
+                    $crate::SimdDescriptor::call_inlined(
+                        d,
+                        #[inline(always)]
+                        |d| $fn_name(d),
+                    );
+                }
+            }
+        }
+        $crate::__if_neon! {
+            $(#[$test_attr])*
+            #[test]
+            fn $neon() {
+                if let Some(d) = <$crate::NeonDescriptor as $crate::SimdDescriptor>::new() {
+                    $crate::SimdDescriptor::call_inlined(
+                        d,
+                        #[inline(always)]
+                        |d| $fn_name(d),
+                    );
+                }
+            }
+        }
+        $crate::__if_simd128! {
+            $(#[$test_attr])*
+            #[test]
+            fn $simd128() {
+                if let Some(d) = <$crate::Simd128Descriptor as $crate::SimdDescriptor>::new() {
+                    $crate::SimdDescriptor::call_inlined(
+                        d,
+                        #[inline(always)]
+                        |d| $fn_name(d),
+                    );
+                }
+            }
+        }
+        $(#[$test_attr])*
+        #[test]
+        fn $scalar() {
+            $fn_name(<$crate::ScalarDescriptor as $crate::SimdDescriptor>::new().unwrap());
+        }
+    };
+}
+
+/// Runs a Criterion benchmark callback across every SIMD instruction set supported by the host CPU.
+#[macro_export]
+macro_rules! bench_all_instruction_sets {
+    ($name:ident, $criterion:ident) => {
+        $crate::__if_avx512! {
+            if let Some(d) = <$crate::Avx512Descriptor as $crate::SimdDescriptor>::new() {
+                $crate::SimdDescriptor::call_inlined(
+                    d,
+                    #[inline(always)]
+                    |d| $name(d, $criterion, "avx512"),
+                );
+            }
+        }
+        $crate::__if_avx! {
+            if let Some(d) = <$crate::AvxDescriptor as $crate::SimdDescriptor>::new() {
+                $crate::SimdDescriptor::call_inlined(
+                    d,
+                    #[inline(always)]
+                    |d| $name(d, $criterion, "avx"),
+                );
+            }
+        }
+        $crate::__if_sse42! {
+            if let Some(d) = <$crate::Sse42Descriptor as $crate::SimdDescriptor>::new() {
+                $crate::SimdDescriptor::call_inlined(
+                    d,
+                    #[inline(always)]
+                    |d| $name(d, $criterion, "sse42"),
+                );
+            }
+        }
+        $crate::__if_neon! {
+            if let Some(d) = <$crate::NeonDescriptor as $crate::SimdDescriptor>::new() {
+                $crate::SimdDescriptor::call_inlined(
+                    d,
+                    #[inline(always)]
+                    |d| $name(d, $criterion, "neon"),
+                );
+            }
+        }
+        $crate::__if_simd128! {
+            if let Some(d) = <$crate::Simd128Descriptor as $crate::SimdDescriptor>::new() {
+                $crate::SimdDescriptor::call_inlined(
+                    d,
+                    #[inline(always)]
+                    |d| $name(d, $criterion, "simd128"),
+                );
+            }
+        }
+        $name(
+            <$crate::ScalarDescriptor as $crate::SimdDescriptor>::new().unwrap(),
+            $criterion,
+            "scalar",
+        );
+    };
+}
 
 pub trait SimdDescriptor: Sized + Copy + Debug + Send + Sync {
     type F32Vec: F32SimdVec<Descriptor = Self>;
@@ -77,6 +362,9 @@ pub trait SimdDescriptor: Sized + Copy + Debug + Send + Sync {
     /// This enables establishing an unbroken chain of inline functions from the feature-annotated
     /// gateway up to the closure, allowing SIMD intrinsics to be used safely.
     fn call<R>(self, f: impl FnOnce(Self) -> R) -> R;
+
+    /// Inlining-friendly variant of [`Self::call`] used at top-level dispatch and test boundaries.
+    fn call_inlined<R>(self, f: impl FnOnce(Self) -> R) -> R;
 }
 
 pub trait F32SimdVec:
@@ -680,7 +968,7 @@ mod test {
 
     use crate::{
         F32SimdVec, I16SimdVec, I32SimdVec, ScalarDescriptor, SimdDescriptor, SimdMask16,
-        U8SimdVec, U16SimdVec, U64SimdVec, test_all_instruction_sets,
+        U8SimdVec, U16SimdVec, U64SimdVec, simd_test,
     };
 
     enum Distribution {
@@ -722,6 +1010,7 @@ mod test {
 
     macro_rules! test_instruction {
         ($name:ident, |$a:ident: $a_dist:ident| $block:expr) => {
+            #[simd_test]
             fn $name<D: SimdDescriptor>(d: D) {
                 fn compute<D: SimdDescriptor>(d: D, a: &[f32]) -> Vec<f32> {
                     let closure = |$a: D::F32Vec| $block;
@@ -742,9 +1031,9 @@ mod test {
                 })
                 .size_min(64);
             }
-            test_all_instruction_sets!($name);
         };
         ($name:ident, |$a:ident: $a_dist:ident, $b:ident: $b_dist:ident| $block:expr) => {
+            #[simd_test]
             fn $name<D: SimdDescriptor>(d: D) {
                 fn compute<D: SimdDescriptor>(d: D, a: &[f32], b: &[f32]) -> Vec<f32> {
                     let closure = |$a: D::F32Vec, $b: D::F32Vec| $block;
@@ -767,9 +1056,9 @@ mod test {
                 })
                 .size_min(128);
             }
-            test_all_instruction_sets!($name);
         };
         ($name:ident, |$a:ident: $a_dist:ident, $b:ident: $b_dist:ident, $c:ident: $c_dist:ident| $block:expr) => {
+            #[simd_test]
             fn $name<D: SimdDescriptor>(d: D) {
                 fn compute<D: SimdDescriptor>(d: D, a: &[f32], b: &[f32], c: &[f32]) -> Vec<f32> {
                     let closure = |$a: D::F32Vec, $b: D::F32Vec, $c: D::F32Vec| $block;
@@ -798,7 +1087,6 @@ mod test {
                 })
                 .size_min(172);
             }
-            test_all_instruction_sets!($name);
         };
     }
 
@@ -837,6 +1125,7 @@ mod test {
     });
 
     // Validate that neg_mul_add computes c - a * b correctly
+    #[simd_test]
     fn test_neg_mul_add_correctness<D: SimdDescriptor>(d: D) {
         let a_vals = [
             2.0, 3.0, 4.0, 5.0, 1.5, 2.5, 3.5, 4.5, 2.5, 3.5, 4.5, 5.5, 1.0, 2.0, 3.0, 4.0,
@@ -872,13 +1161,12 @@ mod test {
         }
     }
 
-    test_all_instruction_sets!(test_neg_mul_add_correctness);
-
     test_instruction!(abs, |a: Floats| { a.abs() });
     test_instruction!(max, |a: Floats, b: Floats| { a.max(b) });
     test_instruction!(min, |a: Floats, b: Floats| { a.min(b) });
 
     // Test that the call method works, compiles, and can capture arguments
+    #[simd_test]
     fn test_call<D: SimdDescriptor>(d: D) {
         // Test basic call functionality
         let result = d.call(|_d| 42);
@@ -908,8 +1196,8 @@ mod test {
             assert_eq!(val, 1.0 * multiplier + addend);
         }
     }
-    test_all_instruction_sets!(test_call);
 
+    #[simd_test]
     fn test_neg<D: SimdDescriptor>(d: D) {
         // Test negation operation with enough elements for any SIMD size
         let len = D::F32Vec::LEN * 2; // Ensure we have at least 2 full vectors
@@ -935,8 +1223,8 @@ mod test {
             );
         }
     }
-    test_all_instruction_sets!(test_neg);
 
+    #[simd_test]
     fn test_transpose_square<D: SimdDescriptor>(d: D) {
         // Test square matrix transpose
         let len = D::F32Vec::LEN;
@@ -962,8 +1250,8 @@ mod test {
             }
         }
     }
-    test_all_instruction_sets!(test_transpose_square);
 
+    #[simd_test]
     fn test_store_interleaved_2<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let a: Vec<f32> = (0..len).map(|i| i as f32).collect();
@@ -996,8 +1284,8 @@ mod test {
             );
         }
     }
-    test_all_instruction_sets!(test_store_interleaved_2);
 
+    #[simd_test]
     fn test_store_interleaved_3<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let a: Vec<f32> = (0..len).map(|i| i as f32).collect();
@@ -1041,8 +1329,8 @@ mod test {
             );
         }
     }
-    test_all_instruction_sets!(test_store_interleaved_3);
 
+    #[simd_test]
     fn test_store_interleaved_4<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let a: Vec<f32> = (0..len).map(|i| i as f32).collect();
@@ -1097,8 +1385,8 @@ mod test {
             );
         }
     }
-    test_all_instruction_sets!(test_store_interleaved_4);
 
+    #[simd_test]
     fn test_store_interleaved_8<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let arr_a: Vec<f32> = (0..len).map(|i| i as f32).collect();
@@ -1140,8 +1428,8 @@ mod test {
             }
         }
     }
-    test_all_instruction_sets!(test_store_interleaved_8);
 
+    #[simd_test]
     fn test_load_deinterleaved_2<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         // Create interleaved input: [a0, b0, a1, b1, ...]
@@ -1173,8 +1461,8 @@ mod test {
             );
         }
     }
-    test_all_instruction_sets!(test_load_deinterleaved_2);
 
+    #[simd_test]
     fn test_load_deinterleaved_3<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         // Create interleaved input: [a0, b0, c0, a1, b1, c1, ...]
@@ -1215,8 +1503,8 @@ mod test {
             );
         }
     }
-    test_all_instruction_sets!(test_load_deinterleaved_3);
 
+    #[simd_test]
     fn test_load_deinterleaved_4<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         // Create interleaved input: [a0, b0, c0, d0, a1, b1, c1, d1, ...]
@@ -1266,9 +1554,9 @@ mod test {
             );
         }
     }
-    test_all_instruction_sets!(test_load_deinterleaved_4);
 
     // Roundtrip tests: verify store_interleaved + load_deinterleaved returns original data
+    #[simd_test]
     fn test_interleave_roundtrip_2<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let a: Vec<f32> = (0..len).map(|i| (i * 7 + 3) as f32).collect();
@@ -1290,8 +1578,8 @@ mod test {
         assert_eq!(out_a, a, "interleave_roundtrip_2 failed for channel a");
         assert_eq!(out_b, b, "interleave_roundtrip_2 failed for channel b");
     }
-    test_all_instruction_sets!(test_interleave_roundtrip_2);
 
+    #[simd_test]
     fn test_interleave_roundtrip_3<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let a: Vec<f32> = (0..len).map(|i| (i * 7 + 3) as f32).collect();
@@ -1318,8 +1606,8 @@ mod test {
         assert_eq!(out_b, b, "interleave_roundtrip_3 failed for channel b");
         assert_eq!(out_c, c, "interleave_roundtrip_3 failed for channel c");
     }
-    test_all_instruction_sets!(test_interleave_roundtrip_3);
 
+    #[simd_test]
     fn test_interleave_roundtrip_4<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let a: Vec<f32> = (0..len).map(|i| (i * 7 + 3) as f32).collect();
@@ -1351,8 +1639,8 @@ mod test {
         assert_eq!(out_c, c, "interleave_roundtrip_4 failed for channel c");
         assert_eq!(out_d, e, "interleave_roundtrip_4 failed for channel d");
     }
-    test_all_instruction_sets!(test_interleave_roundtrip_4);
 
+    #[simd_test]
     fn test_prepare_table_bf16_8<D: SimdDescriptor>(d: D) {
         // Create an 8-entry lookup table with known values
         // Use integer values that are exactly representable in BF16
@@ -1390,10 +1678,10 @@ mod test {
             );
         }
     }
-    test_all_instruction_sets!(test_prepare_table_bf16_8);
 
     /// Test that I32 multiplication operates on all elements, not just alternating lanes.
     /// This catches the bug where _mm_mul_epi32 was used instead of _mm_mullo_epi32.
+    #[simd_test]
     fn test_i32_mul_all_elements<D: SimdDescriptor>(d: D) {
         let len = D::I32Vec::LEN;
 
@@ -1422,8 +1710,8 @@ mod test {
             );
         }
     }
-    test_all_instruction_sets!(test_i32_mul_all_elements);
 
+    #[simd_test]
     fn test_store_u16<D: SimdDescriptor>(d: D) {
         let data = [
             0xbabau32 as i32,
@@ -1458,8 +1746,8 @@ mod test {
             );
         }
     }
-    test_all_instruction_sets!(test_store_u16);
 
+    #[simd_test]
     fn test_store_interleaved_2_u8<D: SimdDescriptor>(d: D) {
         let len = D::U8Vec::LEN;
         let a: Vec<u8> = (0..len).map(|i| i as u8).collect();
@@ -1475,8 +1763,8 @@ mod test {
             assert_eq!(output[2 * i + 1], b[i]);
         }
     }
-    test_all_instruction_sets!(test_store_interleaved_2_u8);
 
+    #[simd_test]
     fn test_store_interleaved_3_u8<D: SimdDescriptor>(d: D) {
         let len = D::U8Vec::LEN;
         let a: Vec<u8> = (0..len).map(|i| i as u8).collect();
@@ -1495,8 +1783,8 @@ mod test {
             assert_eq!(output[3 * i + 2], c[i]);
         }
     }
-    test_all_instruction_sets!(test_store_interleaved_3_u8);
 
+    #[simd_test]
     fn test_store_interleaved_4_u8<D: SimdDescriptor>(d: D) {
         let len = D::U8Vec::LEN;
         let a: Vec<u8> = (0..len).map(|i| i as u8).collect();
@@ -1518,8 +1806,8 @@ mod test {
             assert_eq!(output[4 * i + 3], e[i]);
         }
     }
-    test_all_instruction_sets!(test_store_interleaved_4_u8);
 
+    #[simd_test]
     fn test_store_interleaved_2_u16<D: SimdDescriptor>(d: D) {
         let len = D::U16Vec::LEN;
         let a: Vec<u16> = (0..len).map(|i| i as u16).collect();
@@ -1535,8 +1823,8 @@ mod test {
             assert_eq!(output[2 * i + 1], b[i]);
         }
     }
-    test_all_instruction_sets!(test_store_interleaved_2_u16);
 
+    #[simd_test]
     fn test_store_interleaved_3_u16<D: SimdDescriptor>(d: D) {
         let len = D::U16Vec::LEN;
         let a: Vec<u16> = (0..len).map(|i| i as u16).collect();
@@ -1555,8 +1843,8 @@ mod test {
             assert_eq!(output[3 * i + 2], c[i]);
         }
     }
-    test_all_instruction_sets!(test_store_interleaved_3_u16);
 
+    #[simd_test]
     fn test_store_interleaved_4_u16<D: SimdDescriptor>(d: D) {
         let len = D::U16Vec::LEN;
         let a: Vec<u16> = (0..len).map(|i| i as u16).collect();
@@ -1578,8 +1866,8 @@ mod test {
             assert_eq!(output[4 * i + 3], e[i]);
         }
     }
-    test_all_instruction_sets!(test_store_interleaved_4_u16);
 
+    #[simd_test]
     fn test_store_u8<D: SimdDescriptor>(d: D) {
         let data = [
             0xba_i32,
@@ -1614,8 +1902,8 @@ mod test {
             );
         }
     }
-    test_all_instruction_sets!(test_store_u8);
 
+    #[simd_test]
     fn test_f16_load_roundtrip<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let values: &[f32] = &[0.0, 1.0, -1.0, 0.5, 100.0, -42.5, 65504.0, 0.001];
@@ -1647,8 +1935,8 @@ mod test {
             }
         }
     }
-    test_all_instruction_sets!(test_f16_load_roundtrip);
 
+    #[simd_test]
     fn test_f16_load_special_values<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let cases: &[(u16, f32)] = &[
@@ -1685,8 +1973,8 @@ mod test {
             }
         }
     }
-    test_all_instruction_sets!(test_f16_load_special_values);
 
+    #[simd_test]
     fn test_f16_store_roundtrip<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let known: &[(f32, u16)] = &[(1.0, 0x3C00), (-2.0, 0xC000), (0.5, 0x3800), (0.0, 0x0000)];
@@ -1707,8 +1995,8 @@ mod test {
             );
         }
     }
-    test_all_instruction_sets!(test_f16_store_roundtrip);
 
+    #[simd_test]
     fn test_f16_store_special_values<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         // (f32 input, expected f16 bits)
@@ -1739,8 +2027,8 @@ mod test {
             }
         }
     }
-    test_all_instruction_sets!(test_f16_store_special_values);
 
+    #[simd_test]
     fn test_f16_underflow_to_zero<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         let mut input = vec![0.0f32; len];
@@ -1763,7 +2051,6 @@ mod test {
             );
         }
     }
-    test_all_instruction_sets!(test_f16_underflow_to_zero);
 
     fn compare_f16_bits(s: u16, m: u16) {
         let (s_exp, m_exp) = ((s >> 10) & 0x1F, (m >> 10) & 0x1F);
@@ -1780,6 +2067,7 @@ mod test {
         }
     }
 
+    #[simd_test]
     fn test_f16_store_scalar_equivalent<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         arbtest::arbtest(|u| {
@@ -1795,8 +2083,8 @@ mod test {
             Ok(())
         });
     }
-    test_all_instruction_sets!(test_f16_store_scalar_equivalent);
 
+    #[simd_test]
     fn test_f16_load_scalar_equivalent<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         arbtest::arbtest(|u| {
@@ -1818,8 +2106,8 @@ mod test {
             Ok(())
         });
     }
-    test_all_instruction_sets!(test_f16_load_scalar_equivalent);
 
+    #[simd_test]
     fn test_i32_store_interleaved_2<D: SimdDescriptor>(d: D) {
         let len = D::I32Vec::LEN;
         let mut a_input = vec![0i32; len];
@@ -1837,8 +2125,8 @@ mod test {
             assert_eq!(dest[2 * i + 1], i as i32 * 2 + 1);
         }
     }
-    test_all_instruction_sets!(test_i32_store_interleaved_2);
 
+    #[simd_test]
     fn test_as_i32_scalar_equivalent<D: SimdDescriptor>(d: D) {
         let len = D::F32Vec::LEN;
         arbtest::arbtest(|u| {
@@ -1861,8 +2149,8 @@ mod test {
             Ok(())
         });
     }
-    test_all_instruction_sets!(test_as_i32_scalar_equivalent);
 
+    #[simd_test]
     fn test_i32_load_from_i16<D: SimdDescriptor>(d: D) {
         let len = D::I32Vec::LEN;
         arbtest::arbtest(|u| {
@@ -1882,8 +2170,8 @@ mod test {
             Ok(())
         });
     }
-    test_all_instruction_sets!(test_i32_load_from_i16);
 
+    #[simd_test]
     fn test_i32_load_from_u16<D: SimdDescriptor>(d: D) {
         let len = D::I32Vec::LEN;
         arbtest::arbtest(|u| {
@@ -1903,8 +2191,8 @@ mod test {
             Ok(())
         });
     }
-    test_all_instruction_sets!(test_i32_load_from_u16);
 
+    #[simd_test]
     fn test_u64_operations<D: SimdDescriptor>(d: D) {
         let len = D::U64Vec::LEN;
         arbtest::arbtest(|u| {
@@ -1969,8 +2257,8 @@ mod test {
             Ok(())
         });
     }
-    test_all_instruction_sets!(test_u64_operations);
 
+    #[simd_test]
     fn test_i16_operations<D: SimdDescriptor>(d: D) {
         let len = D::I16Vec::LEN;
         arbtest::arbtest(|u| {
@@ -2127,8 +2415,8 @@ mod test {
             Ok(())
         });
     }
-    test_all_instruction_sets!(test_i16_operations);
 
+    #[simd_test]
     fn test_i16_transpose_square<D: SimdDescriptor>(d: D) {
         let len = D::I16Vec::LEN;
         // Test with stride = 1
@@ -2176,8 +2464,8 @@ mod test {
             }
         }
     }
-    test_all_instruction_sets!(test_i16_transpose_square);
 
+    #[simd_test]
     fn test_i16_store_interleaved_2<D: SimdDescriptor>(d: D) {
         let len = D::I16Vec::LEN;
         let a: Vec<i16> = (0..len).map(|i| i as i16).collect();
@@ -2193,8 +2481,8 @@ mod test {
             assert_eq!(output[2 * i + 1], b[i]);
         }
     }
-    test_all_instruction_sets!(test_i16_store_interleaved_2);
 
+    #[simd_test]
     fn test_i16_store_interleaved_3<D: SimdDescriptor>(d: D) {
         let len = D::I16Vec::LEN;
         let a: Vec<i16> = (0..len).map(|i| i as i16).collect();
@@ -2213,8 +2501,8 @@ mod test {
             assert_eq!(output[3 * i + 2], c[i]);
         }
     }
-    test_all_instruction_sets!(test_i16_store_interleaved_3);
 
+    #[simd_test]
     fn test_i16_store_interleaved_4<D: SimdDescriptor>(d: D) {
         let len = D::I16Vec::LEN;
         let a: Vec<i16> = (0..len).map(|i| i as i16).collect();
@@ -2236,5 +2524,4 @@ mod test {
             assert_eq!(output[4 * i + 3], e[i]);
         }
     }
-    test_all_instruction_sets!(test_i16_store_interleaved_4);
 }

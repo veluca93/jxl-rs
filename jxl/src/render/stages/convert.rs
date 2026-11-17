@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use jxl_simd::{F32SimdVec, I32SimdVec, ScalarDescriptor, SimdDescriptor, simd_function};
+use jxl_simd::{F32SimdVec, I32SimdVec, ScalarDescriptor, SimdDescriptor, simd_dispatch};
 
 use crate::frame::quantizer::LfQuantFactors;
 use crate::headers::bit_depth::BitDepth;
@@ -77,31 +77,27 @@ fn modular_xyb_to_float_simd<D: SimdDescriptor, T: VecLoad<D, Vec = D::I32Vec>>(
     );
 }
 
-simd_function!(
-    modular32_xyb_to_float_simd_dispatch,
+#[simd_dispatch(modular32_xyb_to_float_simd_dispatch)]
+fn modular32_xyb_to_float<D: SimdDescriptor>(
     d: D,
-    fn modular32_xyb_to_float(
-        input_rows: &Channels<i32>,
-        output_rows: &mut ChannelsMut<f32>,
-        scales: [f32; 3],
-        xsize: usize,
-    ) {
-        modular_xyb_to_float_simd(d, input_rows, output_rows, scales, xsize);
-    }
-);
+    input_rows: &Channels<i32>,
+    output_rows: &mut ChannelsMut<f32>,
+    scales: [f32; 3],
+    xsize: usize,
+) {
+    modular_xyb_to_float_simd(d, input_rows, output_rows, scales, xsize);
+}
 
-simd_function!(
-    modular16_xyb_to_float_simd_dispatch,
+#[simd_dispatch(modular16_xyb_to_float_simd_dispatch)]
+fn modular16_xyb_to_float<D: SimdDescriptor>(
     d: D,
-    fn modular16_xyb_to_float(
-        input_rows: &Channels<i16>,
-        output_rows: &mut ChannelsMut<f32>,
-        scales: [f32; 3],
-        xsize: usize,
-    ) {
-        modular_xyb_to_float_simd(d, input_rows, output_rows, scales, xsize);
-    }
-);
+    input_rows: &Channels<i16>,
+    output_rows: &mut ChannelsMut<f32>,
+    scales: [f32; 3],
+    xsize: usize,
+) {
+    modular_xyb_to_float_simd(d, input_rows, output_rows, scales, xsize);
+}
 
 impl RenderPipelineInOutStage for ConvertModularXYBToF32Stage {
     type InputT = i32;
@@ -225,26 +221,24 @@ impl std::fmt::Display for ConvertModularToF32Stage {
 }
 
 // SIMD 32-bit float passthrough (bitcast i32 to f32)
-simd_function!(
-    int_to_float_32bit_simd_dispatch,
+#[simd_dispatch(int_to_float_32bit_simd_dispatch)]
+fn int_to_float_32bit_simd<D: SimdDescriptor>(
     d: D,
-    fn int_to_float_32bit_simd(
-        input_rows: &Channels<i32>,
-        output_rows: &mut ChannelsMut<f32>,
-        xsize: usize,
-    ) {
-        for_each_chunk(
-            d,
-            xsize,
-            input_rows.view::<1, 1, 0>(),
-            output_rows.view::<1, 1, 1>(),
-            |_x, inv, outv| {
-                let val = inv.load::<_, 0>(d, 0, 0);
-                outv.store::<_, 0>(d, 0, val.bitcast_to_f32());
-            },
-        );
-    }
-);
+    input_rows: &Channels<i32>,
+    output_rows: &mut ChannelsMut<f32>,
+    xsize: usize,
+) {
+    for_each_chunk(
+        d,
+        xsize,
+        input_rows.view::<1, 1, 0>(),
+        output_rows.view::<1, 1, 1>(),
+        |_x, inv, outv| {
+            let val = inv.load::<_, 0>(d, 0, 0);
+            outv.store::<_, 0>(d, 0, val.bitcast_to_f32());
+        },
+    );
+}
 
 // SIMD 16-bit float (half-precision) to 32-bit float conversion
 // Uses hardware F16C/NEON instructions when available via F32Vec::load_f16_bits()
@@ -279,29 +273,25 @@ fn int_to_float_16bit_simd<D: SimdDescriptor, T: VecLoad<D, Vec = D::I32Vec>>(
     );
 }
 
-simd_function!(
-    int32_to_float_16bit_simd_dispatch,
+#[simd_dispatch(int32_to_float_16bit_simd_dispatch)]
+fn int32_to_float_16bit<D: SimdDescriptor>(
     d: D,
-    fn int32_to_float_16bit(
-        input_rows: &Channels<i32>,
-        output_rows: &mut ChannelsMut<f32>,
-        xsize: usize,
-    ) {
-        int_to_float_16bit_simd(d, input_rows, output_rows, xsize);
-    }
-);
+    input_rows: &Channels<i32>,
+    output_rows: &mut ChannelsMut<f32>,
+    xsize: usize,
+) {
+    int_to_float_16bit_simd(d, input_rows, output_rows, xsize);
+}
 
-simd_function!(
-    int16_to_float_16bit_simd_dispatch,
+#[simd_dispatch(int16_to_float_16bit_simd_dispatch)]
+fn int16_to_float_16bit<D: SimdDescriptor>(
     d: D,
-    fn int16_to_float_16bit(
-        input_rows: &Channels<i16>,
-        output_rows: &mut ChannelsMut<f32>,
-        xsize: usize,
-    ) {
-        int_to_float_16bit_simd(d, input_rows, output_rows, xsize);
-    }
-);
+    input_rows: &Channels<i16>,
+    output_rows: &mut ChannelsMut<f32>,
+    xsize: usize,
+) {
+    int_to_float_16bit_simd(d, input_rows, output_rows, xsize);
+}
 
 // Converts custom [bits]-bit float (with [exp_bits] exponent bits) stored as
 // int back to binary32 float.
@@ -420,31 +410,27 @@ fn modular_to_float_simd<D: SimdDescriptor, T: VecLoad<D, Vec = D::I32Vec>>(
     );
 }
 
-simd_function!(
-    modular32_to_float_simd_dispatch,
+#[simd_dispatch(modular32_to_float_simd_dispatch)]
+fn modular32_to_float<D: SimdDescriptor>(
     d: D,
-    fn modular32_to_float(
-        input_rows: &Channels<i32>,
-        output_rows: &mut ChannelsMut<f32>,
-        scale: f32,
-        xsize: usize,
-    ) {
-        modular_to_float_simd(d, input_rows, output_rows, scale, xsize);
-    }
-);
+    input_rows: &Channels<i32>,
+    output_rows: &mut ChannelsMut<f32>,
+    scale: f32,
+    xsize: usize,
+) {
+    modular_to_float_simd(d, input_rows, output_rows, scale, xsize);
+}
 
-simd_function!(
-    modular16_to_float_simd_dispatch,
+#[simd_dispatch(modular16_to_float_simd_dispatch)]
+fn modular16_to_float<D: SimdDescriptor>(
     d: D,
-    fn modular16_to_float(
-        input_rows: &Channels<i16>,
-        output_rows: &mut ChannelsMut<f32>,
-        scale: f32,
-        xsize: usize,
-    ) {
-        modular_to_float_simd(d, input_rows, output_rows, scale, xsize);
-    }
-);
+    input_rows: &Channels<i16>,
+    output_rows: &mut ChannelsMut<f32>,
+    scale: f32,
+    xsize: usize,
+) {
+    modular_to_float_simd(d, input_rows, output_rows, scale, xsize);
+}
 
 impl RenderPipelineInOutStage for ConvertModularToF32Stage {
     type InputT = i32;

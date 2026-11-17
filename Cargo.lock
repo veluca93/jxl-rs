@@ -759,8 +759,12 @@ name = "jxl_simd"
 version = "0.8.0"
 dependencies = [
  "arbtest",
- "paste",
+ "jxl_simd_macros",
 ]
+
+[[package]]
+name = "jxl_simd_macros"
+version = "0.8.0"
 
 [[package]]
 name = "jxl_transforms"
@@ -768,7 +772,6 @@ version = "0.8.0"
 dependencies = [
  "criterion",
  "jxl_simd",
- "paste",
  "rand 0.9.2",
  "rand_chacha 0.9.0",
  "test-log",

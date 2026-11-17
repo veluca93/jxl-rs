@@ -5,7 +5,7 @@
 
 #![allow(clippy::needless_range_loop)]
 
-use jxl_simd::{F32SimdVec, SimdDescriptor, SimdMask, simd_function};
+use jxl_simd::{F32SimdVec, SimdDescriptor, SimdMask, simd_dispatch};
 
 use super::patches::{PatchBlendMode, PatchBlending};
 use crate::headers::extra_channels::{ExtraChannel, ExtraChannelInfo};
@@ -57,143 +57,168 @@ fn store_vec<D: SimdDescriptor>(_d: D, v: D::F32Vec, s: &mut [f32], x: usize) {
     }
 }
 
-simd_function!(
-    blend,
+#[simd_dispatch(blend)]
+#[allow(clippy::too_many_arguments)]
+fn blend_impl<D: SimdDescriptor>(
     d: D,
-    #[allow(clippy::too_many_arguments)]
-    fn blend_impl(
-        bg_color: &mut [&mut [f32]],
-        bg_alpha: &mut [f32],
-        bg_alpha_old: &[f32],
-        fg_color: &[&[f32]],
-        fg_alpha: &[f32],
-        xsize: usize,
-        cfg: BlendConfig,
-    ) {
-        let BlendConfig { clamp, alpha_associated, order } = cfg;
-        let fg_on_top = order == BlendOrder::Above;
+    bg_color: &mut [&mut [f32]],
+    bg_alpha: &mut [f32],
+    bg_alpha_old: &[f32],
+    fg_color: &[&[f32]],
+    fg_alpha: &[f32],
+    xsize: usize,
+    cfg: BlendConfig,
+) {
+    let BlendConfig {
+        clamp,
+        alpha_associated,
+        order,
+    } = cfg;
+    let fg_on_top = order == BlendOrder::Above;
 
-        let lanes = D::F32Vec::LEN;
-        let one = D::F32Vec::splat(d, 1.0);
-        let zero = D::F32Vec::zero(d);
+    let lanes = D::F32Vec::LEN;
+    let one = D::F32Vec::splat(d, 1.0);
+    let zero = D::F32Vec::zero(d);
 
-        let [bg_c0, bg_c1, bg_c2] = bg_color else { unreachable!() };
-        let bg_c = [&mut bg_c0[..xsize], &mut bg_c1[..xsize], &mut bg_c2[..xsize]];
-        let bg_alpha = &mut bg_alpha[..xsize];
-        let fg_c = [&fg_color[0][..xsize], &fg_color[1][..xsize], &fg_color[2][..xsize]];
+    let [bg_c0, bg_c1, bg_c2] = bg_color else {
+        unreachable!()
+    };
+    let bg_c = [
+        &mut bg_c0[..xsize],
+        &mut bg_c1[..xsize],
+        &mut bg_c2[..xsize],
+    ];
+    let bg_alpha = &mut bg_alpha[..xsize];
+    let fg_c = [
+        &fg_color[0][..xsize],
+        &fg_color[1][..xsize],
+        &fg_color[2][..xsize],
+    ];
 
-        let (top_alpha, bottom_alpha) = if fg_on_top {
-            (&fg_alpha[..xsize], &bg_alpha_old[..xsize])
+    let (top_alpha, bottom_alpha) = if fg_on_top {
+        (&fg_alpha[..xsize], &bg_alpha_old[..xsize])
+    } else {
+        (&bg_alpha_old[..xsize], &fg_alpha[..xsize])
+    };
+    let maybe_clamp_vec = |v: D::F32Vec| if clamp { v.max(zero).min(one) } else { v };
+
+    for k in 0..xsize.div_ceil(lanes) {
+        let x = k * lanes;
+        let top_a = maybe_clamp_vec(load_vec(d, top_alpha, x));
+        let bottom_a = load_vec(d, bottom_alpha, x);
+        let one_minus_top_a = one - top_a;
+        let new_a = one - one_minus_top_a * (one - bottom_a);
+        let reciprocal_a = new_a.gt(zero).if_then_else_f32(one / new_a, zero);
+        for c in 0..3 {
+            let bg_v = load_vec(d, bg_c[c], x);
+            let fg_v = load_vec(d, fg_c[c], x);
+            let (top_c, bottom_c) = if fg_on_top {
+                (fg_v, bg_v)
+            } else {
+                (bg_v, fg_v)
+            };
+            let out = if alpha_associated {
+                top_c + bottom_c * one_minus_top_a
+            } else {
+                (top_c * top_a + bottom_c * bottom_a * one_minus_top_a) * reciprocal_a
+            };
+            store_vec(d, out, bg_c[c], x);
+        }
+        store_vec(d, new_a, bg_alpha, x);
+    }
+}
+
+#[simd_dispatch(blend_alpha)]
+fn blend_alpha_impl<D: SimdDescriptor>(
+    d: D,
+    bg_alpha: &mut [f32],
+    fg_alpha: &[f32],
+    xsize: usize,
+    cfg: BlendConfig,
+) {
+    let clamp = cfg.clamp;
+    let fg_on_top = cfg.order == BlendOrder::Above;
+    let lanes = D::F32Vec::LEN;
+    let one = D::F32Vec::splat(d, 1.0);
+    let zero = D::F32Vec::zero(d);
+
+    let bg_alpha = &mut bg_alpha[..xsize];
+    let fg_alpha = &fg_alpha[..xsize];
+    let maybe_clamp_vec = |v: D::F32Vec| if clamp { v.max(zero).min(one) } else { v };
+
+    for k in 0..xsize.div_ceil(lanes) {
+        let x = k * lanes;
+        let fg_a = load_vec(d, fg_alpha, x);
+        let bg_a = load_vec(d, bg_alpha, x);
+        let (top_a, bottom_a) = if fg_on_top {
+            (fg_a, bg_a)
         } else {
-            (&bg_alpha_old[..xsize], &fg_alpha[..xsize])
+            (bg_a, fg_a)
         };
-        let maybe_clamp_vec = |v: D::F32Vec| if clamp { v.max(zero).min(one) } else { v };
-
-        for k in 0..xsize.div_ceil(lanes) {
-            let x = k * lanes;
-            let top_a = maybe_clamp_vec(load_vec(d, top_alpha, x));
-            let bottom_a = load_vec(d, bottom_alpha, x);
-            let one_minus_top_a = one - top_a;
-            let new_a = one - one_minus_top_a * (one - bottom_a);
-            let reciprocal_a = new_a.gt(zero).if_then_else_f32(one / new_a, zero);
-            for c in 0..3 {
-                let bg_v = load_vec(d, bg_c[c], x);
-                let fg_v = load_vec(d, fg_c[c], x);
-                let (top_c, bottom_c) = if fg_on_top { (fg_v, bg_v) } else { (bg_v, fg_v) };
-                let out = if alpha_associated {
-                    top_c + bottom_c * one_minus_top_a
-                } else {
-                    (top_c * top_a + bottom_c * bottom_a * one_minus_top_a) * reciprocal_a
-                };
-                store_vec(d, out, bg_c[c], x);
-            }
-            store_vec(d, new_a, bg_alpha, x);
-        }
+        let top_a = maybe_clamp_vec(top_a);
+        store_vec(d, one - (one - top_a) * (one - bottom_a), bg_alpha, x);
     }
-);
+}
 
-simd_function!(
-    blend_alpha,
-    d: D,
-    fn blend_alpha_impl(bg_alpha: &mut [f32], fg_alpha: &[f32], xsize: usize, cfg: BlendConfig) {
-        let clamp = cfg.clamp;
-        let fg_on_top = cfg.order == BlendOrder::Above;
-        let lanes = D::F32Vec::LEN;
-        let one = D::F32Vec::splat(d, 1.0);
-        let zero = D::F32Vec::zero(d);
-
-        let bg_alpha = &mut bg_alpha[..xsize];
-        let fg_alpha = &fg_alpha[..xsize];
-        let maybe_clamp_vec = |v: D::F32Vec| if clamp { v.max(zero).min(one) } else { v };
-
-        for k in 0..xsize.div_ceil(lanes) {
-            let x = k * lanes;
-            let fg_a = load_vec(d, fg_alpha, x);
-            let bg_a = load_vec(d, bg_alpha, x);
-            let (top_a, bottom_a) = if fg_on_top { (fg_a, bg_a) } else { (bg_a, fg_a) };
-            let top_a = maybe_clamp_vec(top_a);
-            store_vec(d, one - (one - top_a) * (one - bottom_a), bg_alpha, x);
-        }
+#[simd_dispatch(add)]
+fn add_impl<D: SimdDescriptor>(d: D, dst: &mut [f32], src: &[f32], xsize: usize) {
+    let lanes = D::F32Vec::LEN;
+    let dst = &mut dst[..xsize];
+    let src = &src[..xsize];
+    for k in 0..xsize.div_ceil(lanes) {
+        let x = k * lanes;
+        store_vec(d, load_vec(d, dst, x) + load_vec(d, src, x), dst, x);
     }
-);
+}
 
-simd_function!(
-    add,
-    d: D,
-    fn add_impl(dst: &mut [f32], src: &[f32], xsize: usize) {
-        let lanes = D::F32Vec::LEN;
-        let dst = &mut dst[..xsize];
-        let src = &src[..xsize];
-        for k in 0..xsize.div_ceil(lanes) {
-            let x = k * lanes;
-            store_vec(d, load_vec(d, dst, x) + load_vec(d, src, x), dst, x);
-        }
+#[simd_dispatch(mul)]
+fn mul_impl<D: SimdDescriptor>(d: D, dst: &mut [f32], src: &[f32], xsize: usize, clamp: bool) {
+    let lanes = D::F32Vec::LEN;
+    let one = D::F32Vec::splat(d, 1.0);
+    let zero = D::F32Vec::zero(d);
+    let dst = &mut dst[..xsize];
+    let src = &src[..xsize];
+    let maybe_clamp_vec = |v: D::F32Vec| if clamp { v.max(zero).min(one) } else { v };
+    for k in 0..xsize.div_ceil(lanes) {
+        let x = k * lanes;
+        let s = maybe_clamp_vec(load_vec(d, src, x));
+        store_vec(d, load_vec(d, dst, x) * s, dst, x);
     }
-);
-
-simd_function!(
-    mul,
-    d: D,
-    fn mul_impl(dst: &mut [f32], src: &[f32], xsize: usize, clamp: bool) {
-        let lanes = D::F32Vec::LEN;
-        let one = D::F32Vec::splat(d, 1.0);
-        let zero = D::F32Vec::zero(d);
-        let dst = &mut dst[..xsize];
-        let src = &src[..xsize];
-        let maybe_clamp_vec = |v: D::F32Vec| if clamp { v.max(zero).min(one) } else { v };
-        for k in 0..xsize.div_ceil(lanes) {
-            let x = k * lanes;
-            let s = maybe_clamp_vec(load_vec(d, src, x));
-            store_vec(d, load_vec(d, dst, x) * s, dst, x);
-        }
-    }
-);
+}
 
 // Above: dst = dst + src * weight (weight is the newly composited layer's own alpha).
 // Below: dst = src + dst * weight (weight is the old background's alpha).
-simd_function!(
-    alpha_weighted_add,
+#[simd_dispatch(alpha_weighted_add)]
+fn alpha_weighted_add_impl<D: SimdDescriptor>(
     d: D,
-    fn alpha_weighted_add_impl(dst: &mut [f32], src: &[f32], weight: &[f32], xsize: usize, cfg: BlendConfig) {
-        let clamp = cfg.clamp;
-        let fg_on_top = cfg.order == BlendOrder::Above;
-        let lanes = D::F32Vec::LEN;
-        let one = D::F32Vec::splat(d, 1.0);
-        let zero = D::F32Vec::zero(d);
-        let dst = &mut dst[..xsize];
-        let src = &src[..xsize];
-        let weight = &weight[..xsize];
-        let maybe_clamp_vec = |v: D::F32Vec| if clamp { v.max(zero).min(one) } else { v };
-        for k in 0..xsize.div_ceil(lanes) {
-            let x = k * lanes;
-            let w = maybe_clamp_vec(load_vec(d, weight, x));
-            let dst_v = load_vec(d, dst, x);
-            let src_v = load_vec(d, src, x);
-            let (unweighted, weighted) = if fg_on_top { (dst_v, src_v) } else { (src_v, dst_v) };
-            store_vec(d, unweighted + weighted * w, dst, x);
-        }
+    dst: &mut [f32],
+    src: &[f32],
+    weight: &[f32],
+    xsize: usize,
+    cfg: BlendConfig,
+) {
+    let clamp = cfg.clamp;
+    let fg_on_top = cfg.order == BlendOrder::Above;
+    let lanes = D::F32Vec::LEN;
+    let one = D::F32Vec::splat(d, 1.0);
+    let zero = D::F32Vec::zero(d);
+    let dst = &mut dst[..xsize];
+    let src = &src[..xsize];
+    let weight = &weight[..xsize];
+    let maybe_clamp_vec = |v: D::F32Vec| if clamp { v.max(zero).min(one) } else { v };
+    for k in 0..xsize.div_ceil(lanes) {
+        let x = k * lanes;
+        let w = maybe_clamp_vec(load_vec(d, weight, x));
+        let dst_v = load_vec(d, dst, x);
+        let src_v = load_vec(d, src, x);
+        let (unweighted, weighted) = if fg_on_top {
+            (dst_v, src_v)
+        } else {
+            (src_v, dst_v)
+        };
+        store_vec(d, unweighted + weighted * w, dst, x);
     }
-);
+}
 
 /// Blend `fg` onto `bg` in place.
 pub fn perform_blending(

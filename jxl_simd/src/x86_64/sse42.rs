@@ -49,8 +49,9 @@ impl SimdDescriptor for Sse42Descriptor {
         self
     }
 
+    #[inline]
     fn new() -> Option<Self> {
-        if is_x86_feature_detected!("sse4.2") {
+        if cfg!(target_feature = "sse4.2") || is_x86_feature_detected!("sse4.2") {
             // SAFETY: we just checked sse4.2.
             Some(unsafe { Self::new_unchecked() })
         } else {
@@ -61,7 +62,18 @@ impl SimdDescriptor for Sse42Descriptor {
     fn call<R>(self, f: impl FnOnce(Self) -> R) -> R {
         #[target_feature(enable = "sse4.2")]
         #[inline(never)]
-        unsafe fn inner<R>(d: Sse42Descriptor, f: impl FnOnce(Sse42Descriptor) -> R) -> R {
+        fn inner<R>(d: Sse42Descriptor, f: impl FnOnce(Sse42Descriptor) -> R) -> R {
+            f(d)
+        }
+        // SAFETY: the safety invariant on `self` guarantees sse4.2.
+        unsafe { inner(self, f) }
+    }
+
+    #[inline(always)]
+    fn call_inlined<R>(self, f: impl FnOnce(Self) -> R) -> R {
+        #[target_feature(enable = "sse4.2")]
+        #[inline]
+        fn inner<R>(d: Sse42Descriptor, f: impl FnOnce(Sse42Descriptor) -> R) -> R {
             f(d)
         }
         // SAFETY: the safety invariant on `self` guarantees sse4.2.

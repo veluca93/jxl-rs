@@ -12,10 +12,10 @@ license = "BSD-3-Clause"
 rust-version.workspace = true
 
 [dependencies]
+jxl_simd_macros = { path = "../jxl_simd_macros", version = "=0.8.0" }
 
 [dev-dependencies]
 arbtest = "0.3.2"
-paste = "1.0.15"
 
 [features]
 all-simd = ["sse42", "avx", "avx512", "neon", "simd128"]

@@ -1,0 +1,20 @@
+[package]
+name = "jxl_simd_macros"
+description = "High performance Rust implementation of a JPEG XL decoder - SIMD proc macros"
+version = "0.8.0"
+readme = "../README.md"
+keywords = ["jpeg-xl", "simd", "macros"]
+categories = ["multimedia::images"]
+authors = ["Luca Versari <veluca93@gmail.com>"]
+repository = "https://github.com/libjxl/jxl-rs"
+edition = "2024"
+license = "BSD-3-Clause"
+rust-version.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+
+[lints]
+workspace = true

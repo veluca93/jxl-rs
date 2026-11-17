@@ -5,7 +5,7 @@
 
 #![allow(clippy::needless_range_loop)]
 
-use jxl_simd::{F32SimdVec, I32SimdVec, SimdDescriptor, SimdMask, simd_function};
+use jxl_simd::{F32SimdVec, I32SimdVec, SimdDescriptor, SimdMask, simd_dispatch};
 
 use crate::error::Result;
 use crate::features::noise::Noise;
@@ -135,26 +135,25 @@ fn convolve_noise_simd_impl<D: SimdDescriptor>(
 }
 
 // SIMD noise convolution (5x5 kernel)
-simd_function!(
-    convolve_noise_simd_dispatch,
+// SIMD noise convolution (5x5 kernel)
+#[simd_dispatch(convolve_noise_simd_dispatch)]
+fn convolve_noise_simd<D: SimdDescriptor>(
     d: D,
-    fn convolve_noise_simd(
-        input_rows: &Channels<u16>,
-        output_rows: &mut ChannelsMut<f32>,
-        state: &mut [Vec<[i32; 16]>; 3],
-        previous_call_was_previous_row: bool,
-        xsize: usize,
-    ) {
-        convolve_noise_simd_impl(
-            d,
-            input_rows,
-            output_rows,
-            state,
-            previous_call_was_previous_row,
-            xsize,
-        )
-    }
-);
+    input_rows: &Channels<u16>,
+    output_rows: &mut ChannelsMut<f32>,
+    state: &mut [Vec<[i32; 16]>; 3],
+    previous_call_was_previous_row: bool,
+    xsize: usize,
+) {
+    convolve_noise_simd_impl(
+        d,
+        input_rows,
+        output_rows,
+        state,
+        previous_call_was_previous_row,
+        xsize,
+    )
+}
 
 impl RenderPipelineInOutStage for ConvolveNoiseStage {
     type InputT = u16;
@@ -279,20 +278,18 @@ fn add_noise_simd_impl<D: SimdDescriptor>(
 }
 
 // SIMD noise addition
-simd_function!(
-    add_noise_simd_dispatch,
+#[simd_dispatch(add_noise_simd_dispatch)]
+fn add_noise_simd<D: SimdDescriptor>(
     d: D,
-    fn add_noise_simd(
-        row_c: &mut [&mut [f32]],
-        row_rnd: &[&[f32]],
-        lut: &[f32; 8],
-        ytox: f32,
-        ytob: f32,
-        xsize: usize,
-    ) {
-        add_noise_simd_impl(d, row_c, row_rnd, lut, ytox, ytob, xsize)
-    }
-);
+    row_c: &mut [&mut [f32]],
+    row_rnd: &[&[f32]],
+    lut: &[f32; 8],
+    ytox: f32,
+    ytob: f32,
+    xsize: usize,
+) {
+    add_noise_simd_impl(d, row_c, row_rnd, lut, ytox, ytob, xsize)
+}
 
 pub struct AddNoiseStage {
     noise: Arc<SharedSnapshot<Noise>>,

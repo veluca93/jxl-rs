@@ -7,7 +7,7 @@ use std::f32::consts::{FRAC_1_SQRT_2, PI, SQRT_2};
 use std::iter::{self, zip};
 use std::ops;
 
-use jxl_simd::{F32SimdVec, SimdDescriptor, simd_function};
+use jxl_simd::{F32SimdVec, SimdDescriptor, simd_dispatch};
 
 use crate::bit_reader::BitReader;
 use crate::entropy_coding::decode::{Histograms, SymbolReader, unpack_signed};
@@ -614,27 +614,25 @@ fn draw_segment_inner<D: SimdDescriptor>(
     }
 }
 
-simd_function!(
-    draw_segment_dispatch,
+#[simd_dispatch(draw_segment_dispatch)]
+fn draw_segment_simd<D: SimdDescriptor>(
     d: D,
-    fn draw_segment_simd(
-        row: &mut [&mut [f32]],
-        row_pos: (usize, usize),
-        xsize: usize,
-        segment: &SplineSegment,
-    ) {
-        let (x0, y) = row_pos;
-        let x1 = x0 + xsize;
-        let clamped_x0 = x0.max((segment.center_x - segment.maximum_distance).round() as usize);
-        let clamped_x1 = x1.min((segment.center_x + segment.maximum_distance).round() as usize + 1);
+    row: &mut [&mut [f32]],
+    row_pos: (usize, usize),
+    xsize: usize,
+    segment: &SplineSegment,
+) {
+    let (x0, y) = row_pos;
+    let x1 = x0 + xsize;
+    let clamped_x0 = x0.max((segment.center_x - segment.maximum_distance).round() as usize);
+    let clamped_x1 = x1.min((segment.center_x + segment.maximum_distance).round() as usize + 1);
 
-        if clamped_x1 <= clamped_x0 {
-            return;
-        }
-
-        draw_segment_inner(d, row, (x0, y), (clamped_x0, clamped_x1), segment);
+    if clamped_x1 <= clamped_x0 {
+        return;
     }
-);
+
+    draw_segment_inner(d, row, (x0, y), (clamped_x0, clamped_x1), segment);
+}
 
 impl Splines {
     pub fn is_initialized(&self) -> bool {

@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use jxl_simd::{I16SimdVec, I32SimdVec, ScalarDescriptor, SimdDescriptor, shr, simd_function};
+use jxl_simd::{I16SimdVec, I32SimdVec, ScalarDescriptor, SimdDescriptor, shr, simd_dispatch};
 
 use crate::frame::modular::transforms::{RctOp, RctPermutation};
 use crate::frame::modular::{ModularChannel, ModularStorage};
@@ -192,47 +192,43 @@ fn rct_loop_impl_i16<D: SimdDescriptor, const OP: u32>(
     }
 }
 
-simd_function!(
-    rct_loop,
+#[simd_dispatch(rct_loop)]
+fn rct_loop_fwd<D: SimdDescriptor>(
     d: D,
-    fn rct_loop_fwd(
-        r: &mut ImageRectMut<'_, i32>,
-        g: &mut ImageRectMut<'_, i32>,
-        b: &mut ImageRectMut<'_, i32>,
-        op: RctOp,
-    ) {
-        match op {
-            RctOp::Noop => {},
-            RctOp::AddFirstToThird => rct_loop_impl::<D, 1>(d, r, g, b),
-            RctOp::AddFirstToSecond => rct_loop_impl::<D, 2>(d, r, g, b),
-            RctOp::AddFirstToSecondAndThird => rct_loop_impl::<D, 3>(d, r, g, b),
-            RctOp::AddAvgToSecond => rct_loop_impl::<D, 4>(d, r, g, b),
-            RctOp::AddFirstToThirdAndAvgToSecond => rct_loop_impl::<D, 5>(d, r, g, b),
-            RctOp::YCoCg => rct_loop_impl::<D, 6>(d, r, g, b),
-        }
+    r: &mut ImageRectMut<'_, i32>,
+    g: &mut ImageRectMut<'_, i32>,
+    b: &mut ImageRectMut<'_, i32>,
+    op: RctOp,
+) {
+    match op {
+        RctOp::Noop => {}
+        RctOp::AddFirstToThird => rct_loop_impl::<D, 1>(d, r, g, b),
+        RctOp::AddFirstToSecond => rct_loop_impl::<D, 2>(d, r, g, b),
+        RctOp::AddFirstToSecondAndThird => rct_loop_impl::<D, 3>(d, r, g, b),
+        RctOp::AddAvgToSecond => rct_loop_impl::<D, 4>(d, r, g, b),
+        RctOp::AddFirstToThirdAndAvgToSecond => rct_loop_impl::<D, 5>(d, r, g, b),
+        RctOp::YCoCg => rct_loop_impl::<D, 6>(d, r, g, b),
     }
-);
+}
 
-simd_function!(
-    rct_loop_i16,
+#[simd_dispatch(rct_loop_i16)]
+fn rct_loop_fwd_i16<D: SimdDescriptor>(
     d: D,
-    fn rct_loop_fwd_i16(
-        r: &mut ImageRectMut<'_, i16>,
-        g: &mut ImageRectMut<'_, i16>,
-        b: &mut ImageRectMut<'_, i16>,
-        op: RctOp,
-    ) {
-        match op {
-            RctOp::Noop => {},
-            RctOp::AddFirstToThird => rct_loop_impl_i16::<D, 1>(d, r, g, b),
-            RctOp::AddFirstToSecond => rct_loop_impl_i16::<D, 2>(d, r, g, b),
-            RctOp::AddFirstToSecondAndThird => rct_loop_impl_i16::<D, 3>(d, r, g, b),
-            RctOp::AddAvgToSecond => rct_loop_impl_i16::<D, 4>(d, r, g, b),
-            RctOp::AddFirstToThirdAndAvgToSecond => rct_loop_impl_i16::<D, 5>(d, r, g, b),
-            RctOp::YCoCg => rct_loop_impl_i16::<D, 6>(d, r, g, b),
-        }
+    r: &mut ImageRectMut<'_, i16>,
+    g: &mut ImageRectMut<'_, i16>,
+    b: &mut ImageRectMut<'_, i16>,
+    op: RctOp,
+) {
+    match op {
+        RctOp::Noop => {}
+        RctOp::AddFirstToThird => rct_loop_impl_i16::<D, 1>(d, r, g, b),
+        RctOp::AddFirstToSecond => rct_loop_impl_i16::<D, 2>(d, r, g, b),
+        RctOp::AddFirstToSecondAndThird => rct_loop_impl_i16::<D, 3>(d, r, g, b),
+        RctOp::AddAvgToSecond => rct_loop_impl_i16::<D, 4>(d, r, g, b),
+        RctOp::AddFirstToThirdAndAvgToSecond => rct_loop_impl_i16::<D, 5>(d, r, g, b),
+        RctOp::YCoCg => rct_loop_impl_i16::<D, 6>(d, r, g, b),
     }
-);
+}
 
 fn apply_rct_permutation(buffers: &mut [&mut ModularChannel], perm: RctPermutation) {
     let [r, g, b] = buffers else {

@@ -5,7 +5,7 @@
 
 use std::f64::consts::{FRAC_1_SQRT_2, PI, SQRT_2};
 
-use jxl_simd::{test_all_instruction_sets, ScalarDescriptor, SimdDescriptor};
+use jxl_simd::{simd_test, ScalarDescriptor, SimdDescriptor};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha12Rng;
 use test_log::test;
@@ -289,6 +289,7 @@ test_idct1d_eq_slow_n!(test_idct1d_256_eq_slow, 256, do_idct_256, 5e-5);
 
 macro_rules! test_idct2d_eq_slow {
     ($test_name:ident, $rows:expr, $cols:expr, $fast_idct:ident, $tol:expr) => {
+        #[simd_test]
         fn $test_name<D: SimdDescriptor>(d: D) {
             const N: usize = $rows;
             const M: usize = $cols;
@@ -311,7 +312,6 @@ macro_rules! test_idct2d_eq_slow {
                 }
             }
         }
-        test_all_instruction_sets!($test_name);
     };
 }
 
@@ -340,6 +340,7 @@ test_idct2d_eq_slow!(test_idct2d_256_256_eq_slow, 256, 256, idct2d_256_256, 5e-3
 
 macro_rules! test_reinterpreting_dct_eq_slow {
     ($test_name:ident, $fun: ident, $rows:expr, $cols:expr, $tol:expr) => {
+        #[simd_test]
         fn $test_name<D: SimdDescriptor>(d: D) {
             const N: usize = $rows;
             const M: usize = $cols;
@@ -367,7 +368,6 @@ macro_rules! test_reinterpreting_dct_eq_slow {
                 }
             }
         }
-        test_all_instruction_sets!($test_name);
     };
 }
 

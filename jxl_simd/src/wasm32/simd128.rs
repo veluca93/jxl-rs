@@ -64,6 +64,11 @@ impl SimdDescriptor for Simd128Descriptor {
     fn call<R>(self, f: impl FnOnce(Self) -> R) -> R {
         f(self)
     }
+
+    #[inline(always)]
+    fn call_inlined<R>(self, f: impl FnOnce(Self) -> R) -> R {
+        f(self)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

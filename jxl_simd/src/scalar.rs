@@ -44,6 +44,12 @@ impl SimdDescriptor for ScalarDescriptor {
         // No special features needed for scalar implementation
         f(self)
     }
+
+    #[inline(always)]
+    fn call_inlined<R>(self, f: impl FnOnce(Self) -> R) -> R {
+        // No special features needed for scalar implementation
+        f(self)
+    }
 }
 
 impl F32SimdVec for f32 {
@@ -600,67 +606,4 @@ impl SimdMask16 for bool {
     fn andnot(self, rhs: Self) -> Self {
         (!self) & rhs
     }
-}
-
-#[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "wasm32"
-)))]
-#[macro_export]
-macro_rules! simd_function {
-    (
-        $dname:ident,
-        $descr:ident: $descr_ty:ident,
-        $(#[$($attr:meta)*])*
-        $pub:vis fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty )? $body: block
-    ) => {
-        $(#[$($attr)*])*
-        $pub fn $name<$descr_ty: $crate::SimdDescriptor>($descr: $descr_ty, $($arg: $ty),*) $(-> $ret)? $body
-        $(#[$($attr)*])*
-        $pub fn $dname($($arg: $ty),*) $(-> $ret)? {
-            use $crate::SimdDescriptor;
-            $name($crate::ScalarDescriptor::new().unwrap(), $($arg),*)
-        }
-    };
-}
-
-#[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "wasm32"
-)))]
-#[macro_export]
-macro_rules! test_all_instruction_sets {
-    (
-        $name:ident
-    ) => {
-        paste::paste! {
-            #[test]
-            fn [<$name _scalar>]() {
-                use $crate::SimdDescriptor;
-                $name($crate::ScalarDescriptor::new().unwrap())
-            }
-        }
-    };
-}
-
-#[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "wasm32"
-)))]
-#[macro_export]
-macro_rules! bench_all_instruction_sets {
-    (
-        $name:ident,
-        $criterion:ident
-    ) => {
-        use $crate::SimdDescriptor;
-        $name(
-            $crate::ScalarDescriptor::new().unwrap(),
-            $criterion,
-            "scalar",
-        );
-    };
 }

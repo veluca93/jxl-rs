@@ -21,6 +21,7 @@ members = [
   "jxl_cms",
   "jxl_macros",
   "jxl_simd",
+  "jxl_simd_macros",
   "jxl_transforms",
 ]
 resolver = "2"

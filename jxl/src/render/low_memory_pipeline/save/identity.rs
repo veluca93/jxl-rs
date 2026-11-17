@@ -7,7 +7,7 @@ use std::ops::Range;
 
 use jxl_simd::{
     F32SimdVec, I16SimdVec, I32SimdVec, SimdDescriptor, SimdMask, SimdMask16, U8SimdVec,
-    U16SimdVec, simd_function,
+    U16SimdVec, simd_dispatch,
 };
 
 use crate::api::{Endianness, JxlDataFormat};
@@ -50,20 +50,18 @@ fn f32_to_u8_simd<D: SimdDescriptor>(
     }
 }
 
-simd_function!(
-    f32_to_u8,
+#[simd_dispatch(f32_to_u8)]
+pub(super) fn f32_to_u8_impl<D: SimdDescriptor>(
     d: D,
-    pub(super) fn f32_to_u8_impl(
-        input: &[f32],
-        output: &mut [u8],
-        max: f32,
-        position: (usize, usize),
-        channel: usize,
-        xsize: usize,
-    ) {
-        f32_to_u8_simd(d, input, output, max, position, channel, xsize);
-    }
-);
+    input: &[f32],
+    output: &mut [u8],
+    max: f32,
+    position: (usize, usize),
+    channel: usize,
+    xsize: usize,
+) {
+    f32_to_u8_simd(d, input, output, max, position, channel, xsize);
+}
 
 #[inline(always)]
 fn f32_to_u16_simd<D: SimdDescriptor>(
@@ -90,13 +88,16 @@ fn f32_to_u16_simd<D: SimdDescriptor>(
     }
 }
 
-simd_function!(
-    f32_to_u16,
+#[simd_dispatch(f32_to_u16)]
+pub(super) fn f32_to_u16_impl<D: SimdDescriptor>(
     d: D,
-    pub(super) fn f32_to_u16_impl(input: &[f32], output: &mut [u16], max: f32, xsize: usize) {
-        f32_to_u16_simd(d, input, output, max, xsize);
-    }
-);
+    input: &[f32],
+    output: &mut [u16],
+    max: f32,
+    xsize: usize,
+) {
+    f32_to_u16_simd(d, input, output, max, xsize);
+}
 
 #[inline(always)]
 fn f32_to_f16_simd<D: SimdDescriptor>(d: D, input: &[f32], output: &mut [u16], xsize: usize) {
@@ -110,13 +111,15 @@ fn f32_to_f16_simd<D: SimdDescriptor>(d: D, input: &[f32], output: &mut [u16], x
     }
 }
 
-simd_function!(
-    f32_to_f16,
+#[simd_dispatch(f32_to_f16)]
+pub(super) fn f32_to_f16_impl<D: SimdDescriptor>(
     d: D,
-    pub(super) fn f32_to_f16_impl(input: &[f32], output: &mut [u16], xsize: usize) {
-        f32_to_f16_simd(d, input, output, xsize);
-    }
-);
+    input: &[f32],
+    output: &mut [u16],
+    xsize: usize,
+) {
+    f32_to_f16_simd(d, input, output, xsize);
+}
 
 #[inline(always)]
 fn i16_to_u8_simd<D: SimdDescriptor>(
@@ -145,19 +148,17 @@ fn i16_to_u8_simd<D: SimdDescriptor>(
     }
 }
 
-simd_function!(
-    i16_to_u8,
+#[simd_dispatch(i16_to_u8)]
+pub(super) fn i16_to_u8_impl<D: SimdDescriptor>(
     d: D,
-    pub(super) fn i16_to_u8_impl(
-        input: &[i16],
-        output: &mut [u8],
-        scale: i32,
-        max: i32,
-        xsize: usize,
-    ) {
-        i16_to_u8_simd(d, input, output, scale, max, xsize);
-    }
-);
+    input: &[i16],
+    output: &mut [u8],
+    scale: i32,
+    max: i32,
+    xsize: usize,
+) {
+    i16_to_u8_simd(d, input, output, scale, max, xsize);
+}
 
 #[inline(always)]
 fn i16_to_f16_simd<D: SimdDescriptor>(
@@ -179,13 +180,16 @@ fn i16_to_f16_simd<D: SimdDescriptor>(
     }
 }
 
-simd_function!(
-    i16_to_f16,
+#[simd_dispatch(i16_to_f16)]
+pub(super) fn i16_to_f16_impl<D: SimdDescriptor>(
     d: D,
-    pub(super) fn i16_to_f16_impl(input: &[i16], output: &mut [u16], scale: f32, xsize: usize) {
-        i16_to_f16_simd(d, input, output, scale, xsize);
-    }
-);
+    input: &[i16],
+    output: &mut [u16],
+    scale: f32,
+    xsize: usize,
+) {
+    i16_to_f16_simd(d, input, output, scale, xsize);
+}
 
 #[inline(always)]
 fn i32_to_u8_simd<D: SimdDescriptor>(
@@ -214,19 +218,17 @@ fn i32_to_u8_simd<D: SimdDescriptor>(
     }
 }
 
-simd_function!(
-    i32_to_u8,
+#[simd_dispatch(i32_to_u8)]
+pub(super) fn i32_to_u8_impl<D: SimdDescriptor>(
     d: D,
-    pub(super) fn i32_to_u8_impl(
-        input: &[i32],
-        output: &mut [u8],
-        scale: i32,
-        max: i32,
-        xsize: usize,
-    ) {
-        i32_to_u8_simd(d, input, output, scale, max, xsize);
-    }
-);
+    input: &[i32],
+    output: &mut [u8],
+    scale: i32,
+    max: i32,
+    xsize: usize,
+) {
+    i32_to_u8_simd(d, input, output, scale, max, xsize);
+}
 
 #[inline(always)]
 fn load_f32_as_u8<D: SimdDescriptor>(
@@ -292,33 +294,30 @@ macro_rules! run_simd_chunks {
 
 macro_rules! define_store_interleaved {
     ($fn_name:ident, $impl_name:ident, $ty:ty, $vec_trait:ident, $simd_trait:ident) => {
-        simd_function!(
-            $fn_name,
-            d: D,
-            fn $impl_name(inputs: &[&[$ty]], out: &mut [$ty]) {
-                match inputs.len() {
-                    2 => run_simd_chunks!(out, $ty, $vec_trait, 2, |n, out_chunk| {
-                        let a = D::$vec_trait::load(d, &inputs[0][n..]);
-                        let b = D::$vec_trait::load(d, &inputs[1][n..]);
-                        $simd_trait::store_interleaved_2(a, b, out_chunk);
-                    }),
-                    3 => run_simd_chunks!(out, $ty, $vec_trait, 3, |n, out_chunk| {
-                        let a = D::$vec_trait::load(d, &inputs[0][n..]);
-                        let b = D::$vec_trait::load(d, &inputs[1][n..]);
-                        let c = D::$vec_trait::load(d, &inputs[2][n..]);
-                        $simd_trait::store_interleaved_3(a, b, c, out_chunk);
-                    }),
-                    4 => run_simd_chunks!(out, $ty, $vec_trait, 4, |n, out_chunk| {
-                        let a = D::$vec_trait::load(d, &inputs[0][n..]);
-                        let b = D::$vec_trait::load(d, &inputs[1][n..]);
-                        let c = D::$vec_trait::load(d, &inputs[2][n..]);
-                        let e = D::$vec_trait::load(d, &inputs[3][n..]);
-                        $simd_trait::store_interleaved_4(a, b, c, e, out_chunk);
-                    }),
-                    _ => unreachable!(),
-                }
+        #[simd_dispatch($fn_name)]
+        fn $impl_name<D: SimdDescriptor>(d: D, inputs: &[&[$ty]], out: &mut [$ty]) {
+            match inputs.len() {
+                2 => run_simd_chunks!(out, $ty, $vec_trait, 2, |n, out_chunk| {
+                    let a = D::$vec_trait::load(d, &inputs[0][n..]);
+                    let b = D::$vec_trait::load(d, &inputs[1][n..]);
+                    $simd_trait::store_interleaved_2(a, b, out_chunk);
+                }),
+                3 => run_simd_chunks!(out, $ty, $vec_trait, 3, |n, out_chunk| {
+                    let a = D::$vec_trait::load(d, &inputs[0][n..]);
+                    let b = D::$vec_trait::load(d, &inputs[1][n..]);
+                    let c = D::$vec_trait::load(d, &inputs[2][n..]);
+                    $simd_trait::store_interleaved_3(a, b, c, out_chunk);
+                }),
+                4 => run_simd_chunks!(out, $ty, $vec_trait, 4, |n, out_chunk| {
+                    let a = D::$vec_trait::load(d, &inputs[0][n..]);
+                    let b = D::$vec_trait::load(d, &inputs[1][n..]);
+                    let c = D::$vec_trait::load(d, &inputs[2][n..]);
+                    let e = D::$vec_trait::load(d, &inputs[3][n..]);
+                    $simd_trait::store_interleaved_4(a, b, c, e, out_chunk);
+                }),
+                _ => unreachable!(),
             }
-        );
+        }
     };
 }
 
@@ -358,133 +357,127 @@ enum AlphaF16<'a> {
     I16(&'a [i16], f32),
 }
 
-simd_function!(
-    store_f32_to_u8_interleaved,
+#[simd_dispatch(store_f32_to_u8_interleaved)]
+#[allow(clippy::too_many_arguments)]
+fn store_f32_to_u8_interleaved_impl<D: SimdDescriptor>(
     d: D,
-    #[allow(clippy::too_many_arguments)]
-    fn store_f32_to_u8_interleaved_impl(
-        r: &[f32],
-        g: &[f32],
-        b: &[f32],
-        channels: [usize; 3],
-        pos: (usize, usize),
-        max: u8,
-        alpha: AlphaU8<'_>,
-        out: &mut [u8],
-    ) {
-        let max_f32 = max as f32;
-        let max_i32 = max as i32;
-        match alpha {
-            AlphaU8::None => run_simd_chunks!(out, u8, U8Vec, 3, |n, out_chunk| {
+    r: &[f32],
+    g: &[f32],
+    b: &[f32],
+    channels: [usize; 3],
+    pos: (usize, usize),
+    max: u8,
+    alpha: AlphaU8<'_>,
+    out: &mut [u8],
+) {
+    let max_f32 = max as f32;
+    let max_i32 = max as i32;
+    match alpha {
+        AlphaU8::None => run_simd_chunks!(out, u8, U8Vec, 3, |n, out_chunk| {
+            let p = (pos.0 + n, pos.1);
+            let vr = load_f32_as_u8(d, &r[n..], max_f32, p, channels[0]);
+            let vg = load_f32_as_u8(d, &g[n..], max_f32, p, channels[1]);
+            let vb = load_f32_as_u8(d, &b[n..], max_f32, p, channels[2]);
+            U8SimdVec::store_interleaved_3(vr, vg, vb, out_chunk);
+        }),
+        AlphaU8::Opaque => {
+            let va = D::U8Vec::splat(d, max);
+            run_simd_chunks!(out, u8, U8Vec, 4, |n, out_chunk| {
                 let p = (pos.0 + n, pos.1);
                 let vr = load_f32_as_u8(d, &r[n..], max_f32, p, channels[0]);
                 let vg = load_f32_as_u8(d, &g[n..], max_f32, p, channels[1]);
                 let vb = load_f32_as_u8(d, &b[n..], max_f32, p, channels[2]);
-                U8SimdVec::store_interleaved_3(vr, vg, vb, out_chunk);
-            }),
-            AlphaU8::Opaque => {
-                let va = D::U8Vec::splat(d, max);
-                run_simd_chunks!(out, u8, U8Vec, 4, |n, out_chunk| {
-                    let p = (pos.0 + n, pos.1);
-                    let vr = load_f32_as_u8(d, &r[n..], max_f32, p, channels[0]);
-                    let vg = load_f32_as_u8(d, &g[n..], max_f32, p, channels[1]);
-                    let vb = load_f32_as_u8(d, &b[n..], max_f32, p, channels[2]);
-                    U8SimdVec::store_interleaved_4(vr, vg, vb, va, out_chunk);
-                });
-            }
-            AlphaU8::I16(a, a_scale) => {
-                run_simd_chunks!(out, u8, U8Vec, 4, |n, out_chunk| {
-                    let p = (pos.0 + n, pos.1);
-                    let vr = load_f32_as_u8(d, &r[n..], max_f32, p, channels[0]);
-                    let vg = load_f32_as_u8(d, &g[n..], max_f32, p, channels[1]);
-                    let vb = load_f32_as_u8(d, &b[n..], max_f32, p, channels[2]);
-                    let va = load_i16_as_u8(d, &a[n..], a_scale, max_i32);
-                    U8SimdVec::store_interleaved_4(vr, vg, vb, va, out_chunk);
-                });
-            }
+                U8SimdVec::store_interleaved_4(vr, vg, vb, va, out_chunk);
+            });
+        }
+        AlphaU8::I16(a, a_scale) => {
+            run_simd_chunks!(out, u8, U8Vec, 4, |n, out_chunk| {
+                let p = (pos.0 + n, pos.1);
+                let vr = load_f32_as_u8(d, &r[n..], max_f32, p, channels[0]);
+                let vg = load_f32_as_u8(d, &g[n..], max_f32, p, channels[1]);
+                let vb = load_f32_as_u8(d, &b[n..], max_f32, p, channels[2]);
+                let va = load_i16_as_u8(d, &a[n..], a_scale, max_i32);
+                U8SimdVec::store_interleaved_4(vr, vg, vb, va, out_chunk);
+            });
         }
     }
-);
+}
 
-simd_function!(
-    store_f32_to_f16_interleaved,
+#[simd_dispatch(store_f32_to_f16_interleaved)]
+fn store_f32_to_f16_interleaved_impl<D: SimdDescriptor>(
     d: D,
-    fn store_f32_to_f16_interleaved_impl(
-        r: &[f32],
-        g: &[f32],
-        b: &[f32],
-        alpha: AlphaF16<'_>,
-        out: &mut [u16],
-    ) {
-        match alpha {
-            AlphaF16::None => run_simd_chunks!(out, u16, U16Vec, 3, |n, out_chunk| {
+    r: &[f32],
+    g: &[f32],
+    b: &[f32],
+    alpha: AlphaF16<'_>,
+    out: &mut [u16],
+) {
+    match alpha {
+        AlphaF16::None => run_simd_chunks!(out, u16, U16Vec, 3, |n, out_chunk| {
+            let vr = load_f32_as_f16(d, &r[n..]);
+            let vg = load_f32_as_f16(d, &g[n..]);
+            let vb = load_f32_as_f16(d, &b[n..]);
+            U16SimdVec::store_interleaved_3(vr, vg, vb, out_chunk);
+        }),
+        AlphaF16::Opaque => {
+            let va = D::U16Vec::splat(d, 0x3c00);
+            run_simd_chunks!(out, u16, U16Vec, 4, |n, out_chunk| {
                 let vr = load_f32_as_f16(d, &r[n..]);
                 let vg = load_f32_as_f16(d, &g[n..]);
                 let vb = load_f32_as_f16(d, &b[n..]);
-                U16SimdVec::store_interleaved_3(vr, vg, vb, out_chunk);
-            }),
-            AlphaF16::Opaque => {
-                let va = D::U16Vec::splat(d, 0x3c00);
-                run_simd_chunks!(out, u16, U16Vec, 4, |n, out_chunk| {
-                    let vr = load_f32_as_f16(d, &r[n..]);
-                    let vg = load_f32_as_f16(d, &g[n..]);
-                    let vb = load_f32_as_f16(d, &b[n..]);
-                    U16SimdVec::store_interleaved_4(vr, vg, vb, va, out_chunk);
-                });
-            }
-            AlphaF16::I16(a, a_scale) => {
-                run_simd_chunks!(out, u16, U16Vec, 4, |n, out_chunk| {
-                    let vr = load_f32_as_f16(d, &r[n..]);
-                    let vg = load_f32_as_f16(d, &g[n..]);
-                    let vb = load_f32_as_f16(d, &b[n..]);
-                    let va = load_i16_as_f16(d, &a[n..], a_scale);
-                    U16SimdVec::store_interleaved_4(vr, vg, vb, va, out_chunk);
-                });
-            }
+                U16SimdVec::store_interleaved_4(vr, vg, vb, va, out_chunk);
+            });
+        }
+        AlphaF16::I16(a, a_scale) => {
+            run_simd_chunks!(out, u16, U16Vec, 4, |n, out_chunk| {
+                let vr = load_f32_as_f16(d, &r[n..]);
+                let vg = load_f32_as_f16(d, &g[n..]);
+                let vb = load_f32_as_f16(d, &b[n..]);
+                let va = load_i16_as_f16(d, &a[n..], a_scale);
+                U16SimdVec::store_interleaved_4(vr, vg, vb, va, out_chunk);
+            });
         }
     }
-);
+}
 
-simd_function!(
-    store_i16_to_u8_interleaved,
+#[simd_dispatch(store_i16_to_u8_interleaved)]
+fn store_i16_to_u8_interleaved_impl<D: SimdDescriptor>(
     d: D,
-    fn store_i16_to_u8_interleaved_impl(
-        r: (&[i16], i32),
-        g: (&[i16], i32),
-        b: (&[i16], i32),
-        max: u8,
-        alpha: AlphaU8<'_>,
-        out: &mut [u8],
-    ) {
-        let max_i32 = max as i32;
-        match alpha {
-            AlphaU8::None => run_simd_chunks!(out, u8, U8Vec, 3, |n, out_chunk| {
+    r: (&[i16], i32),
+    g: (&[i16], i32),
+    b: (&[i16], i32),
+    max: u8,
+    alpha: AlphaU8<'_>,
+    out: &mut [u8],
+) {
+    let max_i32 = max as i32;
+    match alpha {
+        AlphaU8::None => run_simd_chunks!(out, u8, U8Vec, 3, |n, out_chunk| {
+            let vr = load_i16_as_u8(d, &r.0[n..], r.1, max_i32);
+            let vg = load_i16_as_u8(d, &g.0[n..], g.1, max_i32);
+            let vb = load_i16_as_u8(d, &b.0[n..], b.1, max_i32);
+            U8SimdVec::store_interleaved_3(vr, vg, vb, out_chunk);
+        }),
+        AlphaU8::Opaque => {
+            let va = D::U8Vec::splat(d, max);
+            run_simd_chunks!(out, u8, U8Vec, 4, |n, out_chunk| {
                 let vr = load_i16_as_u8(d, &r.0[n..], r.1, max_i32);
                 let vg = load_i16_as_u8(d, &g.0[n..], g.1, max_i32);
                 let vb = load_i16_as_u8(d, &b.0[n..], b.1, max_i32);
-                U8SimdVec::store_interleaved_3(vr, vg, vb, out_chunk);
-            }),
-            AlphaU8::Opaque => {
-                let va = D::U8Vec::splat(d, max);
-                run_simd_chunks!(out, u8, U8Vec, 4, |n, out_chunk| {
-                    let vr = load_i16_as_u8(d, &r.0[n..], r.1, max_i32);
-                    let vg = load_i16_as_u8(d, &g.0[n..], g.1, max_i32);
-                    let vb = load_i16_as_u8(d, &b.0[n..], b.1, max_i32);
-                    U8SimdVec::store_interleaved_4(vr, vg, vb, va, out_chunk);
-                });
-            }
-            AlphaU8::I16(a, a_scale) => {
-                run_simd_chunks!(out, u8, U8Vec, 4, |n, out_chunk| {
-                    let vr = load_i16_as_u8(d, &r.0[n..], r.1, max_i32);
-                    let vg = load_i16_as_u8(d, &g.0[n..], g.1, max_i32);
-                    let vb = load_i16_as_u8(d, &b.0[n..], b.1, max_i32);
-                    let va = load_i16_as_u8(d, &a[n..], a_scale, max_i32);
-                    U8SimdVec::store_interleaved_4(vr, vg, vb, va, out_chunk);
-                });
-            }
+                U8SimdVec::store_interleaved_4(vr, vg, vb, va, out_chunk);
+            });
+        }
+        AlphaU8::I16(a, a_scale) => {
+            run_simd_chunks!(out, u8, U8Vec, 4, |n, out_chunk| {
+                let vr = load_i16_as_u8(d, &r.0[n..], r.1, max_i32);
+                let vg = load_i16_as_u8(d, &g.0[n..], g.1, max_i32);
+                let vb = load_i16_as_u8(d, &b.0[n..], b.1, max_i32);
+                let va = load_i16_as_u8(d, &a[n..], a_scale, max_i32);
+                U8SimdVec::store_interleaved_4(vr, vg, vb, va, out_chunk);
+            });
         }
     }
-);
+}
 
 pub(super) fn store_fused(
     stage: &SaveStage,

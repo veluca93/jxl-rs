@@ -176,6 +176,7 @@ pub fn fast_jinc_windowed_sq_simd<D: SimdDescriptor>(d: D, r2: D::F32Vec) -> D::
 
 #[cfg(test)]
 mod test {
+    use jxl_simd::simd_test;
     use test_log::test;
 
     use super::*;
@@ -303,6 +304,7 @@ mod test {
         }
     }
 
+    #[simd_test]
     fn fast_jinc_windowed_sq_simd_arb<D: SimdDescriptor>(d: D) {
         let lanes = D::F32Vec::LEN;
         let mut input = vec![0.0f32; lanes];
@@ -329,6 +331,4 @@ mod test {
             Ok(())
         });
     }
-
-    jxl_simd::test_all_instruction_sets!(fast_jinc_windowed_sq_simd_arb);
 }

@@ -6,7 +6,7 @@
 use std::borrow::Cow;
 use std::fmt;
 
-use jxl_simd::{F32SimdVec, SimdDescriptor, SimdMask, U8SimdVec, simd_function};
+use jxl_simd::{F32SimdVec, SimdDescriptor, SimdMask, U8SimdVec, simd_dispatch};
 
 use crate::bit_reader::BitReader;
 use crate::color::tf::{
@@ -1890,77 +1890,75 @@ fn create_icc_lut_atob_tag_for_hdr(
     Ok(())
 }
 
-simd_function!(
-    create_hdr_clut,
+/// Appends the 3D CLUT of the HDR tone-mapping A2B0 tag.
+#[simd_dispatch(create_hdr_clut)]
+fn create_hdr_clut_simd<D: SimdDescriptor>(
     d: D,
-    /// Appends the 3D CLUT of the HDR tone-mapping A2B0 tag.
-    fn create_hdr_clut_simd(
-        intensity_target: f32,
-        transfer_function: &JxlTransferFunction,
-        luminances: [f32; 3],
-        tags: &mut Vec<u8>,
-    ) -> Result<(), Error> {
-        // Tone map as libjxl (BT.2408 from intensity_target to 250 nits for PQ, HLG OOTF from 300
-        // to 80 nits)
-        match transfer_function {
-            JxlTransferFunction::PQ => {
-                let y_max = if intensity_target > 255.0 {
-                    (intensity_target / 10000.0).min(1.0)
-                } else {
-                    // failsafe: if a PQ image somehow has the default SDR intensity_target, act as if it were 10000
-                    1.0
-                };
-                let m = PQ_A_CURVE_M * y_max;
-                let eotf_lut: [f32; HDR_LUT_DIM] = std::array::from_fn(|i| {
-                    let u = i as f32 / (HDR_LUT_DIM - 1) as f32;
-                    let t = eval_hdr_m_curve(u, PQ_M_CURVE_TOE);
-                    (y_max * t) / (1.0 + m * (1.0 - t))
-                });
-                let zero = D::F32Vec::zero(d);
-                let one = D::F32Vec::splat(d, 1.0);
-                let pq_of_intensity_target =
-                    linear_to_pq_simd_vec(d, one, zero, D::F32Vec::splat(d, y_max));
-                let inv_pq_of_intensity_target = one / pq_of_intensity_target;
-                // PQ(250 nits)
-                let max_lum = D::F32Vec::splat(d, 0.602_559_15) / pq_of_intensity_target;
-                let ks = max_lum.mul_add(D::F32Vec::splat(d, 1.5), D::F32Vec::splat(d, -0.5));
-                // BT.2408's spline is MAX_LUM - SPLINE_K (1 - q)^3, as KS = 1.5 MAX_LUM - 0.5.
-                let spline_k = D::F32Vec::splat(d, 4.0)
-                    / (D::F32Vec::splat(d, 27.0) * (one - max_lum) * (one - max_lum));
-                let scale = D::F32Vec::splat(d, 10000.0 / 250.0);
-                append_hdr_clut(d, &eotf_lut, luminances, PQ_M_CURVE_TOE, tags, {
-                    #[inline(always)]
-                    |y| {
-                        // q only matters above KS, far above PQ(1e-4): no small-input polynomial.
-                        let q =
-                            (linear_to_pq_simd_vec(d, one, zero, y) * inv_pq_of_intensity_target).min(one);
-                        let w = one - q;
-                        let spline = (w * w * w).neg_mul_add(spline_k, max_lum);
-                        // The spline rises from KS to MAX_LUM, so lin is within (0, 1).
-                        let lin = pq_to_linear_simd_vec(d, scale, spline * pq_of_intensity_target);
-                        // The curve is the identity below the knee.
-                        ks.gt(q).if_then_else_f32(scale, lin / y)
-                    }
-                });
-            }
-            JxlTransferFunction::HLG => {
-                let hlg_gamma = 1.111f32.powf((80.0f32 / 300.0).log2());
-                let eotf_lut: [f32; HDR_LUT_DIM] = std::array::from_fn(|i| {
-                    let u = i as f32 / (HDR_LUT_DIM - 1) as f32;
-                    let t = eval_hdr_m_curve(u, 0.0);
-                    t.powf(1.0 / hlg_gamma)
-                });
-                let hlg_exp = D::F32Vec::splat(d, hlg_gamma - 1.0);
-                append_hdr_clut(d, &eotf_lut, luminances, 0.0, tags, {
-                    #[inline(always)]
-                    |y| fast_powf_simd(d, y, hlg_exp)
-                });
-            }
-            _ => return Err(Error::IccUnsupportedTransferFunction),
+    intensity_target: f32,
+    transfer_function: &JxlTransferFunction,
+    luminances: [f32; 3],
+    tags: &mut Vec<u8>,
+) -> Result<(), Error> {
+    // Tone map as libjxl (BT.2408 from intensity_target to 250 nits for PQ, HLG OOTF from 300
+    // to 80 nits)
+    match transfer_function {
+        JxlTransferFunction::PQ => {
+            let y_max = if intensity_target > 255.0 {
+                (intensity_target / 10000.0).min(1.0)
+            } else {
+                // failsafe: if a PQ image somehow has the default SDR intensity_target, act as if it were 10000
+                1.0
+            };
+            let m = PQ_A_CURVE_M * y_max;
+            let eotf_lut: [f32; HDR_LUT_DIM] = std::array::from_fn(|i| {
+                let u = i as f32 / (HDR_LUT_DIM - 1) as f32;
+                let t = eval_hdr_m_curve(u, PQ_M_CURVE_TOE);
+                (y_max * t) / (1.0 + m * (1.0 - t))
+            });
+            let zero = D::F32Vec::zero(d);
+            let one = D::F32Vec::splat(d, 1.0);
+            let pq_of_intensity_target =
+                linear_to_pq_simd_vec(d, one, zero, D::F32Vec::splat(d, y_max));
+            let inv_pq_of_intensity_target = one / pq_of_intensity_target;
+            // PQ(250 nits)
+            let max_lum = D::F32Vec::splat(d, 0.602_559_15) / pq_of_intensity_target;
+            let ks = max_lum.mul_add(D::F32Vec::splat(d, 1.5), D::F32Vec::splat(d, -0.5));
+            // BT.2408's spline is MAX_LUM - SPLINE_K (1 - q)^3, as KS = 1.5 MAX_LUM - 0.5.
+            let spline_k = D::F32Vec::splat(d, 4.0)
+                / (D::F32Vec::splat(d, 27.0) * (one - max_lum) * (one - max_lum));
+            let scale = D::F32Vec::splat(d, 10000.0 / 250.0);
+            append_hdr_clut(d, &eotf_lut, luminances, PQ_M_CURVE_TOE, tags, {
+                #[inline(always)]
+                |y| {
+                    // q only matters above KS, far above PQ(1e-4): no small-input polynomial.
+                    let q = (linear_to_pq_simd_vec(d, one, zero, y) * inv_pq_of_intensity_target)
+                        .min(one);
+                    let w = one - q;
+                    let spline = (w * w * w).neg_mul_add(spline_k, max_lum);
+                    // The spline rises from KS to MAX_LUM, so lin is within (0, 1).
+                    let lin = pq_to_linear_simd_vec(d, scale, spline * pq_of_intensity_target);
+                    // The curve is the identity below the knee.
+                    ks.gt(q).if_then_else_f32(scale, lin / y)
+                }
+            });
         }
-        Ok(())
+        JxlTransferFunction::HLG => {
+            let hlg_gamma = 1.111f32.powf((80.0f32 / 300.0).log2());
+            let eotf_lut: [f32; HDR_LUT_DIM] = std::array::from_fn(|i| {
+                let u = i as f32 / (HDR_LUT_DIM - 1) as f32;
+                let t = eval_hdr_m_curve(u, 0.0);
+                t.powf(1.0 / hlg_gamma)
+            });
+            let hlg_exp = D::F32Vec::splat(d, hlg_gamma - 1.0);
+            append_hdr_clut(d, &eotf_lut, luminances, 0.0, tags, {
+                #[inline(always)]
+                |y| fast_powf_simd(d, y, hlg_exp)
+            });
+        }
+        _ => return Err(Error::IccUnsupportedTransferFunction),
     }
-);
+    Ok(())
+}
 
 /// Appends the 3D CLUT of the HDR `mAB ` tag, encoded with the inverse of the M-curve.
 /// Grid point (r, g, b) has linear RGB from `eotf_lut`, scaled by `tone_map` of its luminance.
@@ -2096,6 +2094,8 @@ fn create_icc_noop_btoa_tag(tags: &mut Vec<u8>) -> Result<(), Error> {
 
 #[cfg(test)]
 mod test {
+    use jxl_simd::simd_test;
+
     use super::*;
 
     #[test]
@@ -2206,6 +2206,7 @@ mod test {
     }
 
     /// The HDR CLUT on every instruction set: within 1 of scalar, and exact at a few points.
+    #[simd_test]
     fn test_hdr_icc_lut<D: SimdDescriptor>(d: D) {
         let [(rx, ry), (gx, gy), (bx, by)] = JxlPrimaries::BT2100.to_xy_coords();
         let (wx, wy) = JxlWhitePoint::D65.to_xy_coords();
@@ -2233,8 +2234,6 @@ mod test {
             assert_eq!(hlg[i..i + 3], hlg_rgb);
         }
     }
-
-    jxl_simd::test_all_instruction_sets!(test_hdr_icc_lut);
 
     #[test]
     fn test_hdr_icc_profile_generation_hlg() {

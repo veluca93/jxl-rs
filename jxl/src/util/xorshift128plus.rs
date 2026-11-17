@@ -121,10 +121,11 @@ impl Xorshift128Plus {
 
 #[cfg(test)]
 mod test {
-    use jxl_simd::{SimdDescriptor, test_all_instruction_sets};
+    use jxl_simd::{SimdDescriptor, simd_test};
 
     use super::Xorshift128Plus;
 
+    #[simd_test]
     fn test_xorshift128plus_simd_scalar_equivalence<D: SimdDescriptor>(d: D) {
         arbtest::arbtest(|u| {
             let s1 = u.arbitrary::<u32>()?;
@@ -163,7 +164,6 @@ mod test {
             Ok(())
         });
     }
-    test_all_instruction_sets!(test_xorshift128plus_simd_scalar_equivalence);
 
     #[test]
     fn xorshift128plus_golden() {

@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use jxl_simd::{F32SimdVec, SimdDescriptor, simd_function};
+use jxl_simd::{F32SimdVec, SimdDescriptor, simd_dispatch};
 
 use crate::render::{ErasedLocalState, RenderPipelineInPlaceStage};
 
@@ -87,38 +87,36 @@ fn apply_alpha<D: SimdDescriptor>(
     }
 }
 
-simd_function!(
-    premultiply_rows_simd_dispatch,
+#[simd_dispatch(premultiply_rows_simd_dispatch)]
+fn premultiply_rows_simd<D: SimdDescriptor>(
     d: D,
-    fn premultiply_rows_simd(
-        color_rows: &mut [&mut [f32]],
-        alpha_row: &[f32],
-        xsize: usize,
-        unpremultiply: bool,
-    ) {
-        if unpremultiply {
-            let one = D::F32Vec::splat(d, 1.0);
-            let small_alpha = D::F32Vec::splat(d, SMALL_ALPHA);
-            apply_alpha(
-                d,
-                color_rows,
-                alpha_row,
-                xsize,
-                #[inline(always)]
-                |a| one / a.max(small_alpha),
-            );
-        } else {
-            apply_alpha(
-                d,
-                color_rows,
-                alpha_row,
-                xsize,
-                #[inline(always)]
-                |a| a,
-            );
-        }
+    color_rows: &mut [&mut [f32]],
+    alpha_row: &[f32],
+    xsize: usize,
+    unpremultiply: bool,
+) {
+    if unpremultiply {
+        let one = D::F32Vec::splat(d, 1.0);
+        let small_alpha = D::F32Vec::splat(d, SMALL_ALPHA);
+        apply_alpha(
+            d,
+            color_rows,
+            alpha_row,
+            xsize,
+            #[inline(always)]
+            |a| one / a.max(small_alpha),
+        );
+    } else {
+        apply_alpha(
+            d,
+            color_rows,
+            alpha_row,
+            xsize,
+            #[inline(always)]
+            |a| a,
+        );
     }
-);
+}
 
 impl RenderPipelineInPlaceStage for PremultiplyAlphaStage {
     type Type = f32;

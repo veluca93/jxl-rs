@@ -6,7 +6,7 @@
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::too_many_arguments)]
 
-use jxl_simd::{F32SimdVec, simd_function};
+use jxl_simd::{F32SimdVec, SimdDescriptor, simd_dispatch};
 
 use crate::headers::CustomTransformData;
 use crate::render::{
@@ -144,90 +144,84 @@ fn upsample_2rows_per_step<D: jxl_simd::SimdDescriptor, const N: usize>(
     );
 }
 
-simd_function!(
-    upsample_2x_simd_dispatch,
+#[simd_dispatch(upsample_2x_simd_dispatch)]
+fn upsample_2x_simd<D: SimdDescriptor>(
     d: D,
-    fn upsample_2x_simd(
-        input_rows: &Channels<f32>,
-        xsize: usize,
-        kernels: &[[[[f32; 2]; 5]; 5]; 2],
-        output_rows: &mut ChannelsMut<f32>,
-    ) {
-        upsample_2rows_per_step::<D, 2>(d, input_rows, xsize, kernels, output_rows);
-    }
-);
+    input_rows: &Channels<f32>,
+    xsize: usize,
+    kernels: &[[[[f32; 2]; 5]; 5]; 2],
+    output_rows: &mut ChannelsMut<f32>,
+) {
+    upsample_2rows_per_step::<D, 2>(d, input_rows, xsize, kernels, output_rows);
+}
 
-simd_function!(
-    upsample_4x_simd_dispatch,
+#[simd_dispatch(upsample_4x_simd_dispatch)]
+fn upsample_4x_simd<D: SimdDescriptor>(
     d: D,
-    fn upsample_4x_simd(
-        input_rows: &Channels<f32>,
-        xsize: usize,
-        kernels: &[[[[f32; 4]; 5]; 5]; 4],
-        output_rows: &mut ChannelsMut<f32>,
-    ) {
-        upsample_2rows_per_step::<D, 4>(d, input_rows, xsize, kernels, output_rows);
-    }
-);
+    input_rows: &Channels<f32>,
+    xsize: usize,
+    kernels: &[[[[f32; 4]; 5]; 5]; 4],
+    output_rows: &mut ChannelsMut<f32>,
+) {
+    upsample_2rows_per_step::<D, 4>(d, input_rows, xsize, kernels, output_rows);
+}
 
-simd_function!(
-    upsample_8x_simd_dispatch,
+#[simd_dispatch(upsample_8x_simd_dispatch)]
+fn upsample_8x_simd<D: SimdDescriptor>(
     d: D,
-    fn upsample_8x_simd(
-        input_rows: &Channels<f32>,
-        xsize: usize,
-        kernels: &[[[[f32; 8]; 5]; 5]; 8],
-        output_rows: &mut ChannelsMut<f32>,
-    ) {
-        for_each_chunk(
-            d,
-            xsize,
-            input_rows.view::<1, 5, 2>(),
-            output_rows.view::<1, 8, 8>(),
-            |_x, inv, outv| {
-                let first = inv.load::<_, 0>(d, -2, -2);
-                let mut minval = first;
-                let mut maxval = first;
+    input_rows: &Channels<f32>,
+    xsize: usize,
+    kernels: &[[[[f32; 8]; 5]; 5]; 8],
+    output_rows: &mut ChannelsMut<f32>,
+) {
+    for_each_chunk(
+        d,
+        xsize,
+        input_rows.view::<1, 5, 2>(),
+        output_rows.view::<1, 8, 8>(),
+        |_x, inv, outv| {
+            let first = inv.load::<_, 0>(d, -2, -2);
+            let mut minval = first;
+            let mut maxval = first;
+            for ty in 0..5 {
+                for tx in 0..5 {
+                    if ty == 0 && tx == 0 {
+                        continue;
+                    }
+                    let v = inv.load::<_, 0>(d, ty as isize - 2, tx as isize - 2);
+                    minval = minval.min(v);
+                    maxval = maxval.max(v);
+                }
+            }
+
+            for oy in 0..8 {
+                let k_00 = &kernels[oy][0][0];
+                let mut acc = [first; 8];
+                for ox in 0..8 {
+                    acc[ox] = first * D::F32Vec::splat(d, k_00[ox]);
+                }
+
                 for ty in 0..5 {
                     for tx in 0..5 {
                         if ty == 0 && tx == 0 {
                             continue;
                         }
                         let v = inv.load::<_, 0>(d, ty as isize - 2, tx as isize - 2);
-                        minval = minval.min(v);
-                        maxval = maxval.max(v);
-                    }
-                }
-
-                for oy in 0..8 {
-                    let k_00 = &kernels[oy][0][0];
-                    let mut acc = [first; 8];
-                    for ox in 0..8 {
-                        acc[ox] = first * D::F32Vec::splat(d, k_00[ox]);
-                    }
-
-                    for ty in 0..5 {
-                        for tx in 0..5 {
-                            if ty == 0 && tx == 0 {
-                                continue;
-                            }
-                            let v = inv.load::<_, 0>(d, ty as isize - 2, tx as isize - 2);
-                            let k = &kernels[oy][ty][tx];
-                            for ox in 0..8 {
-                                acc[ox] = v.mul_add(D::F32Vec::splat(d, k[ox]), acc[ox]);
-                            }
+                        let k = &kernels[oy][ty][tx];
+                        for ox in 0..8 {
+                            acc[ox] = v.mul_add(D::F32Vec::splat(d, k[ox]), acc[ox]);
                         }
                     }
-
-                    for ox in 0..8 {
-                        acc[ox] = acc[ox].max(minval).min(maxval);
-                    }
-                    outv.store_interleaved::<_, 0>(d, oy, acc);
                 }
-            },
-        );
-    }
-);
+
+                for ox in 0..8 {
+                    acc[ox] = acc[ox].max(minval).min(maxval);
+                }
+                outv.store_interleaved::<_, 0>(d, oy, acc);
+            }
+        },
+    );
+}
 
 macro_rules! stage {
     ($n: literal, $shift: literal, $fun: path) => {

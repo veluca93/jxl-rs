@@ -5,7 +5,7 @@
 
 use std::sync::OnceLock;
 
-use jxl_simd::{F32SimdVec, I32SimdVec, SimdDescriptor, simd_function};
+use jxl_simd::{F32SimdVec, I32SimdVec, SimdDescriptor, simd_dispatch};
 
 use super::step::TiledChannelView;
 use crate::frame::modular::ModularStorage;
@@ -405,27 +405,25 @@ fn smooth_upsample_simd_impl<D: SimdDescriptor>(
     }
 }
 
-simd_function!(
-    smooth_upsample,
+#[simd_dispatch(smooth_upsample)]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn smooth_upsample_dispatch<D: SimdDescriptor>(
     d: D,
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn smooth_upsample_dispatch(
-        input: &TiledChannelView<'_>,
-        shift_diff: (usize, usize),
-        dither: bool,
-        rect: Rect,
-        output: &mut OwnedRawImage,
-        storage: ModularStorage,
-        scratch: &mut SmoothUpsampleScratch,
-    ) {
-        smooth_upsample_simd_impl(
-            d, input, shift_diff, dither, rect, output, storage, scratch,
-        );
-    }
-);
+    input: &TiledChannelView<'_>,
+    shift_diff: (usize, usize),
+    dither: bool,
+    rect: Rect,
+    output: &mut OwnedRawImage,
+    storage: ModularStorage,
+    scratch: &mut SmoothUpsampleScratch,
+) {
+    smooth_upsample_simd_impl(d, input, shift_diff, dither, rect, output, storage, scratch);
+}
 
 #[cfg(test)]
 mod tests {
+    use jxl_simd::simd_test;
+
     use super::*;
 
     #[test]
@@ -485,6 +483,7 @@ mod tests {
         }
     }
 
+    #[simd_test]
     fn test_compute_row_kernel_simd_equivalent<D: SimdDescriptor>(d: D) {
         let lanes = D::F32Vec::LEN;
         for fx in [8, 15, 16, 32, 64] {
@@ -519,8 +518,7 @@ mod tests {
         }
     }
 
-    jxl_simd::test_all_instruction_sets!(test_compute_row_kernel_simd_equivalent);
-
+    #[simd_test]
     fn test_process_row_large_constant<D: SimdDescriptor>(d: D) {
         let lanes = D::F32Vec::LEN;
         for fx in [16, 32, 64] {
@@ -550,6 +548,4 @@ mod tests {
             }
         }
     }
-
-    jxl_simd::test_all_instruction_sets!(test_process_row_large_constant);
 }

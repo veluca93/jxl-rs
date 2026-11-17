@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use jxl_simd::{F32SimdVec, simd_function};
+use jxl_simd::{F32SimdVec, SimdDescriptor, simd_dispatch};
 
 use crate::render::{
     Channels, ChannelsMut, ErasedLocalState, RenderPipelineInOutStage, for_each_chunk,
@@ -42,50 +42,48 @@ impl std::fmt::Display for GaborishStage {
     }
 }
 
-simd_function!(
-    gaborish_process_dispatch,
+#[simd_dispatch(gaborish_process_dispatch)]
+fn gaborish_process<D: SimdDescriptor>(
     d: D,
-    fn gaborish_process(
-        stage: &GaborishStage,
-        xsize: usize,
-        input_rows: &Channels<f32>,
-        output_rows: &mut ChannelsMut<f32>,
-    ) {
-        let w0 = stage.weight0.map(|w| D::F32Vec::splat(d, w));
-        let w1 = stage.weight1.map(|w| D::F32Vec::splat(d, w));
-        let w2 = stage.weight2.map(|w| D::F32Vec::splat(d, w));
+    stage: &GaborishStage,
+    xsize: usize,
+    input_rows: &Channels<f32>,
+    output_rows: &mut ChannelsMut<f32>,
+) {
+    let w0 = stage.weight0.map(|w| D::F32Vec::splat(d, w));
+    let w1 = stage.weight1.map(|w| D::F32Vec::splat(d, w));
+    let w2 = stage.weight2.map(|w| D::F32Vec::splat(d, w));
 
-        for_each_chunk(
-            d,
-            xsize,
-            input_rows.view::<3, 3, 1>(),
-            output_rows.view::<3, 1, 1>(),
-            |_x, inv, outv| {
-                macro_rules! step {
-                    ($ch:literal) => {{
-                        let p00 = inv.load::<_, $ch>(d, -1, -1);
-                        let p01 = inv.load::<_, $ch>(d, -1, 0);
-                        let p02 = inv.load::<_, $ch>(d, -1, 1);
-                        let p10 = inv.load::<_, $ch>(d, 0, -1);
-                        let p11 = inv.load::<_, $ch>(d, 0, 0);
-                        let p12 = inv.load::<_, $ch>(d, 0, 1);
-                        let p20 = inv.load::<_, $ch>(d, 1, -1);
-                        let p21 = inv.load::<_, $ch>(d, 1, 0);
-                        let p22 = inv.load::<_, $ch>(d, 1, 1);
+    for_each_chunk(
+        d,
+        xsize,
+        input_rows.view::<3, 3, 1>(),
+        output_rows.view::<3, 1, 1>(),
+        |_x, inv, outv| {
+            macro_rules! step {
+                ($ch:literal) => {{
+                    let p00 = inv.load::<_, $ch>(d, -1, -1);
+                    let p01 = inv.load::<_, $ch>(d, -1, 0);
+                    let p02 = inv.load::<_, $ch>(d, -1, 1);
+                    let p10 = inv.load::<_, $ch>(d, 0, -1);
+                    let p11 = inv.load::<_, $ch>(d, 0, 0);
+                    let p12 = inv.load::<_, $ch>(d, 0, 1);
+                    let p20 = inv.load::<_, $ch>(d, 1, -1);
+                    let p21 = inv.load::<_, $ch>(d, 1, 0);
+                    let p22 = inv.load::<_, $ch>(d, 1, 1);
 
-                        let sum = p11 * w0[$ch];
-                        let sum = w1[$ch].mul_add(p01 + p10 + p21 + p12, sum);
-                        let sum = w2[$ch].mul_add(p00 + p02 + p20 + p22, sum);
-                        outv.store::<_, $ch>(d, 0, sum);
-                    }};
-                }
-                step!(0);
-                step!(1);
-                step!(2);
-            },
-        );
-    }
-);
+                    let sum = p11 * w0[$ch];
+                    let sum = w1[$ch].mul_add(p01 + p10 + p21 + p12, sum);
+                    let sum = w2[$ch].mul_add(p00 + p02 + p20 + p22, sum);
+                    outv.store::<_, $ch>(d, 0, sum);
+                }};
+            }
+            step!(0);
+            step!(1);
+            step!(2);
+        },
+    );
+}
 
 impl RenderPipelineInOutStage for GaborishStage {
     type InputT = f32;

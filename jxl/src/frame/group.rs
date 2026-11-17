@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use jxl_simd::{F32SimdVec, I32SimdVec, SimdDescriptor, SimdMask, simd_function};
+use jxl_simd::{F32SimdVec, I32SimdVec, SimdDescriptor, SimdMask, simd_dispatch};
 use jxl_transforms::transform::*;
 use jxl_transforms::transform_map::*;
 use num_traits::Float;
@@ -669,67 +669,65 @@ fn dequant_and_transform_to_pixels<D: SimdDescriptor>(
     Ok(())
 }
 
-simd_function!(
-    dequant_and_transform_to_pixels_dispatch,
+#[simd_dispatch(dequant_and_transform_to_pixels_dispatch)]
+#[allow(clippy::too_many_arguments)]
+fn dequant_and_transform_to_pixels_fwd<D: SimdDescriptor>(
     d: D,
-    #[allow(clippy::too_many_arguments)]
-    pub fn dequant_and_transform_to_pixels_fwd(
-        quant_biases: &[f32; 4],
-        x_dm_multiplier: f32,
-        b_dm_multiplier: f32,
-        pixels: &mut [Image<f32>; 3],
-        scratch: &mut [f32],
-        inv_global_scale: f32,
-        transform_buffer: &mut [Vec<f32>; 3],
-        hshift: [usize; 3],
-        vshift: [usize; 3],
-        by: usize,
-        sby: [usize; 3],
-        bx: usize,
-        sbx: [usize; 3],
-        x_cc_mul: f32,
-        b_cc_mul: f32,
-        raw_quant: u32,
-        lf_rects: &[ImageRect<f32>; 3],
-        transform_type: HfTransformType,
-        block_rect: Rect,
-        num_blocks: usize,
-        num_coeffs: usize,
-        coeffs: &CoeffsMut,
-        offset: usize,
-        dequant_matrices: &DequantMatrices,
-        nz: [usize; 3],
-    ) -> Result<(), Error> {
-        dequant_and_transform_to_pixels(
-            d,
-            quant_biases,
-            x_dm_multiplier,
-            b_dm_multiplier,
-            pixels,
-            scratch,
-            inv_global_scale,
-            transform_buffer,
-            hshift,
-            vshift,
-            by,
-            sby,
-            bx,
-            sbx,
-            x_cc_mul,
-            b_cc_mul,
-            raw_quant,
-            lf_rects,
-            transform_type,
-            block_rect,
-            num_blocks,
-            num_coeffs,
-            coeffs,
-            offset,
-            dequant_matrices,
-            nz,
-        )
-    }
-);
+    quant_biases: &[f32; 4],
+    x_dm_multiplier: f32,
+    b_dm_multiplier: f32,
+    pixels: &mut [Image<f32>; 3],
+    scratch: &mut [f32],
+    inv_global_scale: f32,
+    transform_buffer: &mut [Vec<f32>; 3],
+    hshift: [usize; 3],
+    vshift: [usize; 3],
+    by: usize,
+    sby: [usize; 3],
+    bx: usize,
+    sbx: [usize; 3],
+    x_cc_mul: f32,
+    b_cc_mul: f32,
+    raw_quant: u32,
+    lf_rects: &[ImageRect<f32>; 3],
+    transform_type: HfTransformType,
+    block_rect: Rect,
+    num_blocks: usize,
+    num_coeffs: usize,
+    coeffs: &CoeffsMut,
+    offset: usize,
+    dequant_matrices: &DequantMatrices,
+    nz: [usize; 3],
+) -> Result<(), Error> {
+    dequant_and_transform_to_pixels(
+        d,
+        quant_biases,
+        x_dm_multiplier,
+        b_dm_multiplier,
+        pixels,
+        scratch,
+        inv_global_scale,
+        transform_buffer,
+        hshift,
+        vshift,
+        by,
+        sby,
+        bx,
+        sbx,
+        x_cc_mul,
+        b_cc_mul,
+        raw_quant,
+        lf_rects,
+        transform_type,
+        block_rect,
+        num_blocks,
+        num_coeffs,
+        coeffs,
+        offset,
+        dequant_matrices,
+        nz,
+    )
+}
 
 struct PassInfo<'a, 'b> {
     histogram_index: usize,

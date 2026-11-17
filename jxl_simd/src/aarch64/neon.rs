@@ -54,8 +54,9 @@ impl SimdDescriptor for NeonDescriptor {
     type Descriptor256 = Self;
     type Descriptor128 = Self;
 
+    #[inline]
     fn new() -> Option<Self> {
-        if std::arch::is_aarch64_feature_detected!("neon") {
+        if cfg!(target_feature = "neon") || std::arch::is_aarch64_feature_detected!("neon") {
             // SAFETY: we just checked neon.
             Some(unsafe { Self::new_unchecked() })
         } else {
@@ -74,7 +75,18 @@ impl SimdDescriptor for NeonDescriptor {
     fn call<R>(self, f: impl FnOnce(Self) -> R) -> R {
         #[target_feature(enable = "neon")]
         #[inline(never)]
-        unsafe fn inner<R>(d: NeonDescriptor, f: impl FnOnce(NeonDescriptor) -> R) -> R {
+        fn inner<R>(d: NeonDescriptor, f: impl FnOnce(NeonDescriptor) -> R) -> R {
+            f(d)
+        }
+        // SAFETY: the safety invariant on `self` guarantees neon.
+        unsafe { inner(self, f) }
+    }
+
+    #[inline(always)]
+    fn call_inlined<R>(self, f: impl FnOnce(Self) -> R) -> R {
+        #[target_feature(enable = "neon")]
+        #[inline]
+        fn inner<R>(d: NeonDescriptor, f: impl FnOnce(NeonDescriptor) -> R) -> R {
             f(d)
         }
         // SAFETY: the safety invariant on `self` guarantees neon.

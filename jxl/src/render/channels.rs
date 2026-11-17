@@ -520,59 +520,55 @@ pub fn for_each_chunk<
 
 #[cfg(test)]
 mod tests {
-    use jxl_simd::{I32SimdVec, SimdDescriptor, simd_function, test_all_instruction_sets};
+    use jxl_simd::{I32SimdVec, SimdDescriptor, simd_dispatch, simd_test};
 
     use super::*;
     use crate::image::DataTypeTag;
 
-    simd_function!(
-        run_radius1_sum_dispatch,
+    #[simd_dispatch(run_radius1_sum_dispatch)]
+    fn run_radius1_sum<D: SimdDescriptor>(
         d: D,
-        fn run_radius1_sum(
-            xsize: usize,
-            in_rows: &Channels<f32>,
-            out_rows: &mut ChannelsMut<f32>,
-        ) {
-            for_each_chunk(
-                d,
-                xsize,
-                in_rows.view::<1, 3, 1>(),
-                out_rows.view::<1, 1, 1>(),
-                |_x, inv, outv| {
-                    let top = inv.load::<_, 0>(d, -1, 0);
-                    let left = inv.load::<_, 0>(d, 0, -1);
-                    let center = inv.load::<_, 0>(d, 0, 0);
-                    let right = inv.load::<_, 0>(d, 0, 1);
-                    let bottom = inv.load::<_, 0>(d, 1, 0);
-                    outv.store::<_, 0>(d, 0, top + left + center + right + bottom);
-                },
-            );
-        }
-    );
+        xsize: usize,
+        in_rows: &Channels<f32>,
+        out_rows: &mut ChannelsMut<f32>,
+    ) {
+        for_each_chunk(
+            d,
+            xsize,
+            in_rows.view::<1, 3, 1>(),
+            out_rows.view::<1, 1, 1>(),
+            |_x, inv, outv| {
+                let top = inv.load::<_, 0>(d, -1, 0);
+                let left = inv.load::<_, 0>(d, 0, -1);
+                let center = inv.load::<_, 0>(d, 0, 0);
+                let right = inv.load::<_, 0>(d, 0, 1);
+                let bottom = inv.load::<_, 0>(d, 1, 0);
+                outv.store::<_, 0>(d, 0, top + left + center + right + bottom);
+            },
+        );
+    }
 
-    simd_function!(
-        run_interleaved_3ch_dispatch,
+    #[simd_dispatch(run_interleaved_3ch_dispatch)]
+    fn run_interleaved_3ch<D: SimdDescriptor>(
         d: D,
-        fn run_interleaved_3ch(
-            xsize: usize,
-            in_rows: &Channels<f32>,
-            out_rows: &mut ChannelsMut<f32>,
-        ) {
-            for_each_chunk(
-                d,
-                xsize,
-                in_rows.view::<3, 1, 0>(),
-                out_rows.view::<1, 2, 2>(),
-                |_x, inv, outv| {
-                    let c0 = inv.select_channel::<0>().load::<_, 0>(d, 0, 0);
-                    let c1 = inv.select_channel::<1>().load::<_, 0>(d, 0, 0);
-                    let c2 = inv.select_channel::<2>().load::<_, 0>(d, 0, 0);
-                    outv.store_interleaved::<_, 0>(d, 0, [c0, c1]);
-                    outv.store_interleaved::<_, 0>(d, 1, [c1, c2]);
-                },
-            );
-        }
-    );
+        xsize: usize,
+        in_rows: &Channels<f32>,
+        out_rows: &mut ChannelsMut<f32>,
+    ) {
+        for_each_chunk(
+            d,
+            xsize,
+            in_rows.view::<3, 1, 0>(),
+            out_rows.view::<1, 2, 2>(),
+            |_x, inv, outv| {
+                let c0 = inv.select_channel::<0>().load::<_, 0>(d, 0, 0);
+                let c1 = inv.select_channel::<1>().load::<_, 0>(d, 0, 0);
+                let c2 = inv.select_channel::<2>().load::<_, 0>(d, 0, 0);
+                outv.store_interleaved::<_, 0>(d, 0, [c0, c1]);
+                outv.store_interleaved::<_, 0>(d, 1, [c1, c2]);
+            },
+        );
+    }
 
     #[test]
     fn test_for_each_chunk_1ch_radius1() {
@@ -643,6 +639,7 @@ mod tests {
         }
     }
 
+    #[simd_test]
     fn for_each_chunk_stencil_arb<D: SimdDescriptor>(d: D) {
         arbtest::arbtest(|u| {
             let xsize = u.int_in_range(0..=64)?;
@@ -706,8 +703,7 @@ mod tests {
         });
     }
 
-    test_all_instruction_sets!(for_each_chunk_stencil_arb);
-
+    #[simd_test]
     fn for_each_chunk_interleaved_2_arb<D: SimdDescriptor>(d: D) {
         arbtest::arbtest(|u| {
             let xsize = u.int_in_range(0..=64)?;
@@ -757,8 +753,7 @@ mod tests {
         });
     }
 
-    test_all_instruction_sets!(for_each_chunk_interleaved_2_arb);
-
+    #[simd_test]
     fn for_each_chunk_interleaved_4_arb<D: SimdDescriptor>(d: D) {
         arbtest::arbtest(|u| {
             let xsize = u.int_in_range(0..=64)?;
@@ -813,8 +808,7 @@ mod tests {
         });
     }
 
-    test_all_instruction_sets!(for_each_chunk_interleaved_4_arb);
-
+    #[simd_test]
     fn for_each_chunk_interleaved_8_arb<D: SimdDescriptor>(d: D) {
         arbtest::arbtest(|u| {
             let xsize = u.int_in_range(0..=64)?;
@@ -886,8 +880,7 @@ mod tests {
         });
     }
 
-    test_all_instruction_sets!(for_each_chunk_interleaved_8_arb);
-
+    #[simd_test]
     fn for_each_chunk_integer_types_arb<D: SimdDescriptor>(d: D) {
         arbtest::arbtest(|u| {
             let xsize = u.int_in_range(0..=64)?;
@@ -1004,6 +997,4 @@ mod tests {
             Ok(())
         });
     }
-
-    test_all_instruction_sets!(for_each_chunk_integer_types_arb);
 }

@@ -5,7 +5,7 @@
 
 use jxl_simd::{
     F32SimdVec, I16SimdVec, I32SimdVec, SimdDescriptor, SimdMask, SimdMask16, U32SimdVec, shl, shr,
-    simd_function,
+    simd_dispatch,
 };
 
 use crate::error::{Error, Result};
@@ -760,43 +760,39 @@ fn hsqueeze_scalar_i16(
     }
 }
 
-simd_function!(
-    hsqueeze,
+#[simd_dispatch(hsqueeze)]
+pub fn hsqueeze_fwd<D: SimdDescriptor>(
     d: D,
-    pub fn hsqueeze_fwd(
-        y_start: usize,
-        in_avg: &ImageRect<'_, i32>,
-        in_res: &ImageRect<'_, i32>,
-        in_next_avg: Option<&ImageRect<'_, i32>>,
-        out_prev: Option<&ImageRect<'_, i32>>,
-        out: &mut ImageRectMut<'_, i32>,
-    ) {
-        d.call(
-            #[inline(always)]
-            |d| hsqueeze_impl(d, y_start, in_avg, in_res, in_next_avg, out_prev, out),
-        )
-    }
-);
+    y_start: usize,
+    in_avg: &ImageRect<'_, i32>,
+    in_res: &ImageRect<'_, i32>,
+    in_next_avg: Option<&ImageRect<'_, i32>>,
+    out_prev: Option<&ImageRect<'_, i32>>,
+    out: &mut ImageRectMut<'_, i32>,
+) {
+    d.call(
+        #[inline(always)]
+        |d| hsqueeze_impl(d, y_start, in_avg, in_res, in_next_avg, out_prev, out),
+    )
+}
 
-simd_function!(
-    hsqueeze_i16,
+#[simd_dispatch(hsqueeze_i16)]
+#[allow(clippy::too_many_arguments)]
+pub fn hsqueeze_fwd_i16<D: SimdDescriptor>(
     d: D,
-    #[allow(clippy::too_many_arguments)]
-    pub fn hsqueeze_fwd_i16(
-        y_start: usize,
-        in_avg: &ImageRect<'_, i16>,
-        in_res: &ImageRect<'_, i16>,
-        in_next_avg: Option<&ImageRect<'_, i16>>,
-        out_prev: Option<&ImageRect<'_, i16>>,
-        out: &mut ImageRectMut<'_, i16>,
-        buf: &mut [i16; 2048],
-    ) {
-        d.call(
-            #[inline(always)]
-            |d| hsqueeze_impl_i16(d, y_start, in_avg, in_res, in_next_avg, out_prev, out, buf),
-        )
-    }
-);
+    y_start: usize,
+    in_avg: &ImageRect<'_, i16>,
+    in_res: &ImageRect<'_, i16>,
+    in_next_avg: Option<&ImageRect<'_, i16>>,
+    out_prev: Option<&ImageRect<'_, i16>>,
+    out: &mut ImageRectMut<'_, i16>,
+    buf: &mut [i16; 2048],
+) {
+    d.call(
+        #[inline(always)]
+        |d| hsqueeze_impl_i16(d, y_start, in_avg, in_res, in_next_avg, out_prev, out, buf),
+    )
+}
 
 #[inline(always)]
 fn do_hsqueeze_step_i16(
@@ -1223,41 +1219,37 @@ fn vsqueeze_scalar_i16(
     }
 }
 
-simd_function!(
-    vsqueeze,
+#[simd_dispatch(vsqueeze)]
+pub fn vsqueeze_fwd<D: SimdDescriptor>(
     d: D,
-    pub fn vsqueeze_fwd(
-        x_start: usize,
-        in_avg: &ImageRect<'_, i32>,
-        in_res: &ImageRect<'_, i32>,
-        in_next_avg: Option<&ImageRect<'_, i32>>,
-        out_prev: Option<&ImageRect<'_, i32>>,
-        out: &mut ImageRectMut<'_, i32>,
-    ) {
-        d.call(
-            #[inline(always)]
-            |d| vsqueeze_impl(d, x_start, in_avg, in_res, in_next_avg, out_prev, out),
-        )
-    }
-);
+    x_start: usize,
+    in_avg: &ImageRect<'_, i32>,
+    in_res: &ImageRect<'_, i32>,
+    in_next_avg: Option<&ImageRect<'_, i32>>,
+    out_prev: Option<&ImageRect<'_, i32>>,
+    out: &mut ImageRectMut<'_, i32>,
+) {
+    d.call(
+        #[inline(always)]
+        |d| vsqueeze_impl(d, x_start, in_avg, in_res, in_next_avg, out_prev, out),
+    )
+}
 
-simd_function!(
-    vsqueeze_i16,
+#[simd_dispatch(vsqueeze_i16)]
+pub fn vsqueeze_fwd_i16<D: SimdDescriptor>(
     d: D,
-    pub fn vsqueeze_fwd_i16(
-        x_start: usize,
-        in_avg: &ImageRect<'_, i16>,
-        in_res: &ImageRect<'_, i16>,
-        in_next_avg: Option<&ImageRect<'_, i16>>,
-        out_prev: Option<&ImageRect<'_, i16>>,
-        out: &mut ImageRectMut<'_, i16>,
-    ) {
-        d.call(
-            #[inline(always)]
-            |d| vsqueeze_impl_i16(d, x_start, in_avg, in_res, in_next_avg, out_prev, out),
-        )
-    }
-);
+    x_start: usize,
+    in_avg: &ImageRect<'_, i16>,
+    in_res: &ImageRect<'_, i16>,
+    in_next_avg: Option<&ImageRect<'_, i16>>,
+    out_prev: Option<&ImageRect<'_, i16>>,
+    out: &mut ImageRectMut<'_, i16>,
+) {
+    d.call(
+        #[inline(always)]
+        |d| vsqueeze_impl_i16(d, x_start, in_avg, in_res, in_next_avg, out_prev, out),
+    )
+}
 
 #[allow(dead_code)]
 #[inline(always)]

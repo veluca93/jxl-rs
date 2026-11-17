@@ -6,7 +6,7 @@
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::approx_constant)]
 
-use jxl_simd::{simd_function, SimdDescriptor};
+use jxl_simd::{simd_dispatch, SimdDescriptor};
 
 use crate::transform_map::HfTransformType;
 use crate::*;
@@ -663,15 +663,13 @@ pub fn transform_to_pixels_impl<D: SimdDescriptor>(
     };
 }
 
-simd_function!(
-    transform_to_pixels,
+/// This includes a call to what libjxl calls lowest_frequencies_from_lf.
+#[simd_dispatch(transform_to_pixels)]
+pub fn transform_to_pixels_trampoline<D: SimdDescriptor>(
     d: D,
-    /// This includes a call to what libjxl calls lowest_frequencies_from_lf.
-    pub fn transform_to_pixels_trampoline(
-        transform_type: HfTransformType,
-        lf: &mut [f32],
-        transform_buffer: &mut [f32],
-    ) {
-        transform_to_pixels_impl(d, transform_type, lf, transform_buffer);
-    }
-);
+    transform_type: HfTransformType,
+    lf: &mut [f32],
+    transform_buffer: &mut [f32],
+) {
+    transform_to_pixels_impl(d, transform_type, lf, transform_buffer);
+}
