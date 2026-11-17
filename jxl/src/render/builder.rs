@@ -15,7 +15,7 @@ use crate::headers::bit_depth::BitDepth;
 use crate::image::{BufferRecycler, DataTypeTag, Rect};
 use crate::render::internal::ChannelInfo;
 use crate::render::save::{SaveChannelType, SaveStage};
-use crate::render::stages::{ConvertModular16ToF32Stage, ConvertModularToF32Stage};
+use crate::render::stages::ConvertModularToF32Stage;
 use crate::util::ShiftRightCeil;
 use crate::util::sync::atomic::{AtomicBool, Ordering};
 use crate::util::tracing_wrappers::*;
@@ -102,9 +102,9 @@ impl<Pipeline: RenderPipeline> RenderPipelineBuilder<Pipeline> {
                 }
                 if stage.input_type(c) == DataTypeTag::F32 {
                     let conv = if *cur_ty == DataTypeTag::I16 {
-                        Pipeline::box_inout_stage(ConvertModular16ToF32Stage::new(c, in_bd))
+                        Pipeline::box_inout_stage(ConvertModularToF32Stage::<i16>::new(c, in_bd))
                     } else {
-                        Pipeline::box_inout_stage(ConvertModularToF32Stage::new(c, in_bd))
+                        Pipeline::box_inout_stage(ConvertModularToF32Stage::<i32>::new(c, in_bd))
                     };
                     self.shared.stages.push(Stage::InOut(conv));
                     *cur_ty = DataTypeTag::F32;

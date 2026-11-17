@@ -11,84 +11,104 @@ use crate::image::ImageDataType;
 use crate::render::low_memory_pipeline::row_buffers::RowBuffer;
 use crate::util::{SmallVec, StackOnly, mirror};
 
-pub trait VecLoad<D: SimdDescriptor>: Sized + Copy {
-    type Vec: Copy;
-    const LEN: usize;
-    fn load(d: D, slice: &[Self]) -> Self::Vec;
+pub trait VecLoad: Sized + Copy {
+    type Vec<D: SimdDescriptor>: Copy;
+    fn load<D: SimdDescriptor>(d: D, slice: &[Self]) -> Self::Vec<D>;
 }
 
-pub trait VecStore<D: SimdDescriptor>: VecLoad<D> {
-    fn store(d: D, vec: Self::Vec, slice: &mut [Self]);
+pub trait I32VecLoad: VecLoad {
+    fn into_i32<D: SimdDescriptor>(vec: Self::Vec<D>) -> I32Vec<D>;
 }
 
-impl<D: SimdDescriptor> VecLoad<D> for f32 {
-    type Vec = F32Vec<D>;
-    const LEN: usize = F32Vec::<D>::LEN;
+pub trait VecStore: VecLoad {
+    fn store<D: SimdDescriptor>(d: D, vec: Self::Vec<D>, slice: &mut [Self]);
+}
+
+impl VecLoad for f32 {
+    type Vec<D: SimdDescriptor> = F32Vec<D>;
 
     #[inline(always)]
-    fn load(d: D, slice: &[f32]) -> F32Vec<D> {
+    fn load<D: SimdDescriptor>(d: D, slice: &[f32]) -> F32Vec<D> {
         F32Vec::load(d, slice)
     }
 }
 
-impl<D: SimdDescriptor> VecStore<D> for f32 {
+impl VecStore for f32 {
     #[inline(always)]
-    fn store(_d: D, vec: F32Vec<D>, slice: &mut [f32]) {
+    fn store<D: SimdDescriptor>(_d: D, vec: F32Vec<D>, slice: &mut [f32]) {
         vec.store(slice);
     }
 }
 
-impl<D: SimdDescriptor> VecLoad<D> for i32 {
-    type Vec = I32Vec<D>;
-    const LEN: usize = I32Vec::<D>::LEN;
+impl VecLoad for i32 {
+    type Vec<D: SimdDescriptor> = I32Vec<D>;
 
     #[inline(always)]
-    fn load(d: D, slice: &[i32]) -> I32Vec<D> {
+    fn load<D: SimdDescriptor>(d: D, slice: &[i32]) -> I32Vec<D> {
         I32Vec::load(d, slice)
     }
 }
 
-impl<D: SimdDescriptor> VecLoad<D> for i16 {
-    type Vec = I32Vec<D>;
-    const LEN: usize = I32Vec::<D>::LEN;
+impl I32VecLoad for i32 {
+    #[inline(always)]
+    fn into_i32<D: SimdDescriptor>(vec: I32Vec<D>) -> I32Vec<D> {
+        vec
+    }
+}
+
+impl VecLoad for i16 {
+    type Vec<D: SimdDescriptor> = I32Vec<D>;
 
     #[inline(always)]
-    fn load(d: D, slice: &[i16]) -> I32Vec<D> {
+    fn load<D: SimdDescriptor>(d: D, slice: &[i16]) -> I32Vec<D> {
         I32Vec::load_from_i16(d, slice)
     }
 }
 
-impl<D: SimdDescriptor> VecLoad<D> for u16 {
-    type Vec = I32Vec<D>;
-    const LEN: usize = I32Vec::<D>::LEN;
+impl I32VecLoad for i16 {
+    #[inline(always)]
+    fn into_i32<D: SimdDescriptor>(vec: I32Vec<D>) -> I32Vec<D> {
+        vec
+    }
+}
+
+impl VecLoad for u16 {
+    type Vec<D: SimdDescriptor> = I32Vec<D>;
 
     #[inline(always)]
-    fn load(d: D, slice: &[u16]) -> I32Vec<D> {
+    fn load<D: SimdDescriptor>(d: D, slice: &[u16]) -> I32Vec<D> {
         I32Vec::load_from_u16(d, slice)
     }
 }
 
-pub trait StoreInterleaved<D: SimdDescriptor, const NUM: usize>: VecStore<D> {
-    fn store_interleaved(d: D, vals: [Self::Vec; NUM], dest: &mut [Self]);
+impl I32VecLoad for u16 {
+    #[inline(always)]
+    fn into_i32<D: SimdDescriptor>(vec: I32Vec<D>) -> I32Vec<D> {
+        vec
+    }
 }
 
-impl<D: SimdDescriptor> StoreInterleaved<D, 2> for f32 {
+pub trait StoreInterleaved<const NUM: usize>: VecStore {
+    fn store_interleaved<D: SimdDescriptor>(d: D, vals: [Self::Vec<D>; NUM], dest: &mut [Self]);
+}
+
+impl StoreInterleaved<2> for f32 {
     #[inline(always)]
-    fn store_interleaved(_d: D, vals: [F32Vec<D>; 2], dest: &mut [f32]) {
+    fn store_interleaved<D: SimdDescriptor>(_d: D, vals: [F32Vec<D>; 2], dest: &mut [f32]) {
         F32Vec::store_interleaved_2(vals[0], vals[1], dest);
     }
 }
 
-impl<D: SimdDescriptor> StoreInterleaved<D, 4> for f32 {
+impl StoreInterleaved<4> for f32 {
     #[inline(always)]
-    fn store_interleaved(_d: D, vals: [F32Vec<D>; 4], dest: &mut [f32]) {
+    fn store_interleaved<D: SimdDescriptor>(_d: D, vals: [F32Vec<D>; 4], dest: &mut [f32]) {
         F32Vec::store_interleaved_4(vals[0], vals[1], vals[2], vals[3], dest);
     }
 }
 
-impl<D: SimdDescriptor> StoreInterleaved<D, 8> for f32 {
+impl StoreInterleaved<8> for f32 {
     #[inline(always)]
-    fn store_interleaved(_d: D, vals: [F32Vec<D>; 8], dest: &mut [f32]) {
+    fn store_interleaved<D: SimdDescriptor>(_d: D, vals: [F32Vec<D>; 8], dest: &mut [f32]) {
         F32Vec::store_interleaved_8(
             vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6], vals[7], dest,
         );
@@ -210,14 +230,20 @@ impl<'a, T, const CHANS: usize, const ROWS: usize, const RADIUS: usize>
     /// Loads a SIMD vector from channel `CHAN` at vertical offset `dy` (`-(ROWS/2)..=(ROWS/2)`)
     /// and horizontal offset `dx` (`-RADIUS..=RADIUS`) relative to the current chunk offset.
     #[inline(always)]
-    pub fn load<D: SimdDescriptor, const CHAN: usize>(&self, d: D, dy: isize, dx: isize) -> T::Vec
+    pub fn load<D: SimdDescriptor, const CHAN: usize>(
+        &self,
+        d: D,
+        dy: isize,
+        dx: isize,
+    ) -> T::Vec<D>
     where
-        T: VecLoad<D>,
+        T: VecLoad,
     {
         const { assert!(CHAN < CHANS) };
         const { assert!(ROWS % 2 == 1) };
         const { assert!(RADIUS <= isize::MAX as usize / 2) };
-        const { assert!(T::LEN <= MAX_SIMD_LANES) };
+        const { assert!(F32Vec::<D>::LEN <= MAX_SIMD_LANES) };
+        let len = F32Vec::<D>::LEN;
         let row_idx = (ROWS / 2).wrapping_add_signed(dy);
         assert!(row_idx < ROWS);
         let col_off = RADIUS.wrapping_add_signed(dx);
@@ -225,16 +251,29 @@ impl<'a, T, const CHANS: usize, const ROWS: usize, const RADIUS: usize>
         // [off]
         let offset = (self.row_offsets[row_idx] + self.x_offset).wrapping_add_signed(dx);
         let buf = self.channel_buffers[CHAN];
-        debug_assert!(offset + T::LEN <= buf.len());
-        // SAFETY: `slice::get_unchecked` requires `offset <= offset + T::LEN <= buf.len()`.
+        debug_assert!(offset + len <= buf.len());
+        // SAFETY: `slice::get_unchecked` requires `offset <= offset + len <= buf.len()`.
         // By the `ChannelsView` safety invariant (`self.x_offset >= RADIUS` and
         // `row_offsets[row_idx] + x_offset + RADIUS + MAX_SIMD_LANES <= buf.len()` without
         // overflow), along with `CHAN < CHANS`, `row_idx < ROWS`, `|dx| <= RADIUS` (verified via
-        // `col_off <= 2 * RADIUS`), and `T::LEN <= MAX_SIMD_LANES`, `wrapping_add_signed(dx)` in
-        // [off] cannot underflow and `offset <= offset + T::LEN <= buf.len()` holds without
+        // `col_off <= 2 * RADIUS`), and `len <= MAX_SIMD_LANES`, `wrapping_add_signed(dx)` in
+        // [off] cannot underflow and `offset <= offset + len <= buf.len()` holds without
         // overflow.
-        let slice = unsafe { buf.get_unchecked(offset..offset + T::LEN) };
+        let slice = unsafe { buf.get_unchecked(offset..offset + len) };
         T::load(d, slice)
+    }
+
+    #[inline(always)]
+    pub fn load_i32<D: SimdDescriptor, const CHAN: usize>(
+        &self,
+        d: D,
+        dy: isize,
+        dx: isize,
+    ) -> I32Vec<D>
+    where
+        T: I32VecLoad,
+    {
+        T::into_i32(self.load::<D, CHAN>(d, dy, dx))
     }
 
     /// Narrows the view to a single channel `CHAN`.
@@ -357,23 +396,24 @@ impl<'b, 'a, T, const CHANS: usize, const ROWS: usize, const SCALE: usize>
 {
     /// Stores a SIMD vector to channel `CHAN` and output row `row` (`0..ROWS`).
     #[inline(always)]
-    pub fn store<D: SimdDescriptor, const CHAN: usize>(&mut self, d: D, row: usize, val: T::Vec)
+    pub fn store<D: SimdDescriptor, const CHAN: usize>(&mut self, d: D, row: usize, val: T::Vec<D>)
     where
-        T: VecStore<D>,
+        T: VecStore,
     {
         const { assert!(CHAN < CHANS) };
         const { assert!(SCALE == 1) };
-        const { assert!(T::LEN <= MAX_SIMD_LANES) };
+        const { assert!(F32Vec::<D>::LEN <= MAX_SIMD_LANES) };
+        let len = F32Vec::<D>::LEN;
         assert!(row < ROWS);
         let offset = self.row_offsets[row] + self.x_offset;
         let buf = &mut *self.channel_buffers[CHAN];
-        debug_assert!(offset + T::LEN <= buf.len());
-        // SAFETY: `slice::get_unchecked_mut` requires `offset <= offset + T::LEN <= buf.len()`.
+        debug_assert!(offset + len <= buf.len());
+        // SAFETY: `slice::get_unchecked_mut` requires `offset <= offset + len <= buf.len()`.
         // By the `ChannelsMutView` safety invariant
         // (`row_offsets[row] + x_offset + MAX_SIMD_LANES * SCALE <= buf.len()` without overflow),
-        // along with `CHAN < CHANS`, `row < ROWS`, `SCALE == 1`, and `T::LEN <= MAX_SIMD_LANES`,
-        // `offset <= offset + T::LEN <= buf.len()` holds without overflow.
-        let slice = unsafe { buf.get_unchecked_mut(offset..offset + T::LEN) };
+        // along with `CHAN < CHANS`, `row < ROWS`, `SCALE == 1`, and `len <= MAX_SIMD_LANES`,
+        // `offset <= offset + len <= buf.len()` holds without overflow.
+        let slice = unsafe { buf.get_unchecked_mut(offset..offset + len) };
         T::store(d, val, slice);
     }
 
@@ -383,22 +423,23 @@ impl<'b, 'a, T, const CHANS: usize, const ROWS: usize, const SCALE: usize>
         &mut self,
         d: D,
         row: usize,
-        vals: [T::Vec; SCALE],
+        vals: [T::Vec<D>; SCALE],
     ) where
-        T: StoreInterleaved<D, SCALE>,
+        T: StoreInterleaved<SCALE>,
     {
         const { assert!(CHAN < CHANS) };
-        const { assert!(T::LEN <= MAX_SIMD_LANES) };
+        const { assert!(F32Vec::<D>::LEN <= MAX_SIMD_LANES) };
+        let len = F32Vec::<D>::LEN;
         assert!(row < ROWS);
         let offset = self.row_offsets[row] + self.x_offset;
         let buf = &mut *self.channel_buffers[CHAN];
-        debug_assert!(offset + SCALE * T::LEN <= buf.len());
+        debug_assert!(offset + SCALE * len <= buf.len());
         // SAFETY: `slice::get_unchecked_mut` requires
-        // `offset <= offset + SCALE * T::LEN <= buf.len()`. By the `ChannelsMutView` safety
+        // `offset <= offset + SCALE * len <= buf.len()`. By the `ChannelsMutView` safety
         // invariant (`row_offsets[row] + x_offset + MAX_SIMD_LANES * SCALE <= buf.len()` without
-        // overflow), along with `CHAN < CHANS`, `row < ROWS`, and `T::LEN <= MAX_SIMD_LANES`,
-        // `offset <= offset + SCALE * T::LEN <= buf.len()` holds without overflow.
-        let slice = unsafe { buf.get_unchecked_mut(offset..offset + SCALE * T::LEN) };
+        // overflow), along with `CHAN < CHANS`, `row < ROWS`, and `len <= MAX_SIMD_LANES`,
+        // `offset <= offset + SCALE * len <= buf.len()` holds without overflow.
+        let slice = unsafe { buf.get_unchecked_mut(offset..offset + SCALE * len) };
         T::store_interleaved(d, vals, slice);
     }
 }
@@ -412,8 +453,8 @@ pub fn for_each_chunk<
     'b,
     'c,
     D: SimdDescriptor,
-    InT: VecLoad<D>,
-    OutT: VecLoad<D>,
+    InT: VecLoad,
+    OutT: VecLoad,
     const IN_CHANS: usize,
     const IN_ROWS: usize,
     const RADIUS: usize,
@@ -432,9 +473,8 @@ pub fn for_each_chunk<
     ),
 ) {
     const { assert!(SCALE > 0) };
-    const { assert!(InT::LEN > 0 && InT::LEN <= MAX_SIMD_LANES) };
-    const { assert!(OutT::LEN == InT::LEN) };
-    let len = InT::LEN;
+    const { assert!(F32Vec::<D>::LEN > 0 && F32Vec::<D>::LEN <= MAX_SIMD_LANES) };
+    let len = F32Vec::<D>::LEN;
     if xsize == 0 {
         return;
     }

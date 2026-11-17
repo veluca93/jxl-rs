@@ -752,9 +752,10 @@ impl Frame {
         {
             if decoder_state.modular_storage() == ModularStorage::I16 {
                 pipeline =
-                    pipeline.add_inout_stage(ConvertModular16XYBToF32Stage::new(0, lf_quant));
+                    pipeline.add_inout_stage(ConvertModularXYBToF32Stage::<i16>::new(0, lf_quant));
             } else {
-                pipeline = pipeline.add_inout_stage(ConvertModularXYBToF32Stage::new(0, lf_quant));
+                pipeline =
+                    pipeline.add_inout_stage(ConvertModularXYBToF32Stage::<i32>::new(0, lf_quant));
             }
         }
 

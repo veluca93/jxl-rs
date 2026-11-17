@@ -66,7 +66,7 @@ impl<const N: usize, const SHIFT: u8> std::fmt::Display for Upsample<N, SHIFT> {
 
 /// Processes 2 output rows per pass (`N = 2` or `N = 4`), keeping `2 * N <= 8` vector
 /// accumulators plus `minval`/`maxval` in SIMD registers.
-#[inline(always)]
+#[simd_dispatch(upsample_2rows_per_step_dispatch)]
 fn upsample_2rows_per_step<D: SimdDescriptor, const N: usize>(
     d: D,
     input_rows: &Channels<f32>,
@@ -74,7 +74,7 @@ fn upsample_2rows_per_step<D: SimdDescriptor, const N: usize>(
     kernels: &[[[[f32; N]; 5]; 5]; N],
     output_rows: &mut ChannelsMut<f32>,
 ) where
-    f32: StoreInterleaved<D, N, Vec = F32Vec<D>>,
+    f32: StoreInterleaved<N>,
 {
     const { assert!(N == 2 || N == 4) };
     for_each_chunk(
@@ -142,28 +142,6 @@ fn upsample_2rows_per_step<D: SimdDescriptor, const N: usize>(
             }
         },
     );
-}
-
-#[simd_dispatch(upsample_2x_simd_dispatch)]
-fn upsample_2x_simd<D: SimdDescriptor>(
-    d: D,
-    input_rows: &Channels<f32>,
-    xsize: usize,
-    kernels: &[[[[f32; 2]; 5]; 5]; 2],
-    output_rows: &mut ChannelsMut<f32>,
-) {
-    upsample_2rows_per_step::<D, 2>(d, input_rows, xsize, kernels, output_rows);
-}
-
-#[simd_dispatch(upsample_4x_simd_dispatch)]
-fn upsample_4x_simd<D: SimdDescriptor>(
-    d: D,
-    input_rows: &Channels<f32>,
-    xsize: usize,
-    kernels: &[[[[f32; 4]; 5]; 5]; 4],
-    output_rows: &mut ChannelsMut<f32>,
-) {
-    upsample_2rows_per_step::<D, 4>(d, input_rows, xsize, kernels, output_rows);
 }
 
 #[simd_dispatch(upsample_8x_simd_dispatch)]
@@ -250,8 +228,8 @@ macro_rules! stage {
     };
 }
 
-stage!(2, 1, upsample_2x_simd_dispatch);
-stage!(4, 2, upsample_4x_simd_dispatch);
+stage!(2, 1, upsample_2rows_per_step_dispatch::<2>);
+stage!(4, 2, upsample_2rows_per_step_dispatch::<4>);
 stage!(8, 3, upsample_8x_simd_dispatch);
 
 pub type Upsample2x = Upsample<2, 1>;
